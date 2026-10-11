@@ -218,11 +218,14 @@ def team_value(roster: list[dict]) -> float:
 
 # -- pool archetype synergies -----------------------------------------------
 
-# Tier-1 S-rank tournament picks in the captured 18-card pool
-_S_TIER_SPECIES = {"Incineroar", "Flutter Mane", "Urshifu-Rapid-Strike", "Rillaboom", "Chien-Pao"}
+# Tier-1 S-rank tournament picks in the captured pool
+_S_TIER_SPECIES = {
+    "Incineroar", "Flutter Mane", "Urshifu-Rapid-Strike", "Rillaboom",
+    "Chien-Pao", "Landorus-Therian", "Great Tusk", "Basculegion"
+}
 # High-priority archetype pivots
-_SPEED_CONTROL_SPECIES = {"Talonflame", "Tornadus"}
-_WEATHER_SETTERS = {"Tyranitar"}
+_SPEED_CONTROL_SPECIES = {"Talonflame", "Tornadus", "Whimsicott"}
+_WEATHER_SETTERS = {"Tyranitar", "Pelipper"}
 
 
 def archetype_bonus(card: dict, roster: list[dict]) -> float:

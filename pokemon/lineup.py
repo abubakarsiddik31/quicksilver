@@ -118,11 +118,18 @@ def lineup_score(cards: list[Card], opponents: list[Card | None]) -> float:
 
 
 def lead_score(card: Card, opponents: list[Card | None]) -> float:
-    """How good a lead this card is: matchup, speed, and Fake Out."""
+    """How good a lead this card is: matchup, speed, Choice Scarf, and Fake Out."""
     score = matchup(card, opponents)
-    score += card.stats.get("spe", 0) * LEAD_SPEED_WEIGHT
+    eff_speed = card.stats.get("spe", 0)
+    # Choice Scarf grants 1.5x effective speed
+    if card.item == "Choice Scarf":
+        eff_speed = int(eff_speed * 1.5)
+    score += eff_speed * LEAD_SPEED_WEIGHT
     if any(dex.to_id(move) == "fakeout" for move in card.moves):
         score += LEAD_FAKE_OUT_BONUS
+    # Intimidate leads provide immediate defensive reduction on turn 1
+    if card.ability == "Intimidate":
+        score += 4.0
     return score
 
 
