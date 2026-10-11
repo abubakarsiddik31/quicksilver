@@ -441,6 +441,26 @@
       "species": "Klefki"
     },
     {
+      "ability": "Intimidate",
+      "card_id": "vgc-landorus-therian",
+      "evs": {
+        "atk": 252,
+        "def": 4,
+        "spe": 252
+      },
+      "item": "Choice Scarf",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Earthquake",
+        "Rock Slide",
+        "U-turn",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Landorus-Therian"
+    },
+    {
       "ability": "Competitive",
       "card_id": "vgc-milotic",
       "evs": {
@@ -561,6 +581,26 @@
       ],
       "nature": "Bold",
       "species": "Scream Tail"
+    },
+    {
+      "ability": "Unburden",
+      "card_id": "vgc-sneasler",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Aguav Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Fake Out",
+        "Close Combat",
+        "Dire Claw",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Sneasler"
     },
     {
       "ability": "Pixilate",
@@ -763,6 +803,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 38,
+  "count": 40,
   "expected_size": 18
 }
