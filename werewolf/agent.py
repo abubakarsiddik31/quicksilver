@@ -38,7 +38,7 @@ from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, SendMess
 
 from common import llm
 from werewolf import belief as belief_mod
-from werewolf import messages as msg, speech
+from werewolf import messages as msg, speech, synthesizer
 
 
 def _seat_from_action_id(action_id: object) -> int | None:
@@ -76,10 +76,27 @@ class WerewolfAgent:
         self.belief.update(state)
 
         engine = belief_mod.engine_phase(belief_mod.raw_of(state))
+        client = self._client()
+        window = getattr(state, "new_messages", None)
+
         if engine == "day_vote":
-            target = self.belief.best_vote()
+            # 1. Try Rule-Scored LLM Synthesis (if client configured and not an absolute blowout)
+            target = None
+            if client is not None:
+                target = synthesizer.synthesize_day_vote(client, self.belief, window)
+            # 2. Fall back to pure mathematical rule score
+            if target is None:
+                target = self.belief.best_vote()
+
         elif engine == "night_wolf":
-            target = self.belief.best_kill()
+            # 1. Try strategic threat evaluation with LLM
+            target = None
+            if client is not None:
+                target = synthesizer.synthesize_night_kill(client, self.belief, window)
+            # 2. Fall back to rule score
+            if target is None:
+                target = self.belief.best_kill()
+
         elif engine == "night_seer":
             target = self._investigation_target()
         else:
