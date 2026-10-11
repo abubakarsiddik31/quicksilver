@@ -1,0 +1,23 @@
+[
+  {
+    "id": "llama-4",
+    "label": "Llama 4 (self-hosted example)",
+    "prefix": "BENCH_LLAMA4",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "llama-4-scout",
+    "aliases": [],
+    "json_mode": "json_object",
+    "price_in": 0.0,
+    "price_out": 0.0,
+    "notes": "Example of adding a candidate with no code change. Any OpenAI-compatible endpoint works."
+  },
+  {
+    "id": "sonnet",
+    "label": "Sonnet (latest)",
+    "prefix": "BENCH_SONNET",
+    "model": "claude-sonnet-4-5",
+    "price_in": 3.0,
+    "price_out": 15.0,
+    "notes": "Example of overriding a built-in candidate: pin the model id and add prices."
+  }
+]

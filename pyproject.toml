@@ -1,0 +1,25 @@
+[project]
+name = "quicksilver"
+version = "0.1.0"
+description = "Quicksilver — an agent for the AltruAgent AI Agent Gaming Tournament."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "mcp>=1.12.0,<2.0.0",  # 2.x renames streamablehttp_client -> streamable_http_client;
+                           # pinned to the 1.x line to match the platform's own gameapi
+                           # dependency and its scripts' exact import names.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["altruagent*", "agent*", "common*", "pokemon*", "werewolf*", "bench*"]

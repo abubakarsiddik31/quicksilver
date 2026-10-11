@@ -5,9 +5,10 @@
 # python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.eggs/
 .venv/
 venv/
-*.egg-info/
 build/
 dist/
 
@@ -15,11 +16,16 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.coverage
+htmlcov/
 
 # editors / os
 .DS_Store
 .idea/
 .vscode/
+
+# starter leftovers (scripts/smoke_game.py swaps agent/agent.py temporarily)
+agent/agent.py.smoke_test_backup
 
 # private project files — never push
 SUMMARY.md
