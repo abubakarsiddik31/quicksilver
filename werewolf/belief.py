@@ -399,9 +399,13 @@ class Belief:
 
     def best_kill(self) -> int | None:
         """The seat a wolf should kill: never an ally, and preferably the seer
-        or whoever is driving the table — but we cannot know the seer, so this
-        is the least-suspicious-looking threat, i.e. the player most likely to
-        be believed."""
+        or whoever is driving the table.
+        
+        Priority:
+        1. If someone claimed Seer and is still alive, kill them immediately
+           to silence their investigations.
+        2. Otherwise, kill the least-suspicious living player (the most trusted).
+        """
         candidates = [
             seat
             for seat in self.alive
@@ -411,8 +415,13 @@ class Belief:
         ]
         if not candidates:
             return None
-        # Prefer whoever is least suspected: they are the ones the table
-        # trusts, so they are the ones who can organise against us.
+
+        # Priority 1: Living Seer claimants
+        living_claimants = [s for s in candidates if s in self.seer_claims]
+        if living_claimants:
+            return living_claimants[0]
+
+        # Priority 2: Least suspected (most trusted by village)
         return min(candidates, key=lambda seat: (self.suspicion(seat), seat))
 
 
