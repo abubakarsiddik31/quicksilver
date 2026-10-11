@@ -96,7 +96,10 @@ class GeminiClient:
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_output_tokens,
+                "maxOutputTokens": max(max_output_tokens, 1024),
+                # Set thinkingBudget: 0 so internal reasoning tokens never consume
+                # the output quota or truncate the real message in Gemini 3.8 Flash
+                "thinkingConfig": {"thinkingBudget": 0},
             },
             # Relax safety thresholds to BLOCK_NONE so competitive game terms
             # ("eliminate", "kill", "accuse", "attack", "faint") in Werewolf and
