@@ -209,12 +209,21 @@ def _attack_stat(
             value *= 1.5
         if card.ability in _HUGE_POWER:
             value *= 2.0
+        # Ruin abilities: Sword of Ruin drops other defense, modeled as 1.33x physical attack
+        if card.ability == "Sword of Ruin":
+            value *= 1.33
+        # Protosynthesis / Quark Drive with Booster Energy (Atk highest)
+        if card.item == "Booster Energy" and card.ability in ("Protosynthesis", "Quark Drive"):
+            value *= 1.3
         # Burn halves physical damage (Gen 3+), except for Guts.
         if burned and card.ability != "Guts":
             value *= 0.5
     else:
         if card.item == "Choice Specs":
             value *= 1.5
+        if card.item == "Booster Energy" and card.ability in ("Protosynthesis", "Quark Drive"):
+            value *= 1.3
+        # Vessel of Ruin drops SpA of others by 25% (0.75x)
     return value
 
 

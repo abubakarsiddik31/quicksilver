@@ -279,7 +279,10 @@ def move_score(
         best_score -= friendly_fire.max_percent * ALLY_DAMAGE_WEIGHT
 
     if dex.to_id(move_id) == "fakeout" and turn == 1:
-        best_score += FAKE_OUT_TURN_ONE_BONUS
+        # Check if any opposing active has Armor Tail (Farigiraf) or Dazzling which blocks priority
+        blocks_priority = any(d.usable and d.card and d.card.ability in ("Armor Tail", "Dazzling", "Queenly Majesty") for d in defenders)
+        if not blocks_priority:
+            best_score += FAKE_OUT_TURN_ONE_BONUS
     return best_score, best_target
 
 
