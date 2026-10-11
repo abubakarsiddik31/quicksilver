@@ -1,0 +1,368 @@
+{
+  "cards": [
+    {
+      "ability": "Stamina",
+      "card_id": "vgc-archaludon",
+      "evs": {
+        "def": 252,
+        "hp": 252,
+        "spa": 4
+      },
+      "item": "Leftovers",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Body Press",
+        "Draco Meteor",
+        "Flash Cannon",
+        "Protect"
+      ],
+      "nature": "Bold",
+      "species": "Archaludon"
+    },
+    {
+      "ability": "Thermal Exchange",
+      "card_id": "vgc-baxcalibur",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Loaded Dice",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Icicle Spear",
+        "Glaive Rush",
+        "Ice Shard",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Baxcalibur"
+    },
+    {
+      "ability": "Sword of Ruin",
+      "card_id": "vgc-chien-pao",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Focus Sash",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Icicle Crash",
+        "Sacred Sword",
+        "Sucker Punch",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Chien-Pao"
+    },
+    {
+      "ability": "Rough Skin",
+      "card_id": "vgc-garchomp",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Focus Sash",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Earthquake",
+        "Rock Slide",
+        "Iron Head",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Garchomp"
+    },
+    {
+      "ability": "Good as Gold",
+      "card_id": "vgc-gholdengo",
+      "evs": {
+        "spa": 252,
+        "spd": 4,
+        "spe": 252
+      },
+      "item": "Air Balloon",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Make It Rain",
+        "Shadow Ball",
+        "Nasty Plot",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Gholdengo"
+    },
+    {
+      "ability": "Prankster",
+      "card_id": "vgc-grimmsnarl",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Light Clay",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Light Screen",
+        "Reflect",
+        "Spirit Break",
+        "Thunder Wave"
+      ],
+      "nature": "Careful",
+      "species": "Grimmsnarl"
+    },
+    {
+      "ability": "Magic Bounce",
+      "card_id": "vgc-hatterene",
+      "evs": {
+        "hp": 252,
+        "spa": 252,
+        "spd": 4
+      },
+      "item": "Safety Goggles",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Trick Room",
+        "Dazzling Gleam",
+        "Psychic",
+        "Mystical Fire"
+      ],
+      "nature": "Quiet",
+      "species": "Hatterene"
+    },
+    {
+      "ability": "Intimidate",
+      "card_id": "vgc-incineroar",
+      "evs": {
+        "def": 12,
+        "hp": 244,
+        "spd": 252
+      },
+      "item": "Safety Goggles",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Fake Out",
+        "Knock Off",
+        "Parting Shot",
+        "Flare Blitz"
+      ],
+      "nature": "Careful",
+      "species": "Incineroar"
+    },
+    {
+      "ability": "Quark Drive",
+      "card_id": "vgc-iron-hands",
+      "evs": {
+        "atk": 252,
+        "hp": 236,
+        "spe": 20
+      },
+      "item": "Assault Vest",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Fake Out",
+        "Close Combat",
+        "Wild Charge",
+        "Drain Punch"
+      ],
+      "nature": "Adamant",
+      "species": "Iron Hands"
+    },
+    {
+      "ability": "Prankster",
+      "card_id": "vgc-klefki",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Light Clay",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Reflect",
+        "Light Screen",
+        "Dazzling Gleam",
+        "Foul Play"
+      ],
+      "nature": "Careful",
+      "species": "Klefki"
+    },
+    {
+      "ability": "Competitive",
+      "card_id": "vgc-milotic",
+      "evs": {
+        "def": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Chesto Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Scald",
+        "Ice Beam",
+        "Recover",
+        "Protect"
+      ],
+      "nature": "Calm",
+      "species": "Milotic"
+    },
+    {
+      "ability": "Grassy Surge",
+      "card_id": "vgc-rillaboom",
+      "evs": {
+        "atk": 116,
+        "def": 4,
+        "hp": 236,
+        "spd": 4,
+        "spe": 148
+      },
+      "item": "Assault Vest",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Fake Out",
+        "Wood Hammer",
+        "Grassy Glide",
+        "U-turn"
+      ],
+      "nature": "Adamant",
+      "species": "Rillaboom"
+    },
+    {
+      "ability": "Prankster",
+      "card_id": "vgc-sableye",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Mental Herb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Foul Play",
+        "Fake Out",
+        "Will-O-Wisp",
+        "Taunt"
+      ],
+      "nature": "Careful",
+      "species": "Sableye"
+    },
+    {
+      "ability": "Gale Wings",
+      "card_id": "vgc-talonflame",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spe": 252
+      },
+      "item": "Sharp Beak",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Tailwind",
+        "Brave Bird",
+        "Taunt",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Talonflame"
+    },
+    {
+      "ability": "Vessel of Ruin",
+      "card_id": "vgc-ting-lu",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Leftovers",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Ruination",
+        "Spikes",
+        "Earthquake",
+        "Protect"
+      ],
+      "nature": "Careful",
+      "species": "Ting-Lu"
+    },
+    {
+      "ability": "Prankster",
+      "card_id": "vgc-tornadus",
+      "evs": {
+        "hp": 252,
+        "spd": 4,
+        "spe": 252
+      },
+      "item": "Mental Herb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Bleakwind Storm",
+        "Taunt",
+        "Tailwind",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Tornadus"
+    },
+    {
+      "ability": "Sand Stream",
+      "card_id": "vgc-tyranitar",
+      "evs": {
+        "atk": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Chople Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Rock Slide",
+        "Knock Off",
+        "Low Kick",
+        "Protect"
+      ],
+      "nature": "Careful",
+      "species": "Tyranitar"
+    },
+    {
+      "ability": "Tablets of Ruin",
+      "card_id": "vgc-wo-chien",
+      "evs": {
+        "hp": 252,
+        "spa": 4,
+        "spd": 252
+      },
+      "item": "Sitrus Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Leech Seed",
+        "Foul Play",
+        "Giga Drain",
+        "Protect"
+      ],
+      "nature": "Careful",
+      "species": "Wo-Chien"
+    }
+  ],
+  "count": 18,
+  "expected_size": 18
+}
