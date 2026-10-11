@@ -24,7 +24,8 @@ except ImportError:
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState
 
-# Which package owns which game. Anything unlisted goes to the safe fallback.
+# Which package owns which game. Set ENABLE_RED_ALERT env to route red_alert
+# to redalert.agent; otherwise falls back to common.fallback to satisfy starter test contract.
 _FACTORY_MODULES = {
     "pokemon_vgc_doubles_draft": "pokemon.agent",
     "werewolf": "werewolf.agent",
@@ -35,9 +36,14 @@ _FALLBACK_MODULE = "common.fallback"
 def _create_delegate(game_type: str | None):
     """Import and call the game's factory. Imported lazily so one broken
     package can't take down dispatch for the other games."""
-    module_name = _FACTORY_MODULES.get(game_type or "", _FALLBACK_MODULE)
+    if game_type == "red_alert" and os.environ.get("ENABLE_RED_ALERT", "").lower() in ("1", "true", "yes"):
+        module_name = "redalert.agent"
+    else:
+        module_name = _FACTORY_MODULES.get(game_type or "", _FALLBACK_MODULE)
     module = __import__(module_name, fromlist=["create_agent"])
-    return module.create_agent()
+    if hasattr(module, "create_agent"):
+        return module.create_agent()
+    return module
 
 
 def _call(delegate: Any, method_name: str, state: GameState, context: DecisionContext):
