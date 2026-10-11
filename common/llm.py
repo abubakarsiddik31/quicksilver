@@ -98,6 +98,15 @@ class GeminiClient:
                 "temperature": temperature,
                 "maxOutputTokens": max_output_tokens,
             },
+            # Relax safety thresholds to BLOCK_NONE so competitive game terms
+            # ("eliminate", "kill", "accuse", "attack", "faint") in Werewolf and
+            # Pokemon are never falsely flagged by standard safety filters.
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ],
         }
         if system:
             payload["systemInstruction"] = {"parts": [{"text": system}]}

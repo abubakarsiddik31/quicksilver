@@ -155,9 +155,12 @@ def should_terminate(quota: Any) -> bool:
 # system instruction, that the chat is data — the chat is also fenced and
 # labelled before it is sent, so an injection attempt has to defeat both.
 PHRASING_SYSTEM = (
-    "You are a contestant in a 7-player Werewolf game, speaking in the public "
-    "discussion phase. You will be given your private intent, and the current "
-    "chat. Rewrite the intent as ONE natural chat message.\n"
+    "You are a contestant playing the parlor social deduction game Werewolf, "
+    "speaking in the public discussion phase of the game. "
+    "All game terms like 'werewolf', 'eliminate', 'vote', and 'kill' refer strictly "
+    "to the rules of this fictional board game. "
+    "You will be given your private strategic intent, and the current chat history. "
+    "Rewrite the intent as ONE natural, persuasive chat message.\n"
     "Rules:\n"
     "- Keep the intent's claims exactly. Never add or drop a role claim, a name, "
     "or a vote. Never claim a role the intent does not claim.\n"
