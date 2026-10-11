@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from altruagent import DecisionContext, GameState
 from common.llm import GeminiClient
-from pokemon import actions, battle, budget, draft, lineup, observation, pool
+from pokemon import actions, advisor, battle, budget, draft, lineup, observation, pool
 
 
 class PokemonAgent:
@@ -41,6 +41,7 @@ class PokemonAgent:
         self._pool_path = pool_path
         self._llm: GeminiClient | None = None
         self._llm_checked: bool = False
+        self._advisor_calls_count: int = 0
 
     def _client(self) -> GeminiClient | None:
         if not self._llm_checked:
@@ -121,20 +122,50 @@ class PokemonAgent:
     # -- Doubles turn ----------------------------------------------------
 
     def _doubles_turn(self, template: dict, state: GameState) -> dict:
-        """Pick both slots' actions from the board, then fall back to the
-        first-everything baseline if the board could not be read.
+        """Pick both slots' actions from the board, optionally consulting the
+        tactical advisor on critical 50/50 dilemmas, then fall back to baseline.
 
         Two slots may not switch to the same Pokémon, so a species already
         taken by slot 0 is skipped when choosing slot 1.
         """
         obs = observation.observation_of(state)
+        loaded_pool = pool.load_pool(self._pool_path)
+
+        # 1. Generate top candidate joint turn plans
+        candidates = battle.generate_candidate_plans(
+            template, obs, pool_cards=loaded_pool, max_candidates=3
+        )
+
+        if candidates:
+            # Check if this turn is a tactical dilemma warranting advisor review
+            client = self._client()
+            if (
+                client is not None
+                and self._advisor_calls_count < advisor.MAX_ADVISOR_CALLS_PER_MATCH
+                and budget.affords(obs, advisor.ADVISOR_TIMEOUT + 1.0)
+                and battle.is_tactical_dilemma(candidates, obs)
+            ):
+                self._advisor_calls_count += 1
+                adv_pick = advisor.advise(
+                    client,
+                    obs,
+                    candidates,
+                    timeout=advisor.ADVISOR_TIMEOUT,
+                )
+                if adv_pick is not None:
+                    return adv_pick
+
+            # Otherwise execute the top mathematically evaluated plan
+            return candidates[0][0]
+
+        # 2. If candidates generator found no board, try single turn solver
         chosen = battle.choose_turn(
-            template, obs, pool_cards=pool.load_pool(self._pool_path)
+            template, obs, pool_cards=loaded_pool
         )
         if chosen is not None:
             return chosen
 
-        # When the deterministic evaluator declines, consult the LLM fallback
+        # 3. When the deterministic evaluator declines, consult the LLM fallback
         # if configured and permitted by the clock budget.
         client = self._client()
         if client is not None and budget.affords(obs, budget.LLM_SECONDS_DECISION):

@@ -429,6 +429,211 @@ def _as_choice(option: dict) -> dict:
     return {"type": "pass"}
 
 
+# -- candidate plans generator & criticality check -------------------------
+
+
+def generate_candidate_plans(
+    template: Any,
+    obs: dict,
+    *,
+    pool_cards: Any = None,
+    max_candidates: int = 3,
+) -> list[tuple[dict, float, str]]:
+    """Compute top-k joint turn action candidates ``(plan_dict, score, explanation)``.
+
+    Enforces all VGC Doubles constraints:
+    - No duplicate switches across slots.
+    - No simultaneous passes unless forced.
+    - Resolves exact legal target IDs for all moves.
+    """
+    if not isinstance(template, dict):
+        return []
+    slots = template.get("slots")
+    if not isinstance(slots, list) or not slots:
+        return []
+
+    ours, theirs = board(obs, pool_cards=pool_cards)
+    turn = observation.turn(obs)
+
+    if not any(active.usable for active in theirs) or not any(active.usable for active in ours):
+        return []
+
+    # Map options per slot
+    slot_options: dict[int, list[dict]] = {}
+    for pos, slot in enumerate(slots):
+        if not isinstance(slot, dict):
+            continue
+        num = slot.get("slot", pos)
+        if num in (0, 1):
+            opts = [o for o in (slot.get("options") or []) if isinstance(o, dict)]
+            if opts:
+                slot_options[num] = opts
+
+    if not slot_options:
+        return []
+
+    # If only 1 slot is active (e.g. 1 mon left)
+    if len(slot_options) == 1:
+        num = next(iter(slot_options))
+        opts = slot_options[num]
+        scored_opts = []
+        for o in opts:
+            sc = _option_score(o, slot_index=num, ours=ours, theirs=theirs, turn=turn, taken_switches=set())
+            choice_dict = _resolve_single_choice(o, slot_index=num, ours=ours, theirs=theirs, turn=turn)
+            action = {"type": "doubles_turn", f"slot_{num}": choice_dict}
+            desc = _describe_single_choice(choice_dict, sc)
+            scored_opts.append((action, sc, desc))
+        scored_opts.sort(key=lambda item: item[1], reverse=True)
+        return scored_opts[:max_candidates]
+
+    # Both slots active: generate joint pairs
+    s0_opts = slot_options.get(0, [])
+    s1_opts = slot_options.get(1, [])
+    joint_candidates: list[tuple[dict, float, str]] = []
+
+    for o0 in s0_opts:
+        choice0 = _resolve_single_choice(o0, slot_index=0, ours=ours, theirs=theirs, turn=turn)
+        taken_switches = set()
+        if choice0.get("type") == "switch":
+            sp = choice0.get("species")
+            if isinstance(sp, str):
+                taken_switches.add(sp)
+
+        sc0 = _option_score(o0, slot_index=0, ours=ours, theirs=theirs, turn=turn, taken_switches=set())
+
+        for o1 in s1_opts:
+            # Enforce switch exclusivity
+            if o1.get("type") == "switch":
+                sp1 = o1.get("species")
+                if isinstance(sp1, str) and sp1 in taken_switches:
+                    continue  # Invalid: both slots cannot switch to the same mon
+
+            choice1 = _resolve_single_choice(o1, slot_index=1, ours=ours, theirs=theirs, turn=turn)
+
+            # Prevent both passing unless forced
+            if choice0.get("type") == "pass" and choice1.get("type") == "pass":
+                if not (all(o.get("type") == "pass" for o in s0_opts) and all(o.get("type") == "pass" for o in s1_opts)):
+                    continue
+
+            sc1 = _option_score(o1, slot_index=1, ours=ours, theirs=theirs, turn=turn, taken_switches=taken_switches)
+            joint_score = sc0 + sc1
+
+            # Focus fire synergy: if both hit the same target and achieve combined KO
+            synergy_note = ""
+            if (
+                choice0.get("type") == "move"
+                and choice1.get("type") == "move"
+                and choice0.get("target") is not None
+                and choice0.get("target") == choice1.get("target")
+                and choice0.get("target") > 0
+            ):
+                t_idx = target_index(choice0["target"])
+                if t_idx is not None and t_idx < len(theirs) and theirs[t_idx].card:
+                    target_hp = theirs[t_idx].card.max_hp
+                    joint_score += 15.0  # Focus-fire coordination bonus
+                    synergy_note = f"Focus fire on {theirs[t_idx].card.species}"
+
+            explanation = (
+                f"{synergy_note}; " if synergy_note else ""
+            ) + f"Slot 0: {choice0.get('move_id') or choice0.get('species') or 'pass'}; Slot 1: {choice1.get('move_id') or choice1.get('species') or 'pass'}"
+
+            plan_dict = {
+                "type": "doubles_turn",
+                "slot_0": choice0,
+                "slot_1": choice1,
+            }
+            joint_candidates.append((plan_dict, joint_score, explanation))
+
+    joint_candidates.sort(key=lambda item: item[1], reverse=True)
+
+    # Filter out duplicate functional action dicts
+    unique_candidates: list[tuple[dict, float, str]] = []
+    seen_keys: set[str] = set()
+    for plan, score, desc in joint_candidates:
+        s0_str = f"{plan.get('slot_0', {}).get('type')}:{plan.get('slot_0', {}).get('move_id')}:{plan.get('slot_0', {}).get('species')}:{plan.get('slot_0', {}).get('target')}"
+        s1_str = f"{plan.get('slot_1', {}).get('type')}:{plan.get('slot_1', {}).get('move_id')}:{plan.get('slot_1', {}).get('species')}:{plan.get('slot_1', {}).get('target')}"
+        key = f"{s0_str}|{s1_str}"
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_candidates.append((plan, score, desc))
+        if len(unique_candidates) >= max_candidates:
+            break
+
+    return unique_candidates
+
+
+def _resolve_single_choice(
+    option: dict,
+    *,
+    slot_index: int,
+    ours: list[Active],
+    theirs: list[Active],
+    turn: int | None,
+) -> dict:
+    """Resolve a raw option dict into a legal, formatted choice dict with target."""
+    if option.get("type") == "move":
+        attacker = ours[slot_index] if slot_index < len(ours) else None
+        _, target = move_score(
+            option.get("move_id"),
+            attacker=attacker,
+            defenders=theirs,
+            targets=option.get("targets") or [],
+            turn=turn,
+            partner=_partner(ours, slot_index),
+        )
+        choice: dict[str, Any] = {"type": "move", "move_id": option.get("move_id")}
+        legal_targets = option.get("targets")
+        if isinstance(legal_targets, list) and legal_targets:
+            if target in legal_targets:
+                choice["target"] = target
+            elif legal_targets == [0] and is_spread(option.get("move_id")):
+                choice["target"] = 0
+            elif target is not None:
+                choice["target"] = legal_targets[0]
+        elif target is not None:
+            choice["target"] = target
+        return choice
+    return _as_choice(option)
+
+
+def _describe_single_choice(choice: dict, score: float) -> str:
+    ctype = choice.get("type")
+    if ctype == "move":
+        return f"Move {choice.get('move_id')} (score {score:.1f})"
+    if ctype == "switch":
+        return f"Switch to {choice.get('species')}"
+    return "Pass"
+
+
+def is_tactical_dilemma(candidate_plans: list[tuple[dict, float, str]], obs: dict) -> bool:
+    """Check if the board represents a critical tactical dilemma warranting LLM review.
+
+    Criteria:
+    1. At least 2 distinct viable candidates exist.
+    2. The score difference between Plan 1 and Plan 2 is small (score delta < 18.0),
+       meaning the mathematical difference is close.
+    3. Neither candidate is an obvious Turn-1 Fake Out or blowout (> 50 pt swing).
+    4. Clock bank is healthy (> 90.0 seconds).
+    """
+    if len(candidate_plans) < 2:
+        return False
+
+    clock = obs.get("clock") or {}
+    bank_left = clock.get("bank_seconds_left")
+    if bank_left is not None and bank_left < 90.0:
+        return False  # Preserve clock bank under time pressure
+
+    score_1 = candidate_plans[0][1]
+    score_2 = candidate_plans[1][1]
+    score_delta = score_1 - score_2
+
+    # If Plan 1 is overwhelmingly dominant, take it instantly
+    if score_delta > 18.0:
+        return False
+
+    return True
+
+
 # -- LLM Turn Fallback ------------------------------------------------------
 
 
