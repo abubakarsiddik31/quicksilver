@@ -8,7 +8,7 @@ raised decision kills that match's worker process.
 from __future__ import annotations
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, LegalAction, SendMessage
-from werewolf import messages as msg
+from werewolf import messages as msg, speech
 from werewolf.agent import WerewolfAgent
 
 NAMES = ["alice", "bob", "carl", "dave", "erin", "fran", "gus"]
@@ -245,3 +245,56 @@ def test_the_agent_can_render_its_window_as_untrusted_data():
     rendered = msg.render_untrusted([], our_position=3)
     assert msg.FENCE_BEGIN in rendered and msg.FENCE_END in rendered
     assert state.phase == "messaging"
+
+
+# -- optional model phrasing ------------------------------------------------
+
+
+class StubClient:
+    """Stands in for the Gemini client, with no network."""
+
+    def __init__(self, reply):
+        self.reply = reply
+
+    def generate(self, prompt, **kwargs):
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+def with_client(agent, reply):
+    agent._llm = StubClient(reply)
+    agent._llm_checked = True
+    return agent
+
+
+def test_the_model_only_rewords_a_claim_the_policy_already_made():
+    agent = with_client(WerewolfAgent(), "Player1 is a wolf, I would vote them out.")
+    state = werewolf_state(observation=VILLAGER, phase="messaging")
+    sent = agent.choose_message(state, context())
+    assert isinstance(sent, SendMessage)
+    assert sent.content == "Player1 is a wolf, I would vote them out."
+    # The claim itself is still recorded, so it is not made twice.
+    assert speech.ACCUSE in agent._said
+
+
+def test_a_failing_model_falls_back_to_the_deterministic_wording():
+    for reply in (None, "", RuntimeError("boom")):
+        agent = with_client(WerewolfAgent(), reply)
+        state = werewolf_state(observation=VILLAGER, phase="messaging")
+        sent = agent.choose_message(state, context())
+        assert isinstance(sent, SendMessage), reply
+        # your_position is 3 in this file's state helper, so the lowest-seat
+        # suspect is Player0.
+        assert "Vote Player0" in sent.content
+        assert msg.fits(sent.content) is True
+
+
+def test_the_agent_never_constructs_a_client_without_a_key(monkeypatch):
+    for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    agent = WerewolfAgent()
+    assert agent._client() is None
+    # And it still plays: the deterministic path needs no model at all.
+    state = werewolf_state(observation=VILLAGER, phase="messaging")
+    assert isinstance(agent.choose_message(state, context()), SendMessage)

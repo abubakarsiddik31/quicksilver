@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, SendMessage
 
+from common import llm
 from werewolf import belief as belief_mod
 from werewolf import messages as msg, speech
 
@@ -61,6 +62,9 @@ class WerewolfAgent:
         self.quota = msg.Quota()
         self._last_phase: str | None = None
         self._said: set[str] = set()
+        # Built lazily: no key configured means no model is ever constructed.
+        self._llm = None
+        self._llm_checked = False
 
     def choose_action(self, state: GameState, context: DecisionContext):
         legal = state.legal_actions
@@ -134,11 +138,33 @@ class WerewolfAgent:
             composed = speech.compose(self.belief, already_sent=self._said)
             if composed is not None:
                 kind, text = composed
+                text = speech.phrase(
+                    self._client(),
+                    kind=kind,
+                    intent=text,
+                    window=getattr(state, "new_messages", None),
+                    our_position=self.belief.seat,
+                )
                 if msg.fits(text):
                     self._said.add(kind)
                     self.quota.record()
                     return SendMessage(text)
         return TERMINATE_MESSAGING
+
+    def _client(self):
+        """The model client, built once per match — only if a key is configured.
+
+        Absent a key this is ``None`` every time, and the deterministic wording
+        from ``speech.compose`` is used unchanged, so the agent works with no
+        model at all.
+        """
+        if self._llm is None and not self._llm_checked:
+            self._llm_checked = True
+            try:
+                self._llm = llm.GeminiClient.from_env()
+            except Exception:  # noqa: BLE001 - never let this cost a match
+                self._llm = None
+        return self._llm
 
     def _observe_window(self, state: GameState) -> None:
         """Fold the open discussion into beliefs: who claimed what, and who
