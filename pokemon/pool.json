@@ -61,6 +61,26 @@
       "species": "Archaludon"
     },
     {
+      "ability": "Adaptability",
+      "card_id": "vgc-basculegion",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Life Orb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Wave Crash",
+        "Aqua Jet",
+        "Liquidation",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Basculegion"
+    },
+    {
       "ability": "Thermal Exchange",
       "card_id": "vgc-baxcalibur",
       "evs": {
@@ -161,6 +181,26 @@
       "species": "Dragonite"
     },
     {
+      "ability": "Armor Tail",
+      "card_id": "vgc-farigiraf",
+      "evs": {
+        "hp": 252,
+        "spa": 252,
+        "spd": 4
+      },
+      "item": "Electric Seed",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Trick Room",
+        "Dazzling Gleam",
+        "Psychic",
+        "Helping Hand"
+      ],
+      "nature": "Quiet",
+      "species": "Farigiraf"
+    },
+    {
       "ability": "Protosynthesis",
       "card_id": "vgc-flutter-mane",
       "evs": {
@@ -219,6 +259,26 @@
       ],
       "nature": "Timid",
       "species": "Gholdengo"
+    },
+    {
+      "ability": "Protosynthesis",
+      "card_id": "vgc-great-tusk",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spe": 4
+      },
+      "item": "Booster Energy",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Headlong Rush",
+        "Close Combat",
+        "Rock Slide",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Great Tusk"
     },
     {
       "ability": "Prankster",
@@ -543,6 +603,26 @@
       "species": "Talonflame"
     },
     {
+      "ability": "Defiant",
+      "card_id": "vgc-thundurus",
+      "evs": {
+        "spa": 252,
+        "spd": 4,
+        "spe": 252
+      },
+      "item": "Life Orb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Thunderbolt",
+        "Sludge Bomb",
+        "Taunt",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Thundurus"
+    },
+    {
       "ability": "Vessel of Ruin",
       "card_id": "vgc-ting-lu",
       "evs": {
@@ -683,6 +763,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 34,
+  "count": 38,
   "expected_size": 18
 }
