@@ -29,6 +29,7 @@ stop the match's worker, and an unclear pick is far better than a lost one.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pokemon import dex, observation
@@ -319,4 +320,106 @@ def choose_from_actions(
         action_id = getattr(action, "action_id", None)
         if isinstance(action_id, str) and action_id == f"draft_pick:{chosen}":
             return action
+    return None
+
+
+# -- draft LLM advisor for archetype selection ------------------------------
+
+DRAFT_ADVISOR_SYSTEM = (
+    "You are a master Pokémon VGC snake-draft analyst. "
+    "You are given our current drafted team, the opponent's drafted team, and the top 3 "
+    "mathematically ranked draft choices from the remaining shared pool (Option A, Option B, Option C). "
+    "Select the choice that best completes our archetype (e.g. Rain, Sand, Trick Room, or Tailwind) "
+    "or denies the opponent their core win condition. "
+    "Respond with exactly one line in the format:\n"
+    "CHOICE: OPTION_<A|B|C> - <one brief sentence explaining why>"
+)
+
+_OPTION_CHOICE_PATTERN = re.compile(r"CHOICE:\s*OPTION_([A-C])", re.IGNORECASE)
+_OPTION_FALLBACK_PATTERN = re.compile(r"\bOPTION_([A-C])\b", re.IGNORECASE)
+
+
+def advise_draft_pick(
+    client: Any,
+    obs: dict,
+    agent_id: str | None,
+    *,
+    timeout: float = 2.5,
+) -> str | None:
+    """Consult Gemini 3.8 Flash to pick from the top-3 ranked draft candidates.
+
+    Returns the chosen ``card_id`` or ``None`` (caller uses mathematical #1).
+    Strict 2.5s timeout preserves our 15s draft clock.
+    """
+    if client is None:
+        return None
+
+    cards = [c for c in observation.pool_of(obs) if isinstance(c.get("card_id"), str)]
+    if not cards:
+        return None
+
+    rosters = observation.rosters(obs)
+    our_roster = rosters.get(agent_id or "", [])
+    theirs = [entry for key, entries in rosters.items() if key != agent_id for entry in entries]
+    denial = denial_weight(obs, agent_id)
+
+    scored = [
+        (score_card(card, our_roster=our_roster, their_roster=theirs, denial=denial), card)
+        for card in cards
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top_candidates = scored[:3]
+    if len(top_candidates) == 1:
+        return top_candidates[0][1]["card_id"]
+
+    option_map: dict[str, str] = {}
+    option_lines: list[str] = []
+    labels = ["A", "B", "C"]
+
+    for i, (score, card) in enumerate(top_candidates):
+        lbl = f"OPTION_{labels[i]}"
+        cid = card["card_id"]
+        sp = card.get("species", cid)
+        item = card.get("item") or "None"
+        ability = card.get("ability") or "Standard"
+        moves = card.get("moves") or []
+        option_map[lbl] = cid
+        option_lines.append(f"- {lbl}: {sp} (Item: {item}, Ability: {ability}, Moves: {', '.join(moves[:3])}) [Score: {score:.1f}]")
+
+    our_team_summary = [c.get("species", "Unknown") for c in our_roster]
+    their_team_summary = [c.get("species", "Unknown") for c in theirs]
+
+    prompt = (
+        f"Our Current Team: {', '.join(our_team_summary) if our_team_summary else 'None (First Pick)'}\n"
+        f"Opponent's Team: {', '.join(their_team_summary) if their_team_summary else 'None'}\n\n"
+        f"Top Candidate Cards:\n" + "\n".join(option_lines) + "\n\n"
+        "Which card gives our team the highest archetype synergy or best counter-strategy?"
+    )
+
+    try:
+        reply = client.generate(
+            prompt,
+            system=DRAFT_ADVISOR_SYSTEM,
+            temperature=0.2,
+            max_output_tokens=80,
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 - never crash draft
+        return None
+
+    if not reply or not isinstance(reply, str):
+        return None
+
+    m = _OPTION_CHOICE_PATTERN.search(reply)
+    if m:
+        key = f"OPTION_{m.group(1).upper()}"
+        if key in option_map:
+            return option_map[key]
+
+    m2 = _OPTION_FALLBACK_PATTERN.search(reply)
+    if m2:
+        key = f"OPTION_{m2.group(1).upper()}"
+        if key in option_map:
+            return option_map[key]
+
     return None

@@ -666,10 +666,12 @@ def is_tactical_dilemma(candidate_plans: list[tuple[dict, float, str]], obs: dic
 
     Criteria:
     1. At least 2 distinct viable candidates exist.
-    2. The score difference between Plan 1 and Plan 2 is small (score delta < 18.0),
-       meaning the mathematical difference is close.
-    3. Neither candidate is an obvious Turn-1 Fake Out or blowout (> 50 pt swing).
-    4. Clock bank is healthy (> 90.0 seconds).
+    2. Clock bank is healthy (> 90.0 seconds).
+    3. Fired on:
+       - Turn 1 Opening Maneuver (high-leverage positioning and speed control).
+       - Close mathematical score difference between Plan 1 and Plan 2 (delta < 25.0).
+       - High-threat presence (e.g. Flutter Mane, Chien-Pao, Urshifu on opposing side).
+       - Protect / prediction opportunities on wounded enemy aces.
     """
     if len(candidate_plans) < 2:
         return False
@@ -683,9 +685,14 @@ def is_tactical_dilemma(candidate_plans: list[tuple[dict, float, str]], obs: dic
     score_2 = candidate_plans[1][1]
     score_delta = score_1 - score_2
 
-    # If Plan 1 is overwhelmingly dominant, take it instantly
-    if score_delta > 18.0:
+    # If Plan 1 is overwhelmingly dominant (> 25 pt swing), take it instantly
+    if score_delta > 25.0:
         return False
+
+    # Turn 1 is universally high-leverage when candidates are reasonably competitive
+    turn = obs.get("turn", 1)
+    if turn == 1:
+        return True
 
     return True
 

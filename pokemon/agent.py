@@ -75,8 +75,20 @@ class PokemonAgent:
 
     def _draft(self, legal, state: GameState, context: DecisionContext):
         """Choose from the offered cards by team value and denial, mapped back
-        onto the server's own action list (a constructed pick is refused)."""
+        onto the server's own action list, consulting the draft LLM advisor
+        for archetype synergy when time allows."""
         obs = observation.observation_of(state)
+        client = self._client()
+
+        # Try strategic LLM draft pick within safety clock budget
+        if client is not None and budget.affords(obs, budget.LLM_SECONDS_DRAFT):
+            adv_cid = draft.advise_draft_pick(client, obs, context.agent_id, timeout=2.5)
+            if adv_cid is not None:
+                for action in legal or []:
+                    action_id = getattr(action, "action_id", None)
+                    if isinstance(action_id, str) and action_id == f"draft_pick:{adv_cid}":
+                        return action
+
         chosen = draft.choose_from_actions(
             obs, agent_id=context.agent_id, legal_actions=legal
         )
@@ -100,15 +112,26 @@ class PokemonAgent:
 
     def _lineup(self, template: dict, state: GameState) -> dict:
         """Bring the four with the best matchups against their six, and lead
-        the two best equipped to open.
-
-        Team Preview is the one decision made with full information about the
-        opposing team, so it is worth choosing rather than taking the first
-        four. Falls back to the simple baseline if the rosters can't be read.
-        """
+        the two best equipped to open, consulting the Team Preview LLM advisor
+        during the 90-second preview window."""
         obs = observation.observation_of(state)
+        loaded_pool = pool.load_pool(self._pool_path)
+
+        # 1. Generate top candidate lineups and consult LLM advisor
+        client = self._client()
+        candidates = lineup.generate_candidate_lineups(
+            template, obs, pool_cards=loaded_pool, max_candidates=3
+        )
+        if candidates:
+            if client is not None and budget.affords(obs, 5.0):
+                adv_lineup = lineup.advise_lineup(client, obs, candidates, timeout=4.0)
+                if adv_lineup is not None:
+                    return adv_lineup
+            return candidates[0][0]
+
+        # 2. Fallback to single lineup solver
         chosen = lineup.choose_lineup(
-            template, obs, pool_cards=pool.load_pool(self._pool_path)
+            template, obs, pool_cards=loaded_pool
         )
         if chosen is not None:
             return chosen

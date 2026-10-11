@@ -22,7 +22,7 @@ from typing import Any
 from common.llm import GeminiClient
 
 ADVISOR_TIMEOUT = 3.0
-MAX_ADVISOR_CALLS_PER_MATCH = 5
+MAX_ADVISOR_CALLS_PER_MATCH = 8
 
 ADVISOR_SYSTEM = (
     "You are a World Champion Pokémon VGC Doubles tactical advisor. "
