@@ -116,34 +116,48 @@ class RedAlertAgent:
             orders.append({"cmd": "build", "item": WEAP})
             queued_items.add(WEAP)
 
-        # 4. Unit Training (Continuous Armament)
-        # Train infantry if barracks available
-        if INF_E1 in avail and cash >= 300:
-            # Train up to 3 infantry at a time
-            orders.append({"cmd": "train", "item": INF_E1, "count": 3})
+        # 4. Unit Training (Continuous Armament & Economy)
+        # Always maintain at least 2 harvesters if we own a refinery
+        harv_count = econ.get("harvesters", 0)
+        if "harv" in avail and harv_count < 2 and cash >= 1100 and "harv" not in queued_items:
+            orders.append({"cmd": "train", "item": "harv", "count": 1})
+            queued_items.add("harv")
 
         # Train vehicles if available (e.g. 1tnk, 2tnk, 3tnk, jeep, apc)
-        for v in ("2tnk", "3tnk", "1tnk", "ftrk", "apc", "jeep"):
-            if v in avail and cash >= 800:
+        for v in ("3tnk", "2tnk", "1tnk", "ftrk", "apc", "jeep"):
+            if v in avail and cash >= 800 and v not in queued_items:
                 orders.append({"cmd": "train", "item": v, "count": 1})
+                queued_items.add(v)
                 break
 
-        # 5. Structure Repairs
+        # Train infantry if barracks available
+        if INF_E1 in avail and cash >= 300 and INF_E1 not in queued_items:
+            # Train up to 3 infantry at a time
+            orders.append({"cmd": "train", "item": INF_E1, "count": 3})
+            queued_items.add(INF_E1)
+
+        # 5. Base Defenses (Gun Turrets / Tesla Coils)
+        for d in ("tsla", "gun", "ftur", "pbox"):
+            if d in avail and d not in queued_items and cash >= 1000 and power_provided > (power_drained + 50):
+                orders.append({"cmd": "build", "item": d})
+                queued_items.add(d)
+                break
+
+        # 6. Structure Repairs
         for b in own_buildings:
             b_hp = b.get("hp", 100)
             bid = b.get("id")
             if b_hp < 75 and bid is not None and not b.get("repairing"):
                 orders.append({"cmd": "repair", "building": bid, "on": True})
 
-        # 6. Military Attack & Stance Orders
-        # Ready attack suggestion from server engine
+        # 7. Military Attack & Stance Orders
         attack_now = legal.get("attack_now")
         combat_units = legal.get("combat_units") or []
 
-        # If we have 4+ combat units, launch an offensive wave
+        # If we have 3+ combat units, launch an offensive wave
         if attack_now and len(combat_units) >= 3:
             orders.append(attack_now)
-        elif len(combat_units) >= 6:
+        elif len(combat_units) >= 5:
             enemy_base = legal.get("enemy_base")
             if enemy_base:
                 orders.append({
@@ -152,14 +166,14 @@ class RedAlertAgent:
                     "to": enemy_base,
                 })
 
-        # Set stance to defend or attack_anything for idle combat units
+        # Set stance to attack_anything or defend for idle combat units
         idle_units = legal.get("idle_units") or []
         idle_fighters = [uid for uid in idle_units if uid in combat_units]
         if idle_fighters:
             orders.append({
                 "cmd": "set_stance",
                 "units": idle_fighters[:20],
-                "stance": "defend",
+                "stance": "attack_anything",
             })
 
         # Return orders batch
