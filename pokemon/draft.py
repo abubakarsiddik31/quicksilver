@@ -215,9 +215,40 @@ def team_value(roster: list[dict]) -> float:
     return total
 
 
+# -- pool archetype synergies -----------------------------------------------
+
+# Tier-1 S-rank tournament picks in the captured 18-card pool
+_S_TIER_SPECIES = {"Incineroar", "Flutter Mane", "Urshifu-Rapid-Strike", "Rillaboom", "Chien-Pao"}
+# High-priority archetype pivots
+_SPEED_CONTROL_SPECIES = {"Talonflame", "Tornadus"}
+_WEATHER_SETTERS = {"Tyranitar"}
+
+
+def archetype_bonus(card: dict, roster: list[dict]) -> float:
+    """Extra valuation for high-synergy VGC tournament archetypes."""
+    species = card.get("species", "")
+    bonus = 0.0
+
+    # S-Tier staples: Intimidate/Fake Out pivot (Incineroar/Rillaboom), top sweepers
+    if species in _S_TIER_SPECIES:
+        bonus += 3.0
+
+    # Speed control priority: having at least 1 Tailwind setter is crucial in VGC
+    has_speed_control = any(c.get("species") in _SPEED_CONTROL_SPECIES for c in roster)
+    if species in _SPEED_CONTROL_SPECIES and not has_speed_control:
+        bonus += 2.5
+
+    # Weather/Terrain synergy: Baxcalibur pairs with Sand / Ice
+    if species == "Baxcalibur" and any(c.get("species") == "Tyranitar" for c in roster):
+        bonus += 2.0
+
+    return bonus
+
+
 def marginal_value(card: dict, roster: list[dict]) -> float:
     """How much this card adds to *this* roster."""
-    return team_value([*roster, card]) - team_value(roster)
+    base_marginal = team_value([*roster, card]) - team_value(roster)
+    return base_marginal + archetype_bonus(card, roster)
 
 
 def score_card(

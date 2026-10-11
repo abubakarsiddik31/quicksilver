@@ -50,7 +50,12 @@ ALLY_DAMAGE_WEIGHT = 1.0     # damage we deal our own partner counts against us
 # hits our own partner, which is why the two are tracked separately.
 _SPREAD_TARGETS = {"allAdjacentFoes", "allAdjacent"}
 _ALLY_HITTING_TARGETS = {"allAdjacent"}
+# Status moves valuation
 _PROTECT_LIKE = {"protect", "detect", "spikyshield", "banefulbunker", "endure"}
+_SPEED_CONTROL = {"tailwind", "trickroom"}
+_SCREENS = {"reflect", "lightscreen", "auroraveil"}
+_OFFENSIVE_BOOSTS = {"nastyplot", "swordsdance", "calmmind"}
+_CRIPPLING_STATUS = {"willowisp", "thunderwave", "taunt", "partingshot", "leechseed"}
 
 
 # -- one Pokémon on the board -----------------------------------------------
@@ -86,6 +91,14 @@ class Active:
         if isinstance(current, int) and isinstance(maximum, int) and maximum > 0:
             return max(0.0, min(1.0, current / maximum))
         return 1.0
+
+    @property
+    def current_hp(self) -> int:
+        cur = self.summary.get("current_hp")
+        if isinstance(cur, int) and not isinstance(cur, bool):
+            return max(0, cur)
+        max_hp = self.card.max_hp if self.card else 100
+        return max(1, int(self.hp_fraction * max_hp))
 
     @property
     def is_low(self) -> bool:
@@ -183,10 +196,36 @@ def move_score(
         return 0.0, None
 
     if dex.move_category(move_id) == "Status":
-        if dex.to_id(move_id) in _PROTECT_LIKE:
+        mid = dex.to_id(move_id)
+        if mid in _PROTECT_LIKE:
             low = attacker is not None and attacker.is_low
             return (PROTECT_WHEN_LOW if low else PROTECT_BASE), None
-        return 0.0, None
+
+        # Speed control: Tailwind or Trick Room are massive game-changers early
+        if mid in _SPEED_CONTROL:
+            if turn in (1, 2):
+                return 42.0, None
+            return 20.0, None
+
+        # Defensive Screens: Reflect / Light Screen
+        if mid in _SCREENS:
+            if turn in (1, 2):
+                return 32.0, None
+            return 15.0, None
+
+        # Offensive Setup: Nasty Plot, Swords Dance
+        if mid in _OFFENSIVE_BOOSTS:
+            if attacker is not None and not attacker.is_low:
+                return 35.0, None
+            return 10.0, None
+
+        # Crippling status: Will-O-Wisp, Thunder Wave, Taunt
+        if mid in _CRIPPLING_STATUS:
+            valid_targets = [t for t in targets or [] if isinstance(t, int) and t > 0]
+            pick_t = valid_targets[0] if valid_targets else (targets[0] if targets else None)
+            return 28.0, pick_t
+
+        return 5.0, None
 
     if attacker is None or attacker.card is None:
         return 0.0, None
@@ -217,9 +256,11 @@ def move_score(
             defender_boosts=defender.boosts,
         )
         score = result.max_percent * DAMAGE_WEIGHT
-        if result.min_damage >= defender.card.max_hp:
+        # True KO check against current remaining HP (finishing off wounded foes)
+        rem_hp = defender.current_hp
+        if result.min_damage >= rem_hp:
             score += KO_BONUS
-        elif result.max_damage >= defender.card.max_hp:
+        elif result.max_damage >= rem_hp:
             score += KO_BONUS / 2
         if score > best_score:
             best_score = score
@@ -518,7 +559,7 @@ def generate_candidate_plans(
             sc1 = _option_score(o1, slot_index=1, ours=ours, theirs=theirs, turn=turn, taken_switches=taken_switches)
             joint_score = sc0 + sc1
 
-            # Focus fire synergy: if both hit the same target and achieve combined KO
+            # Focus fire synergy vs Overkill avoidance
             synergy_note = ""
             if (
                 choice0.get("type") == "move"
@@ -529,9 +570,24 @@ def generate_candidate_plans(
             ):
                 t_idx = target_index(choice0["target"])
                 if t_idx is not None and t_idx < len(theirs) and theirs[t_idx].card:
-                    target_hp = theirs[t_idx].card.max_hp
-                    joint_score += 15.0  # Focus-fire coordination bonus
-                    synergy_note = f"Focus fire on {theirs[t_idx].card.species}"
+                    t_active = theirs[t_idx]
+                    # Estimate slot 0 damage to this target
+                    dmg0 = damage(
+                        ours[0].card,
+                        t_active.card,
+                        choice0.get("move_id"),
+                        attacker_boosts=ours[0].boosts,
+                        defender_boosts=t_active.boosts,
+                    )
+                    if dmg0.min_damage >= t_active.current_hp:
+                        # Slot 0 already guarantees the KO! Penalize overkill if another opponent exists
+                        other_opponents = [opp for opp_i, opp in enumerate(theirs) if opp_i != t_idx and opp.usable]
+                        if other_opponents:
+                            joint_score -= 30.0  # Overkill penalty
+                            synergy_note = f"Overkill on {t_active.card.species} (Slot 0 guarantees KO)"
+                    else:
+                        joint_score += 15.0  # Cooperative Focus-Fire bonus
+                        synergy_note = f"Focus fire on {t_active.card.species}"
 
             explanation = (
                 f"{synergy_note}; " if synergy_note else ""

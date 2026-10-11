@@ -1,6 +1,46 @@
 {
   "cards": [
     {
+      "ability": "Regenerator",
+      "card_id": "vgc-amoonguss",
+      "evs": {
+        "def": 172,
+        "hp": 244,
+        "spd": 92
+      },
+      "item": "Rocky Helmet",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Spore",
+        "Rage Powder",
+        "Pollen Puff",
+        "Sludge Bomb"
+      ],
+      "nature": "Bold",
+      "species": "Amoonguss"
+    },
+    {
+      "ability": "Intimidate",
+      "card_id": "vgc-arcanine",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spe": 4
+      },
+      "item": "Safety Goggles",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Flare Blitz",
+        "Extreme Speed",
+        "Snarl",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Arcanine"
+    },
+    {
       "ability": "Stamina",
       "card_id": "vgc-archaludon",
       "evs": {
@@ -59,6 +99,26 @@
       ],
       "nature": "Jolly",
       "species": "Chien-Pao"
+    },
+    {
+      "ability": "Multiscale",
+      "card_id": "vgc-dragonite",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spe": 4
+      },
+      "item": "Loaded Dice",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Extreme Speed",
+        "Scale Shot",
+        "Tailwind",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Dragonite"
     },
     {
       "ability": "Rough Skin",
@@ -121,6 +181,26 @@
       "species": "Grimmsnarl"
     },
     {
+      "ability": "Intimidate",
+      "card_id": "vgc-gyarados",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spe": 4
+      },
+      "item": "Sitrus Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Waterfall",
+        "Earthquake",
+        "Taunt",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Gyarados"
+    },
+    {
       "ability": "Magic Bounce",
       "card_id": "vgc-hatterene",
       "evs": {
@@ -159,6 +239,26 @@
       ],
       "nature": "Careful",
       "species": "Incineroar"
+    },
+    {
+      "ability": "Psychic Surge",
+      "card_id": "vgc-indeedee-f",
+      "evs": {
+        "def": 252,
+        "hp": 252,
+        "spd": 4
+      },
+      "item": "Rocky Helmet",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Follow Me",
+        "Helping Hand",
+        "Dazzling Gleam",
+        "Psychic"
+      ],
+      "nature": "Bold",
+      "species": "Indeedee-F"
     },
     {
       "ability": "Quark Drive",
@@ -263,6 +363,26 @@
       "species": "Sableye"
     },
     {
+      "ability": "Pixilate",
+      "card_id": "vgc-sylveon",
+      "evs": {
+        "hp": 244,
+        "spa": 252,
+        "spd": 12
+      },
+      "item": "Wiki Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Hyper Voice",
+        "Shadow Ball",
+        "Calm Mind",
+        "Protect"
+      ],
+      "nature": "Modest",
+      "species": "Sylveon"
+    },
+    {
       "ability": "Gale Wings",
       "card_id": "vgc-talonflame",
       "evs": {
@@ -323,6 +443,26 @@
       "species": "Tornadus"
     },
     {
+      "ability": "Regenerator",
+      "card_id": "vgc-toxapex",
+      "evs": {
+        "def": 4,
+        "hp": 252,
+        "spd": 252
+      },
+      "item": "Black Sludge",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Liquidation",
+        "Haze",
+        "Toxic",
+        "Protect"
+      ],
+      "nature": "Careful",
+      "species": "Toxapex"
+    },
+    {
       "ability": "Sand Stream",
       "card_id": "vgc-tyranitar",
       "evs": {
@@ -341,6 +481,46 @@
       ],
       "nature": "Careful",
       "species": "Tyranitar"
+    },
+    {
+      "ability": "Unseen Fist",
+      "card_id": "vgc-urshifu-rapid-strike",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Mystic Water",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Surging Strikes",
+        "Close Combat",
+        "Aqua Jet",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Urshifu-Rapid-Strike"
+    },
+    {
+      "ability": "Prankster",
+      "card_id": "vgc-whimsicott",
+      "evs": {
+        "hp": 4,
+        "spa": 252,
+        "spe": 252
+      },
+      "item": "Focus Sash",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Tailwind",
+        "Moonblast",
+        "Encore",
+        "Light Screen"
+      ],
+      "nature": "Timid",
+      "species": "Whimsicott"
     },
     {
       "ability": "Tablets of Ruin",
@@ -363,6 +543,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 18,
+  "count": 27,
   "expected_size": 18
 }
