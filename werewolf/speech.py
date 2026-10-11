@@ -85,6 +85,10 @@ def accusation_text(belief: Any, vote: int | None) -> str:
         reason = " They tried to get me to reveal my role."
     elif vote in getattr(belief, "known_wolves", set()):
         reason = " The record already proves it."
+    elif getattr(belief, "false_seer_claimants", None) and vote in belief.false_seer_claimants:
+        reason = " Their seer claim is a confirmed lie."
+    elif getattr(belief, "accused_by_seer", None) and vote in belief.accused_by_seer:
+        reason = " The real seer identified them before dying."
     return msg.shorten(
         f"{seat_label(vote)} is my top suspect.{reason} Vote {seat_label(vote)}."
     )

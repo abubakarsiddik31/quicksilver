@@ -43,6 +43,8 @@ W_VOTED_AGAINST_CONFIRMED_WOLF = 3.0
 W_ABSTAINED_WHILE_WOLF_ELIMINATED = 1.5
 W_FALSE_SEER_CLAIM = 5.0
 W_INJECTION_ATTEMPT = 1.0
+W_ACCUSED_BY_DEAD_SEER = 4.0
+W_ATTACKED_CLEAN_VILLAGER = 1.5
 # Applied once for anything we know is not a wolf — a published role, our own
 # investigation, or (for the seer) ourselves. It must not be summed per source:
 # an investigated villager is one fact, not two.
@@ -180,6 +182,7 @@ class Belief:
     dead_causes: dict[int, str] = field(default_factory=dict)
     vote_history: list[dict] = field(default_factory=list)
     seer_claims: set[int] = field(default_factory=set)
+    accused_by_seer: set[int] = field(default_factory=set)
     injection_seats: set[int] = field(default_factory=set)
     winner: str | None = None
     eliminated: bool = False
@@ -234,8 +237,15 @@ class Belief:
             if getattr(message, "type", "chat") == "terminate":
                 continue
             content = getattr(message, "content", None)
-            if isinstance(content, str) and _SEER_CLAIM.search(content):
-                self.seer_claims.add(sender)
+            if isinstance(content, str):
+                if _SEER_CLAIM.search(content):
+                    self.seer_claims.add(sender)
+                # Check if claimant accused a specific player as wolf
+                for target_match in _INVESTIGATION.finditer(content):
+                    t_str, verdict = target_match.group(1), target_match.group(2).lower()
+                    t_num = label_to_seat(t_str)
+                    if t_num is not None and verdict == "wolf":
+                        self.accused_by_seer.add(t_num)
 
         for flagged in msg.flag_messages(window, our_position=seat):
             sender = flagged.get("sender")
@@ -305,6 +315,10 @@ class Belief:
             score += W_FALSE_SEER_CLAIM
         if seat in self.injection_seats:
             score += W_INJECTION_ATTEMPT
+
+        # If a confirmed dead seer pointed out this seat before dying
+        if self.seer_is_dead and seat in self.accused_by_seer:
+            score += W_ACCUSED_BY_DEAD_SEER
 
         by_name = {name: s for s, name in self.seats.items()}
         for record in self.vote_history:
