@@ -23,3 +23,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["altruagent*", "agent*", "common*", "pokemon*", "werewolf*", "bench*"]
+
+[tool.uv]
+cache-dir = ".uv-cache"
