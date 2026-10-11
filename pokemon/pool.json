@@ -101,6 +101,46 @@
       "species": "Chien-Pao"
     },
     {
+      "ability": "Levitate",
+      "card_id": "vgc-cresselia",
+      "evs": {
+        "def": 252,
+        "hp": 252,
+        "spd": 4
+      },
+      "item": "Sitrus Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Icy Wind",
+        "Moonblast",
+        "Helping Hand",
+        "Protect"
+      ],
+      "nature": "Bold",
+      "species": "Cresselia"
+    },
+    {
+      "ability": "Unaware",
+      "card_id": "vgc-dondozo",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spd": 4
+      },
+      "item": "Leftovers",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Wave Crash",
+        "Earthquake",
+        "Liquidation",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Dondozo"
+    },
+    {
       "ability": "Multiscale",
       "card_id": "vgc-dragonite",
       "evs": {
@@ -119,6 +159,26 @@
       ],
       "nature": "Adamant",
       "species": "Dragonite"
+    },
+    {
+      "ability": "Protosynthesis",
+      "card_id": "vgc-flutter-mane",
+      "evs": {
+        "spa": 252,
+        "spd": 4,
+        "spe": 252
+      },
+      "item": "Booster Energy",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Moonblast",
+        "Shadow Ball",
+        "Icy Wind",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Flutter Mane"
     },
     {
       "ability": "Rough Skin",
@@ -281,6 +341,26 @@
       "species": "Iron Hands"
     },
     {
+      "ability": "Quark Drive",
+      "card_id": "vgc-iron-valiant",
+      "evs": {
+        "spa": 252,
+        "spd": 4,
+        "spe": 252
+      },
+      "item": "Booster Energy",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Moonblast",
+        "Close Combat",
+        "Thunderbolt",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Iron Valiant"
+    },
+    {
       "ability": "Prankster",
       "card_id": "vgc-klefki",
       "evs": {
@@ -319,6 +399,46 @@
       ],
       "nature": "Calm",
       "species": "Milotic"
+    },
+    {
+      "ability": "Drizzle",
+      "card_id": "vgc-pelipper",
+      "evs": {
+        "hp": 252,
+        "spa": 252,
+        "spd": 4
+      },
+      "item": "Damp Rock",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Hurricane",
+        "Weather Ball",
+        "Tailwind",
+        "Protect"
+      ],
+      "nature": "Modest",
+      "species": "Pelipper"
+    },
+    {
+      "ability": "Download",
+      "card_id": "vgc-porygon2",
+      "evs": {
+        "hp": 252,
+        "spa": 252,
+        "spd": 4
+      },
+      "item": "Eviolite",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Trick Room",
+        "Tri Attack",
+        "Ice Beam",
+        "Recover"
+      ],
+      "nature": "Quiet",
+      "species": "Porygon2"
     },
     {
       "ability": "Grassy Surge",
@@ -361,6 +481,26 @@
       ],
       "nature": "Careful",
       "species": "Sableye"
+    },
+    {
+      "ability": "Protosynthesis",
+      "card_id": "vgc-scream-tail",
+      "evs": {
+        "def": 252,
+        "hp": 252,
+        "spd": 4
+      },
+      "item": "Covert Cloak",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Dazzling Gleam",
+        "Encore",
+        "Wish",
+        "Protect"
+      ],
+      "nature": "Bold",
+      "species": "Scream Tail"
     },
     {
       "ability": "Pixilate",
@@ -543,6 +683,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 27,
+  "count": 34,
   "expected_size": 18
 }
