@@ -20,3 +20,8 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# private project files — never push
+SUMMARY.md
+/docs/
+private/
