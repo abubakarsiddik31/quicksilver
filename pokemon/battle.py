@@ -223,9 +223,8 @@ def move_score(
             score += KO_BONUS / 2
         if score > best_score:
             best_score = score
-            best_target = next(
-                (t for t in targets or [] if target_index(t) == index), index + 1
-            )
+            match = next((t for t in targets or [] if target_index(t) == index), None)
+            best_target = match
 
     # A move that also hits our partner is only as good as what it does to them.
     if hits_own_ally(move_id) and partner is not None and partner.usable and partner.card:
@@ -403,7 +402,17 @@ def _pick(
             partner=_partner(ours, slot_index),
         )
         choice: dict[str, Any] = {"type": "move", "move_id": chosen.get("move_id")}
-        if target is not None:
+        legal_targets = chosen.get("targets")
+        if isinstance(legal_targets, list) and legal_targets:
+            if target in legal_targets:
+                choice["target"] = target
+            elif legal_targets == [0] and is_spread(chosen.get("move_id")):
+                # Spread moves like Dazzling Gleam / Bleakwind Storm targeting all foes
+                choice["target"] = 0
+            elif target is not None:
+                # If a positive target was chosen but not directly in targets (e.g. edge case), pick legal
+                choice["target"] = legal_targets[0]
+        elif target is not None:
             choice["target"] = target
         return choice
     return _as_choice(chosen)
