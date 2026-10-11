@@ -1,0 +1,22 @@
+# secrets — never commit
+.env
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/
