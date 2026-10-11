@@ -25,8 +25,8 @@ spent, not free.
 from __future__ import annotations
 
 from altruagent import DecisionContext, GameState
-
-from pokemon import actions, battle, draft, lineup, observation, pool
+from common.llm import GeminiClient
+from pokemon import actions, battle, budget, draft, lineup, observation, pool
 
 
 class PokemonAgent:
@@ -39,6 +39,14 @@ class PokemonAgent:
     def __init__(self, pool_path=None) -> None:
         # Injectable so tests never write the real pool file.
         self._pool_path = pool_path
+        self._llm: GeminiClient | None = None
+        self._llm_checked: bool = False
+
+    def _client(self) -> GeminiClient | None:
+        if not self._llm_checked:
+            self._llm = GeminiClient.from_env()
+            self._llm_checked = True
+        return self._llm
 
     def choose_action(self, state: GameState, context: DecisionContext):
         legal = state.legal_actions
@@ -125,6 +133,16 @@ class PokemonAgent:
         )
         if chosen is not None:
             return chosen
+
+        # When the deterministic evaluator declines, consult the LLM fallback
+        # if configured and permitted by the clock budget.
+        client = self._client()
+        if client is not None and budget.affords(obs, budget.LLM_SECONDS_DECISION):
+            model_turn = battle.choose_turn_with_model(
+                template, obs, client, timeout=min(8.0, budget.LLM_SECONDS_DECISION)
+            )
+            if model_turn is not None:
+                return model_turn
 
         slots = actions.slots_of(template)
         if len(slots) != 2:

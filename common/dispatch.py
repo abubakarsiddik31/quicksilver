@@ -12,7 +12,15 @@ runtime starts a fresh process — and a fresh ``create_agent()`` — per match.
 
 from __future__ import annotations
 
+import os
 from typing import Any
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState
 

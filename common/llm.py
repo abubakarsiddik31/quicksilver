@@ -20,6 +20,7 @@ header or as a ``?key=`` query parameter, to
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import httpx
@@ -160,3 +161,80 @@ class GeminiClient:
             return self.parse(response.json())
         except Exception:  # noqa: BLE001 - a model must never break a decision
             return None
+
+
+# -- choosing among enumerated options --------------------------------------
+
+CHOICE_SYSTEM = (
+    "You are choosing actions in a turn-based game. You will be given the "
+    "situation and a list of legal option ids. Choose exactly one option id for "
+    "each slot you are asked about.\n"
+    "Reply with only lines of the form 'slot_0=<id>', one per slot. Use ids "
+    "exactly as given. Never invent an id. Do not explain."
+)
+
+_SLOT_CHOICE = re.compile(r"slot\s*_?\s*(\d+)\s*[=:]\s*([A-Za-z0-9_:.\-]+)", re.IGNORECASE)
+
+
+def parse_choices(text: Any, allowed: list[str], slots: int) -> list[str] | None:
+    """``slots`` option ids parsed out of a reply, or ``None`` if unusable.
+
+    Tolerant on purpose: models wrap ids in prose, quote them, or number slots
+    differently. Every accepted id must appear in ``allowed`` — a choice the
+    caller did not offer is never guessed at, because acting on an id the
+    server never listed is exactly the failure mode that forfeits a turn.
+    """
+    if not isinstance(text, str) or not text or not allowed or slots <= 0:
+        return None
+    permitted = set(allowed)
+
+    found: dict[int, str] = {}
+    for index, candidate in _SLOT_CHOICE.findall(text):
+        slot = int(index)
+        if slot < slots and candidate in permitted and slot not in found:
+            found[slot] = candidate
+
+    # Fill any slot the labelled form missed, in order of first mention.
+    if len(found) < slots:
+        mentioned: list[str] = []
+        for token in re.findall(r"[A-Za-z0-9_:.\-]+", text):
+            if token in permitted and token not in mentioned:
+                mentioned.append(token)
+        spare = [token for token in mentioned if token not in found.values()]
+        for slot in range(slots):
+            if slot not in found and spare:
+                found[slot] = spare.pop(0)
+
+    if len(found) != slots:
+        return None
+    return [found[slot] for slot in range(slots)]
+
+
+def choose_ids(
+    client: Any,
+    *,
+    instruction: str,
+    allowed: list[str],
+    slots: int,
+    context: str = "",
+    timeout: float | None = None,
+) -> list[str] | None:
+    """Ask the model for one option id per slot, or ``None``. Never raises."""
+    if client is None or not allowed or slots <= 0:
+        return None
+    prompt = (
+        f"{instruction}\n\n"
+        f"{context}\n\n"
+        "Legal option ids:\n" + "\n".join(f"- {option}" for option in allowed)
+    )
+    try:
+        reply = client.generate(
+            prompt,
+            system=CHOICE_SYSTEM,
+            temperature=0.2,
+            max_output_tokens=120,
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 - a model must never break a decision
+        return None
+    return parse_choices(reply, allowed, slots)
