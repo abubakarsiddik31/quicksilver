@@ -1,32 +1,31 @@
-"""Quicksilver's Pokémon VGC doubles draft policy.
+"""Quicksilver's Pokémon VGC doubles policy: the engine computes, Jev decides.
 
 ``pokemon_vgc_doubles_draft`` is played in three phases, and the policy owns
 all three: the snake draft (6 picks each from a shared pool of 18 fixed,
 pre-built cards), Team Preview (bring 4 of 6, lead 2) and the doubles battle
 itself.
 
+The split is Red Alert's: the deterministic engine does the exact math (team
+swing scores, matchup scores, damage formulas) and builds the legal, checked
+candidates; **Jev** — the TypeSafe System One tactician — reads the full game
+state (rules, both boards, damage ranges, speed order, rosters) and picks
+among those candidates. There is no free-text model in this game: Jev answers
+a typed ``choice`` question in ~0.5 s, its confidence rides with the answer,
+and on any failure or a low-confidence shrug the engine's #1 plays with zero
+latency. A model call can never cost a match, and the battle bank (420 s,
+forfeited when empty) is never at risk.
+
 The battle runs on Showdown's VGC timer — 90 s at Team Preview, 55 s per
 battle decision, and a **7-minute bank for the whole battle**. Running the
 bank out forfeits the battle, so thinking time is a finite resource that is
 spent, not free.
-
-.. warning::
-
-    **This is currently a BASELINE, not the competitive policy.** It always
-    makes a *legal* choice and will play a whole match to the end, which makes
-    it a correct safety net and a working end-to-end target for test matches —
-    but it has no strategy. It will lose to any opponent that has one.
-
-    The competitive policy replaces ``choose_action`` here: precomputed
-    draft/matchup tables over the fixed 18-card pool, and a search over the
-    doubles state. See ``SUMMARY.md``.
 """
 
 from __future__ import annotations
 
 from altruagent import DecisionContext, GameState
-from common.llm import GeminiClient
-from pokemon import actions, advisor, battle, budget, draft, lineup, observation, pool
+from common.jev import JevClient
+from pokemon import actions, battle, budget, draft, lineup, observation, pool, tactician
 
 
 class PokemonAgent:
@@ -36,18 +35,13 @@ class PokemonAgent:
     process, so state kept here never leaks between matches.
     """
 
-    def __init__(self, pool_path=None) -> None:
-        # Injectable so tests never write the real pool file.
+    def __init__(self, pool_path=None, jev_client=None) -> None:
+        # Injectable so tests never write the real pool file nor touch the network.
         self._pool_path = pool_path
-        self._llm: GeminiClient | None = None
-        self._llm_checked: bool = False
-        self._advisor_calls_count: int = 0
-
-    def _client(self) -> GeminiClient | None:
-        if not self._llm_checked:
-            self._llm = GeminiClient.from_env()
-            self._llm_checked = True
-        return self._llm
+        self._jev = tactician.Tactician(
+            jev_client if jev_client is not None else JevClient.from_env(flag="POKEMON_JEV")
+        )
+        self._jev_turns = 0
 
     def choose_action(self, state: GameState, context: DecisionContext):
         legal = state.legal_actions
@@ -75,18 +69,21 @@ class PokemonAgent:
 
     def _draft(self, legal, state: GameState, context: DecisionContext):
         """Choose from the offered cards by team value and denial, mapped back
-        onto the server's own action list, consulting the draft LLM advisor
-        for archetype synergy when time allows."""
+        onto the server's own action list, with Jev reading the full draft
+        (rules, both rosters, the top cards' swing math) when time allows."""
         obs = observation.observation_of(state)
-        client = self._client()
+        top = draft.top_cards(obs, agent_id=context.agent_id)
 
-        # Try strategic LLM draft pick within safety clock budget
-        if client is not None and budget.affords(obs, budget.LLM_SECONDS_DRAFT):
-            adv_cid = draft.advise_draft_pick(client, obs, context.agent_id, timeout=2.5)
-            if adv_cid is not None:
+        if len(top) >= 2 and self._jev.enabled and budget.affords(obs, tactician.JEV_TIMEOUT):
+            request = tactician.draft_request(obs, context.agent_id, top)
+            label = self._jev.choose(
+                state=request.state, instructions=request.instructions, criteria=request.criteria
+            )
+            if label is not None:
+                card_id = top[tactician.INDEX[label]][0]
                 for action in legal or []:
                     action_id = getattr(action, "action_id", None)
-                    if isinstance(action_id, str) and action_id == f"draft_pick:{adv_cid}":
+                    if isinstance(action_id, str) and action_id == f"draft_pick:{card_id}":
                         return action
 
         chosen = draft.choose_from_actions(
@@ -112,24 +109,28 @@ class PokemonAgent:
 
     def _lineup(self, template: dict, state: GameState) -> dict:
         """Bring the four with the best matchups against their six, and lead
-        the two best equipped to open, consulting the Team Preview LLM advisor
-        during the 90-second preview window."""
+        the two best equipped to open — with Jev reading both full sixes and
+        the top lineups' matchup math during the 90-second preview window."""
         obs = observation.observation_of(state)
         loaded_pool = pool.load_pool(self._pool_path)
 
-        # 1. Generate top candidate lineups and consult LLM advisor
-        client = self._client()
         candidates = lineup.generate_candidate_lineups(
             template, obs, pool_cards=loaded_pool, max_candidates=3
         )
         if candidates:
-            if client is not None and budget.affords(obs, 5.0):
-                adv_lineup = lineup.advise_lineup(client, obs, candidates, timeout=4.0)
-                if adv_lineup is not None:
-                    return adv_lineup
+            if (
+                len(candidates) >= 2
+                and self._jev.enabled
+                and budget.affords(obs, tactician.JEV_TIMEOUT)
+            ):
+                request = tactician.preview_request(obs, candidates)
+                label = self._jev.choose(
+                    state=request.state, instructions=request.instructions, criteria=request.criteria
+                )
+                if label is not None:
+                    return candidates[tactician.INDEX[label]][0]
             return candidates[0][0]
 
-        # 2. Fallback to single lineup solver
         chosen = lineup.choose_lineup(
             template, obs, pool_cards=loaded_pool
         )
@@ -145,8 +146,12 @@ class PokemonAgent:
     # -- Doubles turn ----------------------------------------------------
 
     def _doubles_turn(self, template: dict, state: GameState) -> dict:
-        """Pick both slots' actions from the board, optionally consulting the
-        tactical advisor on critical 50/50 dilemmas, then fall back to baseline.
+        """Pick both slots' actions from the board. The engine ranks the joint
+        plans by exact damage; when the ranking is close enough to matter,
+        Jev reads the full board (HP, boosts, items, abilities, speed order,
+        per-plan damage ranges) and picks. On any failure the engine's #1
+        plays; when the engine declines entirely, Jev picks per slot from the
+        template's own options.
 
         Two slots may not switch to the same Pokémon, so a species already
         taken by slot 0 is skipped when choosing slot 1.
@@ -154,49 +159,43 @@ class PokemonAgent:
         obs = observation.observation_of(state)
         loaded_pool = pool.load_pool(self._pool_path)
 
-        # 1. Generate top candidate joint turn plans
         candidates = battle.generate_candidate_plans(
             template, obs, pool_cards=loaded_pool, max_candidates=3
         )
 
         if candidates:
-            # Check if this turn is a tactical dilemma warranting advisor review
-            client = self._client()
             if (
-                client is not None
-                and self._advisor_calls_count < advisor.MAX_ADVISOR_CALLS_PER_MATCH
-                and budget.affords(obs, advisor.ADVISOR_TIMEOUT + 1.0)
+                len(candidates) >= 2
+                and self._jev.enabled
+                and self._jev_turns < tactician.MAX_CALLS_PER_MATCH
+                and budget.affords(obs, tactician.JEV_TIMEOUT)
                 and battle.is_tactical_dilemma(candidates, obs)
             ):
-                self._advisor_calls_count += 1
-                adv_pick = advisor.advise(
-                    client,
-                    obs,
-                    candidates,
-                    timeout=advisor.ADVISOR_TIMEOUT,
+                ours, theirs = battle.board(obs, pool_cards=loaded_pool)
+                request = tactician.battle_request(obs, candidates, ours, theirs)
+                label = self._jev.choose(
+                    state=request.state, instructions=request.instructions, criteria=request.criteria
                 )
-                if adv_pick is not None:
-                    return adv_pick
+                if label is not None:
+                    self._jev_turns += 1
+                    return candidates[tactician.INDEX[label]][0]
 
-            # Otherwise execute the top mathematically evaluated plan
+            # Overwhelming math or no Jev: execute the top evaluated plan.
             return candidates[0][0]
 
-        # 2. If candidates generator found no board, try single turn solver
         chosen = battle.choose_turn(
             template, obs, pool_cards=loaded_pool
         )
         if chosen is not None:
             return chosen
 
-        # 3. When the deterministic evaluator declines, consult the LLM fallback
-        # if configured and permitted by the clock budget.
-        client = self._client()
-        if client is not None and budget.affords(obs, budget.LLM_SECONDS_DECISION):
-            model_turn = battle.choose_turn_with_model(
-                template, obs, client, timeout=min(8.0, budget.LLM_SECONDS_DECISION)
-            )
-            if model_turn is not None:
-                return model_turn
+        # The deterministic evaluator declined (unreadable board). Jev still
+        # picks from the template's own options — one question per slot —
+        # where a free-text model used to be asked.
+        if self._jev.enabled and budget.affords(obs, tactician.JEV_TIMEOUT):
+            fallback = tactician.slots_fallback(template, obs, self._jev)
+            if fallback is not None:
+                return fallback
 
         slots = actions.slots_of(template)
         if len(slots) != 2:

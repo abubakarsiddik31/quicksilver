@@ -27,7 +27,6 @@ mismatch entirely.
 from __future__ import annotations
 
 import itertools
-import re
 from typing import Any
 
 from pokemon import actions, dex, observation
@@ -225,7 +224,7 @@ def choose_lineup(
     }
 
 
-# -- multi-candidate lineup generation & LLM team preview advisor ----------
+# -- multi-candidate lineup generation --------------------------------------
 
 
 def generate_candidate_lineups(
@@ -289,84 +288,3 @@ def generate_candidate_lineups(
             break
 
     return candidates
-
-
-LINEUP_ADVISOR_SYSTEM = (
-    "You are a World Champion Pokémon VGC Doubles team preview tactician. "
-    "In Pokémon VGC Doubles, selecting the 4 to bring and the 2 opening leads "
-    "determines 70% of match outcome. "
-    "You will be given our 6-Pokémon roster, the opponent's 6-Pokémon roster, "
-    "and the top 3 mathematically evaluated candidate lineups (Plan A, Plan B, Plan C). "
-    "Evaluate defensive typing, speed advantage, Fake Out pressure, and weather/trick room counters. "
-    "Respond with exactly one line in the format:\n"
-    "CHOICE: PLAN_<A|B|C> - <one brief sentence explaining your strategic win condition>"
-)
-
-_CHOICE_PATTERN = re.compile(r"CHOICE:\s*(PLAN_[A-C])", re.IGNORECASE)
-_FALLBACK_PATTERN = re.compile(r"\b(PLAN_[A-C])\b", re.IGNORECASE)
-
-
-def advise_lineup(
-    client: Any,
-    obs: dict,
-    candidate_lineups: list[tuple[dict, float, str]],
-    *,
-    timeout: float = 4.0,
-) -> dict | None:
-    """Ask Gemini 3.8 Flash to select the optimal 4-bring and 2-leads.
-
-    Takes advantage of the 90-second Team Preview window.
-    Returns the chosen lineup dict or None (caller defaults to Plan A).
-    """
-    if client is None or not candidate_lineups:
-        return None
-    if len(candidate_lineups) == 1:
-        return candidate_lineups[0][0]
-
-    plan_map: dict[str, dict] = {}
-    plan_lines: list[str] = []
-    labels = ["A", "B", "C"]
-
-    for i, (lineup_dict, score, desc) in enumerate(candidate_lineups[:3]):
-        label = f"PLAN_{labels[i]}"
-        plan_map[label] = lineup_dict
-        plan_lines.append(f"- {label}: {desc} (Matchup Score: {score:.1f})")
-
-    # Format opponent team summary
-    opp_summary = []
-    for mon in observation.opponent_roster(obs) or []:
-        if isinstance(mon, dict):
-            sp = mon.get("species", "Unknown")
-            item = mon.get("item") or "Item Unknown"
-            opp_summary.append(f"{sp} ({item})")
-
-    prompt = (
-        f"Opponent's 6-Pokémon Roster:\n"
-        f"{', '.join(opp_summary) if opp_summary else 'Unknown'}\n\n"
-        f"Candidate Lineups (Bring 4, Lead 2):\n" + "\n".join(plan_lines) + "\n\n"
-        "Which lineup establishes the strongest opening board control and covers opponent threats?"
-    )
-
-    try:
-        reply = client.generate(
-            prompt,
-            system=LINEUP_ADVISOR_SYSTEM,
-            temperature=0.2,
-            max_output_tokens=80,
-            timeout=timeout,
-        )
-    except Exception:  # noqa: BLE001 - never crash a decision
-        return None
-
-    if not reply or not isinstance(reply, str):
-        return None
-
-    m = _CHOICE_PATTERN.search(reply)
-    if m and m.group(1).upper() in plan_map:
-        return plan_map[m.group(1).upper()]
-
-    m2 = _FALLBACK_PATTERN.search(reply)
-    if m2 and m2.group(1).upper() in plan_map:
-        return plan_map[m2.group(1).upper()]
-
-    return None

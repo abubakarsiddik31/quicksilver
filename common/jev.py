@@ -85,10 +85,15 @@ class JevClient:
         self.last_error: str | None = None
 
     @classmethod
-    def from_env(cls, env: Any = None) -> "JevClient | None":
-        """A client if ``TYPESAFE_API_KEY`` is set and ``RA_JEV`` is not switched off."""
+    def from_env(cls, env: Any = None, *, flag: str = "RA_JEV") -> "JevClient | None":
+        """A client if ``TYPESAFE_API_KEY`` is set and ``flag`` is not switched off.
+
+        Each game owns its kill switch: Red Alert reads ``RA_JEV``, Pokémon
+        passes ``flag="POKEMON_JEV"`` — one game losing Jev must not take the
+        other's with it.
+        """
         source = os.environ if env is None else env
-        if str(source.get("RA_JEV", "1")).strip().lower() in ("0", "false", "no", "off"):
+        if str(source.get(flag, "1")).strip().lower() in ("0", "false", "no", "off"):
             return None
         key = source.get("TYPESAFE_API_KEY")
         if not isinstance(key, str) or not key.strip():
