@@ -21,6 +21,8 @@ from typing import Any
 
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
+# Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
+JEV_SLOTS = ("structure", "unit", "posture", "wave", "target", "threat", "harvester", "power")
 ITEM_RE = re.compile(r"^[a-z0-9_]{2,8}$")
 
 MAX_WANTS = 24
@@ -70,6 +72,11 @@ class Plan:
     army_first: bool = False  # True: don't hold back cash for wanted structures
     orders: tuple[dict, ...] = ()  # one-off raw orders, run once per plan
     review_in_s: int = 15  # when the model wants to be consulted again
+    # Guidance for the fast tactical model (Jev): a short strategic brief that is
+    # added to its state, how sure it must be to be obeyed, and which slots it may drive.
+    tactics_hint: str = ""
+    min_confidence: float = 0.6
+    jev_slots: tuple[str, ...] = JEV_SLOTS
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -85,6 +92,11 @@ class Plan:
             "army_first": self.army_first,
             "orders": list(self.orders),
             "review_in_s": self.review_in_s,
+            "tactics": {
+                "hint": self.tactics_hint,
+                "min_confidence": self.min_confidence,
+                "jev_slots": list(self.jev_slots),
+            },
         }
 
 
@@ -190,6 +202,14 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         data.get("orders"), list
     ) else ()
     army_first = data.get("army_first")
+    tactics = data.get("tactics") if isinstance(data.get("tactics"), dict) else {}
+    hint = tactics.get("hint", base.tactics_hint)
+    conf = tactics.get("min_confidence")
+    slots = tactics.get("jev_slots")
+    if isinstance(slots, list):
+        jev_slots = tuple(s for s in JEV_SLOTS if s in {str(x).lower() for x in slots})
+    else:
+        jev_slots = base.jev_slots
     return Plan(
         assessment=" ".join(note.split())[:400] if isinstance(note, str) else "",
         buildings=_wants(data.get("buildings"), base.buildings),
@@ -201,6 +221,12 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         army_first=army_first if isinstance(army_first, bool) else base.army_first,
         orders=orders,
         review_in_s=_clamp(data.get("review_in_s"), REVIEW_MIN_S, REVIEW_MAX_S, base.review_in_s),
+        tactics_hint=" ".join(hint.split())[:300] if isinstance(hint, str) else base.tactics_hint,
+        min_confidence=(
+            max(0.5, min(0.95, float(conf)))
+            if isinstance(conf, (int, float)) and not isinstance(conf, bool) else base.min_confidence
+        ),
+        jev_slots=jev_slots,
     )
 
 

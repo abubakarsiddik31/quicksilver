@@ -1,5 +1,8 @@
 # secrets — never commit
 .env
+
+# per-match Red Alert traces
+traces/
 *.key
 
 # python

@@ -28,6 +28,7 @@ from typing import Any
 
 from common.llm import GeminiClient
 from redalert.plan import DEFAULT_PLAN, Plan, parse_plan
+from redalert import trace
 from redalert.prompt import build_system, build_user
 
 MIN_GAP_S = 1.5
@@ -99,6 +100,11 @@ class Strategist:
     def enabled(self) -> bool:
         return self.client is not None
 
+    def notify(self, reason: str) -> None:
+        """Ask for a consult for an outside reason (e.g. Jev is unsure or sees a threat)."""
+        with self._lock:
+            self._add(reason)
+
     # -- triggers ----------------------------------------------------------------
 
     def _add(self, reason: str) -> None:
@@ -160,6 +166,7 @@ class Strategist:
         diagnostics: list[str] | None = None,
         refusals: list[str] | None = None,
         *,
+        jev: dict[str, Any] | None = None,
         sync: bool = False,
     ) -> None:
         """Note triggers and, if one is due, start a background consult. Never blocks."""
@@ -191,6 +198,7 @@ class Strategist:
             user = build_user(
                 raw, triggers=triggers, diagnostics=diagnostics, refusals=refusals,
                 plan=previous.as_json(), plan_age_s=age, history=history, last_latency_s=latency,
+                jev_advice=jev,
             )
         except Exception as exc:  # noqa: BLE001 - never break the loop
             with self._lock:
@@ -229,6 +237,10 @@ class Strategist:
                 for t in triggers[:4]:
                     self._add(t)
             self._busy = False
+        trace.write(
+            "plan", ok=parsed is not None, triggers=triggers, latency_s=self._latency,
+            version=self.version, plan=parsed.as_json() if parsed else None,
+        )
         if parsed is not None:
             self._log(
                 f"[strategist] plan v{self.version} ({self._latency}s, {','.join(triggers)[:80]}): "

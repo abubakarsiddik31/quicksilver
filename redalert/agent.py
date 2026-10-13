@@ -12,21 +12,34 @@ Red Alert never waits, so the two halves run at different speeds:
   that must not wait for a model: deploy the MCV, place finished buildings,
   repair, and an emergency power plant when the base is really in low power.
 
-The executor never invents strategy and the model never touches the wire: its
-raw orders are re-validated against the live state before they are sent.
+A third part, ``redalert.tactics.TacticalAdvisor`` (TypeSafe Jev), answers
+bounded tactical questions about the live state about once a second: the next
+structure or unit, attack/hold/retreat, wave timing, target, threat level, and
+whether more harvesters or power are needed. Its answers are used only when
+fresh, allowed by the plan and confident enough; the LLM decides which slots Jev
+may drive and is woken when Jev is unsure or sees a serious threat. Without a
+Jev key those slots simply fall back to the plan and the rules.
+
+The executor never invents strategy and the models never touch the wire: raw
+orders and Jev picks are re-validated against the live state before they are sent.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 
 from altruagent import WAIT, DecisionContext, GameState, WithReasoning
+from common.jev import JevClient
 from common.llm import GeminiClient
 from redalert.plan import DEFAULT_PLAN, Plan, sanitize_order
+from redalert import trace
 from redalert.strategist import Strategist
+from redalert.tactics import ESCALATE_LEVEL, Candidates, TacticalAdvisor
 
 CORE_STRUCTURES = {"fact", "powr", "apwr", "proc", "weap", "tent", "barr"}
 NON_COMBAT = {"mcv", "harv", "medi", "mech", "e6", "spy", "thf", "truk"}
@@ -48,6 +61,11 @@ REJECT_TTL = {"not_available": 5.0, "not_ready": 2.0, "invalid": 5.0}
 DIAG_AFTER_S = 12.0
 REFUSAL_KEEP_S = 60.0
 MAX_BATCH = 20
+YES = 0.65  # a Jev yes/no needs at least this to act on
+WAVE_YES = 0.55
+MAX_HARV, MAX_POWR, MAX_DEFENSES = 6, 8, 4
+DEFENSE_ORDER = ("tsla", "gun", "pbox", "ftur")
+TARGET_NAMES = {"nearest", "building", "base"}
 
 
 def _cell(value: Any) -> tuple[int, int] | None:
@@ -61,7 +79,10 @@ def _cell(value: Any) -> tuple[int, int] | None:
 class RedAlertAgent:
     """Executes the strategist's plan at real-time speed."""
 
-    def __init__(self, strategist: Strategist | None = None) -> None:
+    def __init__(self, strategist: Strategist | None = None, advisor: TacticalAdvisor | None = None) -> None:
+        self.advisor = advisor if advisor is not None else TacticalAdvisor(
+            JevClient.from_env(), telemetry_path=os.environ.get("RA_TELEMETRY") or None
+        )
         self.strategist = strategist if strategist is not None else Strategist(GeminiClient.from_env())
         if not self.strategist.enabled:
             print("[redalert] no GEMINI_API_KEY: playing the fixed default plan, no AI strategy", file=sys.stderr, flush=True)
@@ -77,6 +98,7 @@ class RedAlertAgent:
         self._queue: dict[str, str] = {}
         self._needs: dict[str, list[str]] = {}
         self._errors_logged: set[str] = set()
+        self._state_at = 0.0
 
     # -- throttling and learning -------------------------------------------------
 
@@ -147,6 +169,7 @@ class RedAlertAgent:
             self._refusals.append(
                 (now, f"{order.get('cmd')} {item or ''}: {reason} {row.get('detail') or ''}".strip()[:200])
             )
+            trace.write("refused", order=order, reason=reason, detail=row.get("detail"))
         self._refusals = [(t, m) for t, m in self._refusals if now - t < REFUSAL_KEEP_S][-8:]
 
     # -- helpers -----------------------------------------------------------------
@@ -236,8 +259,61 @@ class RedAlertAgent:
 
         orders += self._raw_orders(plan, raw, obs, units, buildings, avail)
 
-        # Structures: the plan's wants in priority order, plus an emergency power plant.
+        # Jev's fast tactical advice: used only if fresh, allowed by the plan and confident enough.
         wants = [(self._barracks(i, faction, avail, owned), c) for i, c in plan.buildings]
+        unit_wants = list(plan.units)
+        idle_combat = [u for u in (legal.get("combat_units") or []) if isinstance(u, int)]
+        all_combat = [
+            u for u in units if isinstance(u.get("id"), int) and str(u.get("type")).lower() not in NON_COMBAT
+        ]
+
+        def short(item: str, count: int) -> bool:
+            return owned.get(item, 0) + queued.get(item, 0) < count
+
+        struct_cands = tuple(dict.fromkeys(
+            i for i, c in wants if short(i, c) and i in avail and self.queue_of(i) not in busy
+        ))
+        unit_cands = tuple(dict.fromkeys(
+            i for i, c in unit_wants
+            if short(i, c) and i in avail and self.cost_of(i) <= cash
+            and depth.get(self.queue_of(i), 0) < (3 if self.queue_of(i) == "infantry" else 2)
+        ))
+        advice = None
+        if self.advisor.enabled:
+            self.advisor.maybe_refresh(raw, plan, Candidates(
+                structures=struct_cands, units=unit_cands, idle_combat=len(idle_combat),
+                all_combat=len(all_combat), has_harvester_item="harv" in avail, has_power_item="powr" in avail,
+                describe={i: f"cost {self.cost_of(i)}" for i in (*struct_cands, *unit_cands)},
+            ))
+            advice = self.advisor.current()
+        now_adv = self.advisor.now()
+
+        def adv(slot: str) -> Any:
+            return advice.get(slot, plan, now=now_adv) if advice else None
+
+        pick = adv("structure")
+        if pick in struct_cands:
+            wants.sort(key=lambda w: w[0] != pick)  # stable: Jev's pick first, the rest keep plan order
+        pick = adv("unit")
+        if pick in unit_cands:
+            unit_wants.sort(key=lambda w: w[0] != pick)
+        need = adv("harvester")
+        harvs = owned.get("harv", 0) + queued.get("harv", 0)
+        if isinstance(need, float) and need >= YES and "harv" in avail and harvs < MAX_HARV:
+            unit_wants.insert(0, ("harv", harvs + 1))
+        need = adv("power")
+        powrs = owned.get("powr", 0) + queued.get("powr", 0)
+        if isinstance(need, float) and need >= YES and "powr" in avail and powrs < MAX_POWR:
+            wants.insert(0, ("powr", powrs + 1))
+        threat = adv("threat")
+        defend = isinstance(threat, int) and threat >= ESCALATE_LEVEL
+        if defend:
+            tower = next((d for d in DEFENSE_ORDER if d in avail), None)
+            have_d = sum(owned.get(d, 0) + queued.get(d, 0) for d in DEFENSE_ORDER)
+            if tower and have_d < MAX_DEFENSES:
+                wants.insert(0, (tower, owned.get(tower, 0) + queued.get(tower, 0) + 1))
+
+        # Structures: the wants in priority order, plus an emergency power plant.
         provided, drained = econ.get("power_provided", 0) or 0, econ.get("power_drained", 0) or 0
         if drained > provided and "powr" in avail:
             wants.insert(0, ("powr", owned.get("powr", 0) + queued.get("powr", 0) + 1))
@@ -264,7 +340,7 @@ class RedAlertAgent:
         spendable = cash - reserve
         used: set[str] = set()
         trained = False
-        for item, count in plan.units:
+        for item, count in unit_wants:
             have = owned.get(item, 0) + queued.get(item, 0)
             if have >= count:
                 continue
@@ -297,28 +373,47 @@ class RedAlertAgent:
             ):
                 orders.append({"cmd": "repair", "building": b["id"], "on": True})
 
-        orders += self._army(plan, raw, obs, legal, units)
+        orders += self._army(plan, raw, obs, legal, units, adv, defend)
 
         now = time.monotonic()
         self._diag_since = {d: self._diag_since.get(d, now) for d in diag}
         stuck = [d for d, t in self._diag_since.items() if now - t >= DIAG_AFTER_S]
         self._refusals = [(t, m) for t, m in self._refusals if now - t < REFUSAL_KEEP_S]
         if self.strategist.enabled:
-            self.strategist.maybe_update(raw, config, stuck, [m for _, m in self._refusals])
+            for reason in self.advisor.pop_escalations():
+                self.strategist.notify(reason)
+            jev = None
+            if advice is not None:
+                jev = {"age_s": round(now_adv - advice.at, 1), "values": advice.values, "confidence": advice.confidence}
+            self.strategist.maybe_update(raw, config, stuck, [m for _, m in self._refusals], jev=jev)
 
+        if now - self._state_at >= 5.0:
+            self._state_at = now
+            trace.write(
+                "state", tick=obs.get("tick"), cash=cash, power=[provided, drained],
+                time=raw.get("time"), units={k: v for k, v in owned.items()},
+                queue=[p.get("item") for p in production], idle_combat=len(idle_combat),
+                enemies=len(obs.get("visible_enemies") or []),
+                enemy_buildings=len(obs.get("visible_enemy_buildings") or []),
+                military=obs.get("military"), plan_version=self.strategist.version,
+                jev=(advice.values if advice else None),
+            )
         if not orders:
             return WAIT
         batch = orders[:MAX_BATCH]
+        trace.write("orders", tick=obs.get("tick"), orders=[
+            {k: v for k, v in o.items() if k != "units"} | ({"n": len(o["units"])} if "units" in o else {})
+            for o in batch
+        ])
         self._last_sent = batch
         summary = f"v{self.strategist.version} {plan.assessment}"[:480] if self.strategist.enabled else "default plan"
         return WithReasoning({"type": "orders", "orders": batch}, summary)
 
     # -- army --------------------------------------------------------------------
 
-    def _target(self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any]) -> list[int] | None:
+    def _target(self, target: Any, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any]) -> list[int] | None:
         bounds = (raw.get("map") or {}).get("bounds")
         base = _cell(legal.get("enemy_base"))
-        target: Any = plan.target
         cell: tuple[int, int] | None
         if isinstance(target, tuple):
             cell = target
@@ -336,6 +431,10 @@ class RedAlertAgent:
             cell = (_cell(nearest.get("to")) if isinstance(nearest, dict) else None) or base
         else:
             cell = base
+        return self._clamp(cell, bounds)
+
+    @staticmethod
+    def _clamp(cell: tuple[int, int] | None, bounds: Any) -> list[int] | None:
         if cell is None:
             return None
         if isinstance(bounds, list) and len(bounds) == 4:
@@ -345,7 +444,7 @@ class RedAlertAgent:
 
     def _army(
         self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any],
-        units: list[dict[str, Any]],
+        units: list[dict[str, Any]], adv: Callable[[str], Any] = lambda slot: None, defend: bool = False,
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         idle_combat = [u for u in (legal.get("combat_units") or []) if isinstance(u, int)]
@@ -354,27 +453,47 @@ class RedAlertAgent:
             self._stanced.update(fresh[:20])
             out.append({"cmd": "set_stance", "units": fresh[:20], "stance": "attack_anything"})
 
-        if plan.army_mode == "hold":
-            spot = plan.gather or _cell(obs.get("base_center"))
-            bounds = (raw.get("map") or {}).get("bounds")
-            if spot and isinstance(bounds, list) and len(bounds) == 4:
-                spot = (max(bounds[0], min(bounds[0] + bounds[2] - 1, spot[0])),
-                        max(bounds[1], min(bounds[1] + bounds[3] - 1, spot[1])))
-            if spot:
+        # Jev may move the army between hold / attack / retreat, never out of a committed all-in.
+        mode = plan.army_mode
+        if mode != "all_in":
+            posture = adv("posture")
+            if defend or posture == "retreat":
+                mode = "retreat"
+            elif posture in ("hold", "attack"):
+                mode = posture
+
+        bounds = (raw.get("map") or {}).get("bounds")
+        home_cell = plan.gather or _cell(obs.get("base_center"))
+        home = self._clamp(home_cell, bounds)
+
+        if mode == "retreat":
+            everyone = [u["id"] for u in units if isinstance(u.get("id"), int)
+                        and str(u.get("type")).lower() not in NON_COMBAT]
+            if home and everyone and self._fresh("retreat", 5.0):
+                for i in range(0, min(len(everyone), 150), 50):
+                    out.append({"cmd": "move", "units": everyone[i:i + 50], "to": home})
+            return out
+
+        if mode == "hold":
+            if home:
                 pos = {u.get("id"): _cell(u) for u in units}
                 far = [
                     u for u in idle_combat
-                    if u not in self._gathered and (pos.get(u) is None or math.dist(pos[u], spot) > 8)
+                    if u not in self._gathered and (pos.get(u) is None or math.dist(pos[u], home) > 8)
                 ]
                 if far:
                     self._gathered.update(far[:50])
-                    out.append({"cmd": "move", "units": far[:50], "to": list(spot)})
+                    out.append({"cmd": "move", "units": far[:50], "to": home})
             return out
 
-        target = self._target(plan, raw, obs, legal)
+        name: Any = plan.target
+        choice = adv("target")
+        if isinstance(name, str) and choice in TARGET_NAMES:
+            name = choice
+        target = self._target(name, raw, obs, legal)
         if target is None:
             return out
-        if plan.army_mode == "all_in":
+        if mode == "all_in":
             everyone = [
                 u["id"] for u in units
                 if isinstance(u.get("id"), int) and str(u.get("type")).lower() not in NON_COMBAT
@@ -383,7 +502,15 @@ class RedAlertAgent:
                 for i in range(0, min(len(everyone), 150), 50):
                     out.append({"cmd": "attack_move", "units": everyone[i:i + 50], "to": target})
             return out
-        if len(idle_combat) >= plan.wave_min:
+
+        n = len(idle_combat)
+        wave_ok = adv("wave")
+        if isinstance(wave_ok, float):
+            # Jev judges the moment, but never sends a token force or sits on a huge one forever.
+            go = n >= max(3, plan.wave_min // 2) and (wave_ok >= WAVE_YES or n >= max(20, 2 * plan.wave_min))
+        else:
+            go = n >= plan.wave_min
+        if go:
             self._gathered.difference_update(idle_combat)
             out.append({"cmd": "attack_move", "units": idle_combat[:50], "to": target})
         return out

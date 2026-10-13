@@ -98,6 +98,17 @@ YOUR PLAN REPLACES THE PREVIOUS ONE ENTIRELY. Restate everything you still want.
 the next one, so a good plan is robust for the next 10-30 seconds: express intent as counts and ordered
 priorities, not as a single moment's reaction.
 
+JEV, YOUR FAST TACTICAL PARTNER (if "jev_latest_advice" is present). Jev is a separate decision model that
+answers bounded questions about the live state about once a second: which structure/unit to build next (among
+the wants you listed that are buildable now), attack/hold/retreat, whether a wave is worth sending, the
+threat level (0-4), and whether another harvester or power plant is needed. The harness obeys a Jev answer only
+if it is fresh, its slot is in your `tactics.jev_slots`, and its confidence reaches your `tactics.min_confidence`;
+a committed "all_in" is never overridden. YOU stay the strategist: choose which slots Jev may drive (drop a
+slot to pin it to your plan), raise min_confidence to trust it less, and write `tactics.hint`, a short brief
+that is shown to Jev with the state (e.g. "enemy is massing tanks: favour anti-armor, expand economy, hold
+until 10 units"). You are woken with "jev_threat:<level>" when Jev sees a serious attack and
+"jev_uncertain:<slot>" when it is unsure: use those to re-plan. `jev_latest_advice` shows what it last said.
+
 HOW TO DECIDE
 - Think about economy (refineries/harvesters), tech path, army composition against what the enemy actually has
   (visible_enemies, enemy_buildings), base defence against what is attacking, the clock (time.remaining_seconds)
@@ -119,6 +130,8 @@ tendencies, your decision and why) so you reason before you commit, then:
   "army": {"mode": "hold|attack|all_in", "wave_min": 3-30, "target": "nearest|base|building|[x,y]", "gather": [x,y] or null},
   "army_first": false,
   "orders": [ {"cmd": "move", "units": [id], "to": [x, y]}, ... ],   // optional, at most 8, one-off
+  "tactics": {"hint": "<=300 chars brief for Jev", "min_confidence": 0.5-0.95,
+              "jev_slots": ["structure","unit","posture","wave","target","threat","harvester","power"]},
   "review_in_s": 4-60                                         // when you want to be consulted next if nothing happens
 }
 """
@@ -174,6 +187,7 @@ def build_user(
     plan_age_s: float,
     history: list[str],
     last_latency_s: float | None,
+    jev_advice: dict[str, Any] | None = None,
 ) -> str:
     obs = _dict(raw.get("observation"))
     legal = _dict(raw.get("legal_actions"))
@@ -209,6 +223,7 @@ def build_user(
         "plan_age_s": round(plan_age_s, 1),
         "your_last_answer_took_s": last_latency_s,
         "your_previous_assessments": history,
+        "jev_latest_advice": jev_advice,
     }
     text = json.dumps(state, separators=(",", ":"), default=str)
     if len(text) > MAX_USER_CHARS:  # shrink the biggest lists before giving up detail
