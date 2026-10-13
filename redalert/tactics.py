@@ -54,6 +54,11 @@ POSTURES = {
     "hold": "keep the army at home to defend and keep building up",
     "retreat": "pull the army back to base: the fight is being lost",
 }
+STAGES = {
+    "expand_economy": "keep investing in harvesters, refineries and tech: no danger yet",
+    "build_army": "stop expanding and put money into combat units now",
+    "defend_now": "an attack is coming or here: defences and units before anything else",
+}
 TARGETS = {
     "nearest": "the nearest enemy thing we can see (or the enemy base if none)",
     "building": "the nearest enemy structure",
@@ -72,6 +77,8 @@ class Candidates:
     all_combat: int = 0
     has_harvester_item: bool = False
     has_power_item: bool = False
+    income: float = 0.0
+    scout_alive: bool = False
     describe: dict[str, str] = field(default_factory=dict)
 
 
@@ -177,6 +184,8 @@ class TacticalAdvisor:
             "recent_event_counts": kinds,
             "military": {k: military.get(k) for k in (
                 "kills_cost", "deaths_cost", "army_value", "assets_value", "units_lost", "units_killed")},
+            "measured_income_per_s": round(cands.income, 1),
+            "scout_alive": cands.scout_alive,
             "strategy": plan.assessment,
             "strategy_hint": plan.tactics_hint,
             "plan_army_mode": plan.army_mode,
@@ -198,6 +207,9 @@ class TacticalAdvisor:
         if cands.all_combat >= 1:
             choice("army_posture", "posture",
                    "What should my army do right now: attack, hold at home, or retreat?", dict(POSTURES))
+        choice("stage_now", "stage",
+               "Given my income, what the enemy has shown and the clock, what should my money go into right now?",
+               dict(STAGES))
         if cands.idle_combat >= 3 and "wave" in plan.jev_slots:
             questions["wave_ok"] = {
                 "type": "noul",
@@ -315,7 +327,7 @@ class TacticalAdvisor:
         threat = advice.values.get("threat")
         if isinstance(threat, int) and threat >= ESCALATE_LEVEL and advice.confidence.get("threat", 1.0) >= plan.min_confidence:
             push(f"jev_threat:{threat}", THREAT_COOLDOWN_S)
-        for slot in ("posture", "unit", "structure"):
+        for slot in ("posture", "stage"):
             c = advice.confidence.get(slot)
             if slot in plan.jev_slots and c is not None and c < plan.min_confidence:
                 push(f"jev_uncertain:{slot}", UNCERTAIN_COOLDOWN_S)

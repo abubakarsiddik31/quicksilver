@@ -11,13 +11,14 @@ appears in either: names are not sent, only engine type strings and numbers.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 GUIDE_PATH = Path(__file__).resolve().parents[1] / "docs" / "altruagent-skill" / "redalert.md"
 GUIDE_CUTOFF = "## 10."  # sections 10+ are MCP call mechanics the harness already handles
-MAX_UNITS = 150
-MAX_ENEMIES = 80
+MAX_UNITS = 100
+MAX_ENEMIES = 60
 MAX_USER_CHARS = 60000
 
 
@@ -25,13 +26,24 @@ def _dict(v: Any) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
+GUIDE_SECTIONS = {1, 4, 5, 7, 8, 9}  # rules, state, orders, scoring, build primer, pitfalls (not check-in/waiting)
+
+
 def load_guide() -> str:
+    """The platform guide minus the sections about connecting and waiting, which the harness handles."""
     try:
         text = GUIDE_PATH.read_text(encoding="utf-8")
     except OSError:
         return ""
     cut = text.find(GUIDE_CUTOFF)
-    return text[:cut] if cut > 0 else text
+    text = text[:cut] if cut > 0 else text
+    parts = re.split(r"(?m)^(?=## \d+\. )", text)
+    keep = [parts[0]]
+    for part in parts[1:]:
+        m = re.match(r"## (\d+)\. ", part)
+        if m and int(m.group(1)) in GUIDE_SECTIONS:
+            keep.append(part)
+    return "".join(keep)
 
 
 def rules_table(config: dict[str, Any] | None) -> str:
@@ -44,7 +56,6 @@ def rules_table(config: dict[str, Any] | None) -> str:
             for key, label in (
                 ("cost", "cost"), ("build_time_s", "build_s"), ("power", "power"),
                 ("queue", "queue"), ("prerequisites", "needs"), ("factions", "only"),
-                ("hp", "hp"), ("speed", "speed"),
             ):
                 if info.get(key) not in (None, [], ""):
                     bits.append(f"{label}={json.dumps(info[key], separators=(',', ':'))}")
@@ -61,78 +72,100 @@ def map_block(config: dict[str, Any] | None, map_id: str | None) -> str:
         return ""
     layout = _dict(entry.get("layout"))
     out = [f"MAP {map_id}: bounds={entry.get('bounds')} spawns={entry.get('spawns')}"]
-    rows = layout.get("rows")
-    if isinstance(rows, list):
-        out.append(
-            f"Layout origin={layout.get('origin')} legend={json.dumps(layout.get('legend'))}\n"
-            f"ruler: {layout.get('ruler')}\n" + "\n".join(str(r) for r in rows)
-        )
+    if layout.get("legend"):
+        out.append("(the ore/terrain picture is omitted for speed: scout to learn the ground)")
     return "\n".join(out)
 
 
 HARNESS = """\
 YOU ARE THE STRATEGIST of a Red Alert bot. A fast harness (5 decisions/second) executes your PLAN; you do not
-issue moves one by one, and your latency does not stall the base. You are consulted when something happens
-(see "triggers" in each message) and at least every `review_in_s` seconds you choose yourself.
+issue moves one by one, and your latency (seconds) does not stall the base. You are consulted when something
+happens (see "triggers"), never to narrate progress: do not describe what the harness is already doing.
 
-WHAT THE HARNESS DOES ON ITS OWN (you do not need to order these)
-- deploys the MCV at the start; places every finished building immediately; repairs buildings under 75% hp;
-  queues an emergency power plant if the base is actually in low power.
-- builds structures: walks your `buildings` list in order; the first item whose owned+queued count is below its
-  count and that is in available_production is built next. Structures and Defenses are SEPARATE queues and
-  build in parallel; within one queue only one item builds at a time. Nothing is built before it is in
-  available_production, so list what you will want even if prerequisites are missing now.
-- trains units: walks your `units` list in order the same way, keeping each unit queue shallow. Unless
-  `army_first` is true it holds back the cost of your first two unmet structure wants, so units cannot starve
-  the build order. The count is TOTAL alive + queued (e.g. {"item":"3tnk","count":10} keeps 10 heavy tanks).
-- army: sets idle fighters to attack_anything; mode "hold" gathers idle fighters at `gather` (default: your
-  base); "attack" sends idle fighters as one attack-move wave once `wave_min` are idle; "all_in" attack-moves
-  EVERY combat unit repeatedly. Targets: "nearest" (nearest visible enemy, else the enemy base), "base",
-  "building" (nearest visible enemy structure) or an explicit [x, y] cell.
-- `orders` are optional ONE-OFF raw orders (same format as the order table in the guide) for anything the
-  standing plan cannot express: scouting with a specific unit, selling, rally points, guarding, a focused attack
-  on a specific enemy id, power_toggle. Ids/cells must come from the CURRENT state below; each is re-checked
-  against the live state when sent and dropped if the id has died. They run once per plan you send.
+WHAT THE HARNESS DOES ON ITS OWN (do not order these)
+- deploys the MCV; places every finished building immediately; repairs buildings under 75% hp; queues an
+  emergency power plant if the base is actually in low power.
+- STRUCTURES: walks your `buildings` list in priority order; an item is built when its owned+queued count is below
+  its count and it is in available_production. Structures and Defenses are SEPARATE queues and run in parallel.
+  The next structure is queued once the current one is 40% done, so the Building queue never waits for a decision.
+- UNITS: walks your `units` list in priority order the same way (counts are TOTAL alive+queued), one new order
+  per queue per decision, queues kept shallow. HARVESTERS are automatic: once a war factory exists it keeps
+  2 per refinery (max 6) with priority over everything; you only need to list more to want more.
+- SPENDING GOVERNOR: only one purchase costing 800+ is in production at a time unless cash covers the next one
+  outright, and units hold back the price of your first unmet structure (unless `army_first`). Income is the
+  real limit: look at `harness_measurements.measured_income_per_s`. Several expensive items at once do NOT go
+  faster, they all starve (one match was lost with cash at 0 for two minutes).
+- ALIASES you may use as item names: "barracks" (your faction's tent/barr), "tower" (cheapest defensive tower
+  you can build; its count is the TOTAL of towers of any kind), "aa" (anti-air site; total of AA sites).
+- BASELINE DEFENCE: one tower by 200 s and two by 300 s once a war factory exists, even if you do not list any.
+- ANTI-AIR-ONLY units (ftrk, sam, agun) are filtered out of your unit wants until enemy aircraft is seen.
+- SCOUT: from ~70 s one cheap fast unit is kept sent toward the enemy (via the midpoint, then their base), so
+  `visible_enemies` / `visible_enemy_buildings` fill in. Re-read them; you were blind until the attack landed
+  in the match that was lost.
+- ARMY: sets idle fighters to attack_anything; "hold" gathers idle fighters at `gather` (default your base);
+  "attack" sends idle fighters as one attack-move wave once `wave_min` are idle; "all_in" attack-moves EVERY
+  combat unit repeatedly. Targets: "nearest", "base", "building" (nearest visible enemy structure) or [x, y].
+- `orders`: optional ONE-OFF raw orders (see the order table in the guide) for anything the standing plan cannot
+  express (a specific scouting path, selling, rally points, a focused attack on an enemy id). Ids/cells must come
+  from the CURRENT state; each is re-checked against the live state and dropped if the id is gone.
 
-YOUR PLAN REPLACES THE PREVIOUS ONE ENTIRELY. Restate everything you still want. Plans persist until you send
-the next one, so a good plan is robust for the next 10-30 seconds: express intent as counts and ordered
-priorities, not as a single moment's reaction.
+REACTIONS (your instant reflexes: the harness evaluates them every decision, in milliseconds, while you think)
+  "reactions": [{"name": "...", "when": {...}, "do": [...]}]   // at most 8; `when` keys are ANDed
+  when: {"enemy_near_base": {"at_least": 2, "radius": 30, "types": []}}, {"under_attack": true},
+        {"power_low": true}, {"enemy_air": true}, {"cash_below": N}, {"cash_above": N}, {"time_over_s": N},
+        {"army_at_least": N}, {"enemy_building_seen": ["tsla", ...]}
+        (cash_above / cash_below are automatically held until 150 s so they cannot jump the opening)
+  do:   {"want_building": {"item": "tower", "count": 3}}, {"want_unit": {"item": "e3", "count": 8}},
+        {"army": "hold" | "retreat" | "attack"}, {"army_first": true}
+  Their wants go to the FRONT of your lists while the condition holds. Use them for everything you would
+  otherwise only be able to do after a 5-second consult: answering an armour push, going anti-air, switching to
+  an army when cash floats. Restate reactions you still want: the default set (enemy at the gates / enemy
+  aircraft / cash floating) is replaced by yours.
+
+YOUR PLAN REPLACES THE PREVIOUS ONE ENTIRELY. Restate everything you still want. Plans persist until you send the
+next one, so a good plan is robust for the next 20-60 seconds: express intent as counts, ordered priorities and
+reactions, not as a single moment's reaction.
 
 JEV, YOUR FAST TACTICAL PARTNER (if "jev_latest_advice" is present). Jev is a separate decision model that
 answers bounded questions about the live state about once a second: which structure/unit to build next (among
-the wants you listed that are buildable now), attack/hold/retreat, whether a wave is worth sending, the
-threat level (0-4), and whether another harvester or power plant is needed. The harness obeys a Jev answer only
-if it is fresh, its slot is in your `tactics.jev_slots`, and its confidence reaches your `tactics.min_confidence`;
-a committed "all_in" is never overridden. YOU stay the strategist: choose which slots Jev may drive (drop a
-slot to pin it to your plan), raise min_confidence to trust it less, and write `tactics.hint`, a short brief
-that is shown to Jev with the state (e.g. "enemy is massing tanks: favour anti-armor, expand economy, hold
-until 10 units"). You are woken with "jev_threat:<level>" when Jev sees a serious attack and
-"jev_uncertain:<slot>" when it is unsure: use those to re-plan. `jev_latest_advice` shows what it last said.
+your wants that are buildable now), attack/hold/retreat, whether a wave is worth sending, the threat level
+(0-4), whether another harvester or power plant is needed, and the stage ("expand_economy" / "build_army" /
+"defend_now"). The harness obeys a Jev answer only if it is fresh, its slot is in your `tactics.jev_slots`, and
+its confidence reaches your `tactics.min_confidence`; a committed "all_in" and your reactions are never
+overridden. YOU stay the strategist: drop a slot from `jev_slots` to pin it to your plan, raise min_confidence
+to trust it less, and write `tactics.hint`, a short brief shown to Jev with the state. You are woken with
+"jev_threat:<level>" when Jev sees a serious attack and "jev_uncertain:<slot>" for posture/stage doubts.
+
+BUDGET REALITY (learned the hard way). A match starts with $5,000 and ~10-15 credits/second per early
+harvester. Everything costs: power plant 300, barracks 500, refinery 1400, war factory 2000, depot (fix) 1200,
+tesla 1500, a second refinery 1400, heavy tank ~950. Tech and economy bought before an army leave nothing to
+defend with; the opponent is another AI that may attack from about 5 minutes with medium tanks + infantry.
+Do the arithmetic every time: (cash + income x seconds) against the total cost of what you want, and put
+cheap, effective defence (towers, rocket soldiers e3 against tanks) in place BEFORE the push you expect.
+Tanks beat infantry; rocket infantry/towers beat tanks; never buy anti-air without seeing aircraft.
 
 HOW TO DECIDE
-- Think about economy (refineries/harvesters), tech path, army composition against what the enemy actually has
-  (visible_enemies, enemy_buildings), base defence against what is attacking, the clock (time.remaining_seconds)
-  and the tiebreak. Use the rules table: costs, prerequisites and queues there are authoritative for this
-  match; the guide text is background. If you are unsure whether an item exists for your faction, check `only`.
-- Respect cash: income comes from harvesters. A plan that wants far more than you can afford just stalls.
-- Don't feed the enemy: avoid attacking with tiny groups into a stronger army or defences; trading efficiently
-  matters at the time limit. Keep units alive when a fight is lost (switch to "hold" and rebuild).
-- Look at `harness_diagnostics` and `refusals`: they tell you what is blocked and why. Fix the cause (e.g. a
-  missing prerequisite) instead of repeating it.
-- Be decisive: every second you spend is 25 ticks.
+- Think about economy (income, harvesters), tech path, army composition against what the enemy actually has
+  (visible_enemies, enemy_buildings), base defence, the clock (time.remaining_seconds) and the tiebreak. The
+  rules table (costs, prerequisites, queues) is authoritative for this match; the guide is background.
+- Don't feed the enemy: avoid small waves into a stronger army or defences; trading efficiently matters at the
+  time limit. Keep units alive when a fight is lost (switch to "hold" and rebuild).
+- Look at `harness_diagnostics` and `refusals`: they say what is blocked and why. Fix the cause instead of
+  repeating it. Be decisive: every second you spend is 25 ticks.
 
 ANSWER FORMAT: ONE JSON object, nothing else. Write "assessment" FIRST (<= 400 chars: situation, enemy
-tendencies, your decision and why) so you reason before you commit, then:
+tendencies, your decision and why, with the money arithmetic) so you reason before you commit, then:
 {
   "assessment": "...",
-  "buildings": [{"item": "powr", "count": 1}, ...],          // priority order, TOTAL desired; "barracks" = your faction's tent/barr
+  "buildings": [{"item": "powr", "count": 1}, ...],          // priority order, TOTAL desired
   "units": [{"item": "e1", "count": 6}, ...],                // priority order, TOTAL desired alive+queued
   "army": {"mode": "hold|attack|all_in", "wave_min": 3-30, "target": "nearest|base|building|[x,y]", "gather": [x,y] or null},
   "army_first": false,
+  "reactions": [ ... as above ... ],
   "orders": [ {"cmd": "move", "units": [id], "to": [x, y]}, ... ],   // optional, at most 8, one-off
   "tactics": {"hint": "<=300 chars brief for Jev", "min_confidence": 0.5-0.95,
-              "jev_slots": ["structure","unit","posture","wave","target","threat","harvester","power"]},
-  "review_in_s": 4-60                                         // when you want to be consulted next if nothing happens
+              "jev_slots": ["structure","unit","posture","wave","target","threat","harvester","power","stage"]},
+  "review_in_s": 10-90                                        // when you want to be consulted next if nothing happens
 }
 """
 
@@ -188,6 +221,7 @@ def build_user(
     history: list[str],
     last_latency_s: float | None,
     jev_advice: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> str:
     obs = _dict(raw.get("observation"))
     legal = _dict(raw.get("legal_actions"))
@@ -214,7 +248,7 @@ def build_user(
         "visible_enemies": _enemies(obs.get("visible_enemies")),
         "visible_enemy_buildings": _enemies(obs.get("visible_enemy_buildings")),
         "enemy_base_guess": legal.get("enemy_base"),
-        "events": obs.get("events"),
+        "events": (obs.get("events") or [])[-12:],
         "last_orders": raw.get("last_orders"),
         "recent_order_problems": raw.get("recent_order_problems"),
         "harness_diagnostics": diagnostics,
@@ -224,6 +258,7 @@ def build_user(
         "your_last_answer_took_s": last_latency_s,
         "your_previous_assessments": history,
         "jev_latest_advice": jev_advice,
+        "harness_measurements": extra,
     }
     text = json.dumps(state, separators=(",", ":"), default=str)
     if len(text) > MAX_USER_CHARS:  # shrink the biggest lists before giving up detail

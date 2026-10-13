@@ -40,13 +40,14 @@ HISTORY = 5
 
 # Per-kind cooldown before the same kind of event can trigger again.
 EVENT_COOLDOWN_S = {
-    "under_attack": 5.0,
-    "unit_lost": 8.0,
+    "under_attack": 8.0,
+    "unit_lost": 15.0,
     "building_lost": 3.0,
     "enemy_spotted": 10.0,
     "low_power": 10.0,
 }
-TECH_BUILDINGS = {"proc", "weap", "tent", "barr", "fix", "dome", "atek", "stek", "afld", "hpad", "syrd", "spen"}
+# Only buildings that unlock something new are worth a consult; the rest is progress narration.
+TECH_BUILDINGS = {"weap", "fix", "dome", "atek", "stek", "afld", "hpad", "syrd", "spen"}
 
 
 class Strategist:
@@ -167,6 +168,7 @@ class Strategist:
         refusals: list[str] | None = None,
         *,
         jev: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
         sync: bool = False,
     ) -> None:
         """Note triggers and, if one is due, start a background consult. Never blocks."""
@@ -198,7 +200,7 @@ class Strategist:
             user = build_user(
                 raw, triggers=triggers, diagnostics=diagnostics, refusals=refusals,
                 plan=previous.as_json(), plan_age_s=age, history=history, last_latency_s=latency,
-                jev_advice=jev,
+                jev_advice=jev, extra=extra,
             )
         except Exception as exc:  # noqa: BLE001 - never break the loop
             with self._lock:
@@ -215,7 +217,7 @@ class Strategist:
         parsed: Plan | None = None
         try:
             text = self.client.generate(  # type: ignore[union-attr]
-                user, system=self._system, temperature=0.5, max_output_tokens=3000,
+                user, system=self._system, temperature=0.5, max_output_tokens=2200,
                 timeout=MODEL_TIMEOUT_S, json_output=True,
             )
             parsed = parse_plan(text, previous)

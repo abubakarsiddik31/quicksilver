@@ -22,13 +22,15 @@ from typing import Any
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
 # Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
-JEV_SLOTS = ("structure", "unit", "posture", "wave", "target", "threat", "harvester", "power")
+JEV_SLOTS = ("structure", "unit", "posture", "wave", "target", "threat", "harvester", "power", "stage")
 ITEM_RE = re.compile(r"^[a-z0-9_]{2,8}$")
 
 MAX_WANTS = 24
 MAX_RAW_ORDERS = 8
 MAX_COUNT = 40
-REVIEW_MIN_S, REVIEW_MAX_S = 4, 60
+REVIEW_MIN_S, REVIEW_MAX_S = 10, 90
+MAX_REACTIONS = 8
+CASH_RULE_MIN_S = 150  # cash_* reactions never fire during the opening
 
 # cmd -> (required fields, optional fields). Mirrors the platform's order schema.
 ORDER_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
@@ -58,6 +60,103 @@ BUILDING_ORDERS = {"sell", "repair", "power_toggle", "set_primary", "rally"}
 ITEM_ORDERS = {"build", "train", "place", "cancel"}
 
 
+ALIASES = ("barracks", "tower", "aa")  # resolved to this faction's real item by the executor
+REACTION_ARMY = ("hold", "retreat", "attack")
+COND_BOOLS = ("under_attack", "power_low", "enemy_air")
+COND_INTS = {"cash_below": (0, 20000), "cash_above": (0, 20000), "time_over_s": (0, 7200), "army_at_least": (1, 100)}
+
+
+@dataclass(frozen=True)
+class Reaction:
+    """An if-then rule the fast loop evaluates every decision (milliseconds, no model).
+
+    ``when`` conditions are ANDed; ``do`` actions are want_building / want_unit
+    (priority-ordered TOTAL counts, same as the plan), army (hold|retreat|attack)
+    and army_first (spend on units before structures).
+    """
+
+    name: str
+    when: dict[str, Any]
+    do: tuple[dict[str, Any], ...]
+
+
+def _parse_when(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    near = value.get("enemy_near_base")
+    if isinstance(near, dict):
+        types = near.get("types")
+        out["enemy_near_base"] = {
+            "at_least": _clamp(near.get("at_least"), 1, 50, 1),
+            "radius": _clamp(near.get("radius"), 8, 60, 28),
+            "types": [t for t in (str(x).lower() for x in types) if ITEM_RE.match(t)][:8]
+            if isinstance(types, list) else [],
+        }
+    for key in COND_BOOLS:
+        if value.get(key) is True:
+            out[key] = True
+    for key, (low, high) in COND_INTS.items():
+        if _is_int(value.get(key)):
+            out[key] = max(low, min(high, value[key]))
+    seen = value.get("enemy_building_seen")
+    if isinstance(seen, list):
+        names = [t for t in (str(x).lower() for x in seen) if ITEM_RE.match(t)][:8]
+        if names:
+            out["enemy_building_seen"] = names
+    # A cash-only condition is true at the very start (5,000 cash) and would jump the opening: gate it.
+    if ("cash_above" in out or "cash_below" in out) and out.get("time_over_s", 0) < CASH_RULE_MIN_S:
+        out["time_over_s"] = CASH_RULE_MIN_S
+    return out
+
+
+def _parse_do(value: Any) -> tuple[dict[str, Any], ...]:
+    out: list[dict[str, Any]] = []
+    for action in (value if isinstance(value, list) else [])[:4]:
+        if not isinstance(action, dict):
+            continue
+        for key in ("want_building", "want_unit"):
+            body = action.get(key)
+            if isinstance(body, dict):
+                item = str(body.get("item", "")).lower().strip()
+                if ITEM_RE.match(item) and _is_int(body.get("count")):
+                    out.append({key: {"item": item, "count": max(0, min(MAX_COUNT, body["count"]))}})
+        if str(action.get("army", "")).lower() in REACTION_ARMY:
+            out.append({"army": str(action["army"]).lower()})
+        if action.get("army_first") is True:
+            out.append({"army_first": True})
+    return tuple(out)
+
+
+def parse_reactions(value: Any, default: tuple[Reaction, ...]) -> tuple[Reaction, ...]:
+    if not isinstance(value, list):
+        return default
+    out: list[Reaction] = []
+    for row in value[:MAX_REACTIONS]:
+        if not isinstance(row, dict):
+            continue
+        when, do = _parse_when(row.get("when")), _parse_do(row.get("do"))
+        if when and do:  # a reaction with no condition would be always-on: dropped
+            out.append(Reaction(" ".join(str(row.get("name", "reaction")).split())[:60], when, do))
+    return tuple(out)
+
+
+DEFAULT_REACTIONS = (
+    Reaction(
+        "enemy at the gates",
+        {"enemy_near_base": {"at_least": 2, "radius": 30, "types": []}},
+        ({"want_building": {"item": "tower", "count": 3}}, {"want_unit": {"item": "e3", "count": 8}},
+         {"army": "hold"}, {"army_first": True}),
+    ),
+    Reaction("enemy aircraft", {"enemy_air": True}, ({"want_building": {"item": "aa", "count": 1}},)),
+    Reaction(
+        "cash floating", {"cash_above": 2000, "time_over_s": 200, "army_at_least": 3},
+        ({"want_building": {"item": "weap", "count": 2}}, {"want_building": {"item": "barracks", "count": 2}},
+         {"army_first": True}),
+    ),
+)
+
+
 @dataclass(frozen=True)
 class Plan:
     assessment: str = ""
@@ -71,7 +170,8 @@ class Plan:
     gather: tuple[int, int] | None = None
     army_first: bool = False  # True: don't hold back cash for wanted structures
     orders: tuple[dict, ...] = ()  # one-off raw orders, run once per plan
-    review_in_s: int = 15  # when the model wants to be consulted again
+    review_in_s: int = 25  # when the model wants to be consulted again
+    reactions: tuple[Reaction, ...] = DEFAULT_REACTIONS
     # Guidance for the fast tactical model (Jev): a short strategic brief that is
     # added to its state, how sure it must be to be obeyed, and which slots it may drive.
     tactics_hint: str = ""
@@ -92,6 +192,7 @@ class Plan:
             "army_first": self.army_first,
             "orders": list(self.orders),
             "review_in_s": self.review_in_s,
+            "reactions": [{"name": r.name, "when": r.when, "do": list(r.do)} for r in self.reactions],
             "tactics": {
                 "hint": self.tactics_hint,
                 "min_confidence": self.min_confidence,
@@ -104,14 +205,12 @@ class Plan:
 # the fallback when no model is configured. "barracks" resolves to this
 # faction's tent (Allies) or barr (Soviets).
 DEFAULT_PLAN = Plan(
-    assessment="default opening: power, refinery, barracks, war factory, then army",
+    assessment="default opening: power, refinery, war factory, barracks; harvesters; cheap defence; then army",
     buildings=(
-        ("powr", 1), ("proc", 1), ("barracks", 1), ("weap", 1),
-        ("powr", 2), ("proc", 2),
+        ("powr", 1), ("proc", 1), ("weap", 1), ("barracks", 1), ("powr", 2), ("fix", 1),
     ),
     units=(
-        ("e1", 4), ("harv", 2), ("3tnk", 8), ("2tnk", 8), ("1tnk", 8),
-        ("ftrk", 6), ("apc", 6), ("jeep", 3), ("e1", 12),
+        ("harv", 3), ("e3", 4), ("e1", 3), ("1tnk", 4), ("3tnk", 8), ("2tnk", 4), ("e3", 8), ("e1", 6),
     ),
 )
 
@@ -211,6 +310,7 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
     else:
         jev_slots = base.jev_slots
     return Plan(
+        reactions=parse_reactions(data.get("reactions"), base.reactions),
         assessment=" ".join(note.split())[:400] if isinstance(note, str) else "",
         buildings=_wants(data.get("buildings"), base.buildings),
         units=_wants(data.get("units"), base.units),
