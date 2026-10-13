@@ -1,189 +1,391 @@
-"""High-performance real-time Command & Conquer: Red Alert engine for Quicksilver.
+"""Real-time Red Alert player: an LLM strategist plus a fast plan executor.
 
-Architecture:
-1. Real-Time Deterministic Engine (Sub-5ms Execution):
-   - In real time (25 ticks/sec), thinking time costs games.
-   - Automatically executes the optimal opening build order:
-     * Deploy MCV -> Construction Yard ('fact')
-     * Build Power Plant ('powr') -> Place Power Plant
-     * Build Barracks ('tent' for Allies, 'barr' for Soviets) -> Place Barracks
-     * Train Rifle Infantry ('e1') in parallel
-     * Build Ore Refinery ('proc') -> Place Refinery (spawns first Harvester)
-     * Build War Factory ('weap') -> Place War Factory
-     * Train combat vehicles (Tanks/APCs) and defensive towers
-   - Automated Economy & Power Management:
-     * Watches power_drained vs power_provided; immediately queues 'powr' before brownouts.
-     * Keeps Harvesters active and productive.
-     * Repairs damaged structures.
-   - Automated Military Combat:
-     * Groups idle combat units and executes coordinated attack_move batches
-       toward enemy sightings or the opposing base spawn cell.
+Red Alert never waits, so the two halves run at different speeds:
 
-2. Strategic Gemini Overseer (Non-Blocking):
-   - Macro decisions (target prioritization, scouting adjustments) run on a
-     cooldown without blocking the 25-ticks/s real-time action loop.
+* ``redalert.strategist.Strategist`` consults an LLM in a background thread,
+  woken by game events (see that module), and publishes a *plan*
+  (``redalert.plan.Plan``): ordered structure and unit wants, army posture, and
+  optional one-off raw orders. Every strategic decision comes from the model;
+  with no model the built-in default opening runs instead.
+* ``RedAlertAgent`` (here) is called ~5 times a second and executes the current
+  plan against the latest state in milliseconds. It also owns the *reflexes*
+  that must not wait for a model: deploy the MCV, place finished buildings,
+  repair, and an emergency power plant when the base is really in low power.
+
+The executor never invents strategy and the model never touches the wire: its
+raw orders are re-validated against the live state before they are sent.
 """
 
 from __future__ import annotations
 
-import json
+import math
+import time
 from typing import Any
 
 from altruagent import WAIT, DecisionContext, GameState, WithReasoning
+from common.llm import GeminiClient
+from redalert.plan import DEFAULT_PLAN, Plan, sanitize_order
+from redalert.strategist import Strategist
 
-# Standard building constants
-MCV = "mcv"
-FACT = "fact"
-POWR = "powr"
-ALLIED_BARR = "tent"
-SOVIET_BARR = "barr"
-PROC = "proc"
-WEAP = "weap"
-INF_E1 = "e1"
+NON_COMBAT = {"mcv", "harv", "medi", "mech", "e6", "spy", "thf", "truk"}
+DEFENSES = {"gun", "pbox", "hbox", "ftur", "tsla", "sam", "agun"}
+STRUCTURES = {
+    "powr", "apwr", "tent", "barr", "proc", "weap", "fix", "dome", "atek", "stek",
+    "silo", "hpad", "afld", "syrd", "spen", "kenn", "fcom", "iron", "pdox", "mslo",
+}
+INFANTRY = {"e1", "e2", "e3", "e4", "e6", "e7", "dog", "medi", "mech", "spy", "thf", "shok"}
+SHIPS = {"ss", "dd", "ca", "pt", "lst", "msub"}
+AIRCRAFT = {"mig", "yak", "hind", "heli", "tran"}
+ALLIED_FACTIONS = {"allies", "allied", "england", "france", "germany"}
+SOVIET_FACTIONS = {"soviet", "soviets", "russia", "ukraine"}
+# Fallback costs when the rules table is not available.
+FALLBACK_COST = {"powr": 300, "tent": 500, "barr": 500, "proc": 1400, "weap": 2000, "harv": 1100, "e1": 100}
+
+TTL = {"build": 2.5, "train": 1.5, "place": 1.0, "burst": 3.0}
+REJECT_TTL = {"not_available": 5.0, "not_ready": 2.0, "invalid": 5.0}
+DIAG_AFTER_S = 12.0
+REFUSAL_KEEP_S = 60.0
+MAX_BATCH = 20
+
+
+def _cell(value: Any) -> tuple[int, int] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 2 and all(isinstance(v, (int, float)) for v in value[:2]):
+        return int(value[0]), int(value[1])
+    if isinstance(value, dict) and isinstance(value.get("x"), (int, float)) and isinstance(value.get("y"), (int, float)):
+        return int(value["x"]), int(value["y"])
+    return None
 
 
 class RedAlertAgent:
-    """Real-time Command & Conquer: Red Alert autonomous player."""
+    """Executes the strategist's plan at real-time speed."""
 
-    def __init__(self) -> None:
-        self.step_count = 0
-        self._last_batch_time = 0.0
+    def __init__(self, strategist: Strategist | None = None) -> None:
+        self.strategist = strategist if strategist is not None else Strategist(GeminiClient.from_env())
+        self._until: dict[str, float] = {}
+        self._stanced: set[int] = set()
+        self._gathered: set[int] = set()
+        self._exec_version = -1
+        self._diag_since: dict[str, float] = {}
+        self._refusals: list[tuple[float, str]] = []
+        self._last_sent: list[dict[str, Any]] = []
+        self._rules_for: int | None = None
+        self._cost: dict[str, int] = {}
+        self._queue: dict[str, str] = {}
+        self._needs: dict[str, list[str]] = {}
+
+    # -- throttling and learning -------------------------------------------------
+
+    def _fresh(self, key: str, ttl: float) -> bool:
+        """True (and arms the cooldown) unless ``key`` was sent or refused too recently."""
+        now = time.monotonic()
+        if now < self._until.get(key, 0.0):
+            return False
+        self._until[key] = now + ttl
+        return True
+
+    def _learn(self, config: dict[str, Any] | None) -> None:
+        if not isinstance(config, dict) or self._rules_for == id(config):
+            return
+        self._rules_for = id(config)
+        rules = config.get("rules") if isinstance(config.get("rules"), dict) else {}
+        for group in ("buildings", "units"):
+            for name, info in (rules.get(group) or {}).items():
+                if not isinstance(info, dict):
+                    continue
+                key = str(name).lower()
+                if isinstance(info.get("cost"), (int, float)):
+                    self._cost[key] = int(info["cost"])
+                if isinstance(info.get("queue"), str):
+                    self._queue[key] = info["queue"].lower()
+                if isinstance(info.get("prerequisites"), list):
+                    self._needs[key] = [str(p).lower() for p in info["prerequisites"]]
+
+    def queue_of(self, item: str) -> str:
+        if item in self._queue:
+            return self._queue[item]
+        if item in DEFENSES:
+            return "defense"
+        if item in STRUCTURES:
+            return "building"
+        if item in INFANTRY:
+            return "infantry"
+        if item in SHIPS:
+            return "ship"
+        if item in AIRCRAFT:
+            return "aircraft"
+        return "vehicle"
+
+    def cost_of(self, item: str) -> int:
+        return self._cost.get(item, FALLBACK_COST.get(item, 100))
+
+    def on_action_result(self, result: dict, context: DecisionContext) -> None:
+        """Learn which orders were refused: back off them and tell the strategist why."""
+        sent = self._last_sent
+        now = time.monotonic()
+        if result.get("error") == "INVALID_ACTION":
+            self._refusals.append((now, str(result.get("detail") or "batch refused")[:200]))
+            return
+        if "error" in result:
+            return
+        for row in result.get("results") or []:
+            if not isinstance(row, dict) or row.get("status") != "rejected":
+                continue
+            index = row.get("index")
+            if not isinstance(index, int) or not 0 <= index < len(sent):
+                continue
+            order = sent[index]
+            reason = str(row.get("reason") or "rejected")
+            item = order.get("item")
+            if item and order.get("cmd") in ("build", "train", "place"):
+                key = f"{order['cmd']}:{str(item).lower()}"
+                self._until[key] = max(self._until.get(key, 0.0), now + REJECT_TTL.get(reason, 3.0))
+            self._refusals.append(
+                (now, f"{order.get('cmd')} {item or ''}: {reason} {row.get('detail') or ''}".strip()[:200])
+            )
+        self._refusals = [(t, m) for t, m in self._refusals if now - t < REFUSAL_KEEP_S][-8:]
+
+    # -- helpers -----------------------------------------------------------------
+
+    @staticmethod
+    def _barracks(item: str, faction: str, avail: set[str], owned: dict[str, int]) -> str:
+        """The plan may say "barracks": resolve it to this faction's tent/barr."""
+        if item != "barracks":
+            return item
+        order = ("barr", "tent") if faction in SOVIET_FACTIONS else ("tent", "barr")
+        for name in order:
+            if name in avail or owned.get(name):
+                return name
+        return order[0]
+
+    def _reachable(self, item: str, avail: set[str], owned: dict[str, int], wanted: set[str]) -> bool:
+        """Could ``item`` become buildable soon? (available, or its prerequisites are owned or wanted)."""
+        if item in avail:
+            return True
+        needs = self._needs.get(item)
+        if needs is None:
+            return item in STRUCTURES  # no rules: assume a known structure is reachable
+        return all(owned.get(n) or n in wanted for n in needs)
+
+    # -- the fast loop -----------------------------------------------------------
 
     def choose_action(self, state: GameState, context: DecisionContext):
         raw = getattr(state, "raw", None)
-        if not isinstance(raw, dict):
-            return WAIT
-
-        obs = raw.get("observation")
+        obs = raw.get("observation") if isinstance(raw, dict) else None
         if not isinstance(obs, dict):
             return WAIT
+        config = getattr(context, "game_config", None)
+        self._learn(config)
 
-        # Tick and state info
-        tick = obs.get("tick", 0)
-        self.step_count += 1
-
-        orders: list[dict[str, Any]] = []
-
-        # 1. Base Deployment Check (Turn 0: MCV -> Construction Yard)
+        plan = self.strategist.current() if self.strategist.enabled else DEFAULT_PLAN
         legal = raw.get("legal_actions") or {}
-        deploy_mcvs = legal.get("deploy") or []
-        if deploy_mcvs:
-            orders.append({"cmd": "deploy", "units": [deploy_mcvs[0]]})
-
-        # 2. Place Finished Buildings (Immediate Priority)
-        # Check production queue for finished/ready structures
-        production = obs.get("production") or []
-        ready_items = [p.get("item") for p in production if p.get("ready")]
-        placed_in_this_batch = set()
-
-        for item in ready_items:
-            if item and item.lower() not in placed_in_this_batch:
-                orders.append({"cmd": "place", "item": item})
-                placed_in_this_batch.add(item.lower())
-
-        # 3. Power & Economy Construction Pipeline
+        production = [p for p in (obs.get("production") or []) if isinstance(p, dict)]
         avail = {str(x).lower() for x in (obs.get("available_production") or [])}
         econ = obs.get("economy") or {}
-        cash = econ.get("cash", 0)
-        power_provided = econ.get("power_provided", 0)
-        power_drained = econ.get("power_drained", 0)
+        cash = econ.get("cash", 0) or 0
+        faction = str(obs.get("faction") or "").lower()
+        units = [u for u in (obs.get("units") or []) if isinstance(u, dict) and not u.get("wreck")]
+        buildings = [b for b in (obs.get("buildings") or []) if isinstance(b, dict)]
+        owned: dict[str, int] = {}
+        for row in (*units, *buildings):
+            t = str(row.get("type")).lower()
+            owned[t] = owned.get(t, 0) + 1
+        queued: dict[str, int] = {}
+        depth: dict[str, int] = {}
+        busy: set[str] = set()
+        for p in production:
+            item = str(p.get("item")).lower()
+            q = str(p.get("queue") or self.queue_of(item)).lower()
+            queued[item] = queued.get(item, 0) + 1
+            depth[q] = depth.get(q, 0) + 1
+            if q in ("building", "defense"):
+                busy.add(q)  # building, or finished and waiting to be placed
 
-        # Count active/queued buildings
-        queued_items = {str(p.get("item")).lower() for p in production}
-        own_buildings = obs.get("buildings") or []
-        building_types = {str(b.get("type")).lower() for b in own_buildings}
+        orders: list[dict[str, Any]] = []
+        diag: list[str] = []
 
-        # Need power if deficit or surplus is thin (< 30)
-        power_deficit = (power_drained + 30) >= power_provided
-        if POWR in avail and POWR not in queued_items and (power_deficit or POWR not in building_types):
-            orders.append({"cmd": "build", "item": POWR})
-            queued_items.add(POWR)
+        # Reflex 1: deploy the MCV. Reflex 2: place finished structures at once.
+        deploy = legal.get("deploy") or []
+        if deploy:
+            orders.append({"cmd": "deploy", "units": [deploy[0]]})
+        placed: set[str] = set()
+        for p in production:
+            item = str(p.get("item")).lower()
+            if (
+                p.get("ready") and item not in placed
+                and self.queue_of(item) in ("building", "defense")
+                and self._fresh(f"place:{item}", TTL["place"])
+            ):
+                orders.append({"cmd": "place", "item": p.get("item")})
+                placed.add(item)
 
-        # Step 2: Barracks (Allies 'tent', Soviets 'barr')
-        barracks_item = ALLIED_BARR if ALLIED_BARR in avail else (SOVIET_BARR if SOVIET_BARR in avail else None)
-        has_barracks = any(b in building_types for b in (ALLIED_BARR, SOVIET_BARR))
-        if barracks_item and not has_barracks and barracks_item not in queued_items:
-            orders.append({"cmd": "build", "item": barracks_item})
-            queued_items.add(barracks_item)
+        # Structures: the plan's wants in priority order, plus an emergency power plant.
+        wants = [(self._barracks(i, faction, avail, owned), c) for i, c in plan.buildings]
+        provided, drained = econ.get("power_provided", 0) or 0, econ.get("power_drained", 0) or 0
+        if drained > provided and "powr" in avail:
+            wants.insert(0, ("powr", owned.get("powr", 0) + queued.get("powr", 0) + 1))
+        wanted_names = {i for i, _ in wants}
+        unmet: list[str] = []  # unsatisfied structure wants, for the cash reserve
+        for item, count in wants:
+            have = owned.get(item, 0) + queued.get(item, 0)
+            if have >= count:
+                continue
+            if self._reachable(item, avail, owned, wanted_names) and len(unmet) < 3:
+                unmet.append(item)
+            if item not in avail:
+                diag.append(f"wanted {item} x{count} is not in available_production (prerequisites?)")
+                continue
+            q = self.queue_of(item)
+            if q in busy:
+                continue
+            if self._fresh(f"build:{item}", TTL["build"]):
+                orders.append({"cmd": "build", "item": item})
+                busy.add(q)
 
-        # Step 3: Ore Refinery ('proc')
-        if PROC in avail and PROC not in building_types and PROC not in queued_items and cash >= 1400:
-            orders.append({"cmd": "build", "item": PROC})
-            queued_items.add(PROC)
+        # Units: the plan's wants in priority order, one new order per queue per decision.
+        reserve = 0 if plan.army_first else sum(self.cost_of(i) for i in unmet)
+        spendable = cash - reserve
+        used: set[str] = set()
+        trained = False
+        for item, count in plan.units:
+            have = owned.get(item, 0) + queued.get(item, 0)
+            if have >= count:
+                continue
+            if item not in avail:
+                diag.append(f"wanted unit {item} x{count} is not in available_production")
+                continue
+            q = self.queue_of(item)
+            if q in used or depth.get(q, 0) >= (3 if q == "infantry" else 2):
+                continue
+            n = min(count - have, 3) if q == "infantry" else 1
+            if spendable < self.cost_of(item) * n or not self._fresh(f"train:{item}", TTL["train"]):
+                continue
+            orders.append({"cmd": "train", "item": item, "count": n})
+            used.add(q)
+            spendable -= self.cost_of(item) * n
+            trained = True
 
-        # Step 4: War Factory ('weap')
-        if WEAP in avail and WEAP not in building_types and WEAP not in queued_items and cash >= 2000:
-            orders.append({"cmd": "build", "item": WEAP})
-            queued_items.add(WEAP)
+        if not unmet and not trained and not production and cash > 1500:
+            diag.append(f"{cash} cash unspent and nothing is queued or wanted")
+        if not diag and not unmet and not production and all(
+            owned.get(i, 0) + queued.get(i, 0) >= c for i, c in (*plan.buildings, *plan.units)
+        ):
+            diag.append("every structure and unit want in the plan is satisfied")
 
-        # 4. Unit Training (Continuous Armament & Economy)
-        # Always maintain at least 2 harvesters if we own a refinery
-        harv_count = econ.get("harvesters", 0)
-        if "harv" in avail and harv_count < 2 and cash >= 1100 and "harv" not in queued_items:
-            orders.append({"cmd": "train", "item": "harv", "count": 1})
-            queued_items.add("harv")
+        # Reflex 3: repairs.
+        for b in buildings:
+            if (
+                (b.get("hp", 100) or 100) < 75 and b.get("id") is not None and not b.get("repairing")
+                and self._fresh(f"repair:{b['id']}", 2.0)
+            ):
+                orders.append({"cmd": "repair", "building": b["id"], "on": True})
 
-        # Train vehicles if available (e.g. 1tnk, 2tnk, 3tnk, jeep, apc)
-        for v in ("3tnk", "2tnk", "1tnk", "ftrk", "apc", "jeep"):
-            if v in avail and cash >= 800 and v not in queued_items:
-                orders.append({"cmd": "train", "item": v, "count": 1})
-                queued_items.add(v)
-                break
+        orders += self._army(plan, raw, obs, legal, units)
+        orders += self._raw_orders(plan, raw, obs, units, buildings, avail)
 
-        # Train infantry if barracks available
-        if INF_E1 in avail and cash >= 300 and INF_E1 not in queued_items:
-            # Train up to 3 infantry at a time
-            orders.append({"cmd": "train", "item": INF_E1, "count": 3})
-            queued_items.add(INF_E1)
+        now = time.monotonic()
+        self._diag_since = {d: self._diag_since.get(d, now) for d in diag}
+        stuck = [d for d, t in self._diag_since.items() if now - t >= DIAG_AFTER_S]
+        self._refusals = [(t, m) for t, m in self._refusals if now - t < REFUSAL_KEEP_S]
+        if self.strategist.enabled:
+            self.strategist.maybe_update(raw, config, stuck, [m for _, m in self._refusals])
 
-        # 5. Base Defenses (Gun Turrets / Tesla Coils)
-        for d in ("tsla", "gun", "ftur", "pbox"):
-            if d in avail and d not in queued_items and cash >= 1000 and power_provided > (power_drained + 50):
-                orders.append({"cmd": "build", "item": d})
-                queued_items.add(d)
-                break
-
-        # 6. Structure Repairs
-        for b in own_buildings:
-            b_hp = b.get("hp", 100)
-            bid = b.get("id")
-            if b_hp < 75 and bid is not None and not b.get("repairing"):
-                orders.append({"cmd": "repair", "building": bid, "on": True})
-
-        # 7. Military Attack & Stance Orders
-        attack_now = legal.get("attack_now")
-        combat_units = legal.get("combat_units") or []
-
-        # If we have 3+ combat units, launch an offensive wave
-        if attack_now and len(combat_units) >= 3:
-            orders.append(attack_now)
-        elif len(combat_units) >= 5:
-            enemy_base = legal.get("enemy_base")
-            if enemy_base:
-                orders.append({
-                    "cmd": "attack_move",
-                    "units": combat_units[:25],
-                    "to": enemy_base,
-                })
-
-        # Set stance to attack_anything or defend for idle combat units
-        idle_units = legal.get("idle_units") or []
-        idle_fighters = [uid for uid in idle_units if uid in combat_units]
-        if idle_fighters:
-            orders.append({
-                "cmd": "set_stance",
-                "units": idle_fighters[:20],
-                "stance": "attack_anything",
-            })
-
-        # Return orders batch
         if not orders:
             return WAIT
-
-        # Cap at 20 orders max per platform limits
-        batch = orders[:20]
-        summary = f"RedAlert tick {tick}: {len(batch)} command(s) issued."
+        batch = orders[:MAX_BATCH]
+        self._last_sent = batch
+        summary = f"v{self.strategist.version} {plan.assessment}"[:480] if self.strategist.enabled else "default plan"
         return WithReasoning({"type": "orders", "orders": batch}, summary)
+
+    # -- army --------------------------------------------------------------------
+
+    def _target(self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any]) -> list[int] | None:
+        bounds = (raw.get("map") or {}).get("bounds")
+        base = _cell(legal.get("enemy_base"))
+        target: Any = plan.target
+        cell: tuple[int, int] | None
+        if isinstance(target, tuple):
+            cell = target
+        elif target == "building":
+            mine = _cell(obs.get("base_center")) or (0, 0)
+            seen = [
+                c for c in (
+                    _cell(e) for e in (obs.get("visible_enemy_buildings") or [])
+                    if isinstance(e, dict) and not e.get("wreck")
+                ) if c
+            ]
+            cell = min(seen, key=lambda c: math.dist(c, mine)) if seen else base
+        elif target == "nearest":
+            nearest = legal.get("attack_now")
+            cell = (_cell(nearest.get("to")) if isinstance(nearest, dict) else None) or base
+        else:
+            cell = base
+        if cell is None:
+            return None
+        if isinstance(bounds, list) and len(bounds) == 4:
+            bx, by, bw, bh = bounds
+            cell = (max(bx, min(bx + bw - 1, cell[0])), max(by, min(by + bh - 1, cell[1])))
+        return [cell[0], cell[1]]
+
+    def _army(
+        self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any],
+        units: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        idle_combat = [u for u in (legal.get("combat_units") or []) if isinstance(u, int)]
+        fresh = [u for u in idle_combat if u not in self._stanced]
+        if fresh:
+            self._stanced.update(fresh[:20])
+            out.append({"cmd": "set_stance", "units": fresh[:20], "stance": "attack_anything"})
+
+        if plan.army_mode == "hold":
+            spot = plan.gather or _cell(obs.get("base_center"))
+            if spot:
+                pos = {u.get("id"): _cell(u) for u in units}
+                far = [
+                    u for u in idle_combat
+                    if u not in self._gathered and (pos.get(u) is None or math.dist(pos[u], spot) > 8)
+                ]
+                if far:
+                    self._gathered.update(far[:50])
+                    out.append({"cmd": "move", "units": far[:50], "to": list(spot)})
+            return out
+
+        target = self._target(plan, raw, obs, legal)
+        if target is None:
+            return out
+        if plan.army_mode == "all_in":
+            everyone = [
+                u["id"] for u in units
+                if isinstance(u.get("id"), int) and str(u.get("type")).lower() not in NON_COMBAT
+            ]
+            if everyone and self._fresh("all_in", TTL["burst"]):
+                for i in range(0, min(len(everyone), 150), 50):
+                    out.append({"cmd": "attack_move", "units": everyone[i:i + 50], "to": target})
+            return out
+        if len(idle_combat) >= plan.wave_min:
+            self._gathered.difference_update(idle_combat)
+            out.append({"cmd": "attack_move", "units": idle_combat[:50], "to": target})
+        return out
+
+    # -- the model's one-off raw orders ------------------------------------------
+
+    def _raw_orders(
+        self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], units: list[dict[str, Any]],
+        buildings: list[dict[str, Any]], avail: set[str],
+    ) -> list[dict[str, Any]]:
+        version = self.strategist.version
+        if version == self._exec_version or not plan.orders:
+            self._exec_version = version
+            return []
+        self._exec_version = version
+        bounds = (raw.get("map") or {}).get("bounds")
+        bounds_t = tuple(bounds) if isinstance(bounds, list) and len(bounds) == 4 else None
+        unit_ids = {u["id"] for u in units if isinstance(u.get("id"), int)}
+        building_ids = {b["id"] for b in buildings if isinstance(b.get("id"), int)}
+        enemies = (obs.get("visible_enemies") or []) + (obs.get("visible_enemy_buildings") or [])
+        enemy_ids = {e["id"] for e in enemies if isinstance(e, dict) and isinstance(e.get("id"), int)}
+        clean = (sanitize_order(o, unit_ids, building_ids, enemy_ids, bounds_t, avail) for o in plan.orders)  # type: ignore[arg-type]
+        return [o for o in clean if o]
 
 
 def create_agent():

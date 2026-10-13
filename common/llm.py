@@ -91,6 +91,8 @@ class GeminiClient:
         system: str | None,
         temperature: float,
         max_output_tokens: int,
+        json_output: bool = False,
+        thinking_budget: int = 0,
     ) -> dict:
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -99,7 +101,7 @@ class GeminiClient:
                 "maxOutputTokens": max(max_output_tokens, 1024),
                 # Set thinkingBudget: 0 so internal reasoning tokens never consume
                 # the output quota or truncate the real message in Gemini 3.8 Flash
-                "thinkingConfig": {"thinkingBudget": 0},
+                "thinkingConfig": {"thinkingBudget": thinking_budget},
             },
             # Relax safety thresholds to BLOCK_NONE so competitive game terms
             # ("eliminate", "kill", "accuse", "attack", "faint") in Werewolf and
@@ -111,6 +113,8 @@ class GeminiClient:
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ],
         }
+        if json_output:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
         if system:
             payload["systemInstruction"] = {"parts": [{"text": system}]}
         return payload
@@ -151,6 +155,8 @@ class GeminiClient:
         temperature: float = 0.9,
         max_output_tokens: int = 256,
         timeout: float | None = None,
+        json_output: bool = False,
+        thinking_budget: int = 0,
     ) -> str | None:
         """One generation, or ``None``. Never raises."""
         if not self.configured or not isinstance(prompt, str) or not prompt.strip():
@@ -165,7 +171,8 @@ class GeminiClient:
                     params={"key": self.api_key},
                     headers={"Content-Type": "application/json"},
                     json=self._payload(
-                        prompt, system, temperature, max_output_tokens
+                        prompt, system, temperature, max_output_tokens,
+                        json_output, thinking_budget,
                     ),
                 )
             if response.status_code != 200:

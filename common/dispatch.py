@@ -70,6 +70,12 @@ class QuicksilverAgent:
     def choose_action(self, state: GameState, context: DecisionContext):
         return _call(self._delegate_for(context), "choose_action", state, context)
 
+    def on_action_result(self, result: dict, context: DecisionContext) -> None:
+        """Forward the runner's per-move answer to a delegate that wants it (Red Alert)."""
+        hook = getattr(self._delegate, "on_action_result", None)
+        if callable(hook):
+            hook(result, context)
+
     def choose_message(self, state: GameState, context: DecisionContext):
         delegate = self._delegate_for(context)
         method = getattr(delegate, "choose_message", None)
