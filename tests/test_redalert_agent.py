@@ -1007,3 +1007,56 @@ def test_no_harvester_rebuys_while_the_army_is_short():
     state.raw["time"]["game_seconds"] = 90  # no floor yet: 2 per refinery
     items = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "train"]
     assert "harv" in items
+
+
+# -- match 4 lessons: money in `ore`, idle harvesters, power, enemy harvesters, schema -----------------------------
+
+
+def test_ore_is_money():
+    plan = Plan(buildings=(), units=(("e3", 5),), jev_slots=PINNED)
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "powr", "barr", "proc", "weap", "harv", "harv"])]
+    state = make_state(avail=["e3"], cash=0, buildings=built)
+    state.raw["observation"]["economy"].update({"ore": 1500, "resource_capacity": 2000})
+    out = stub_agent(plan).choose_action(state, CTX)
+    assert any(o["cmd"] == "train" and o["item"] == "e3" for o in orders_of(out))  # cash 0, ore 1,500: buy
+
+
+def test_idle_harvesters_are_sent_back_to_work_but_busy_ones_are_left_alone():
+    plan = Plan(buildings=(), units=(), jev_slots=PINNED)
+    harvs = [{"id": 40, "type": "harv", "x": 20, "y": 20, "idle": True},
+             {"id": 41, "type": "harv", "x": 20, "y": 20, "idle": False}]
+    out = orders_of(stub_agent(plan).choose_action(make_state(units=harvs), CTX))
+    assert {"cmd": "harvest", "units": [40]} in out
+
+
+def test_power_is_added_before_it_runs_out_after_the_opening():
+    plan = Plan(buildings=(), units=(), jev_slots=PINNED)
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "barr", "proc", "weap", "harv", "harv"])]
+    state = make_state(avail=["powr"], power=(100, 80), buildings=built)
+    assert {"cmd": "build", "item": "powr"} in orders_of(stub_agent(plan).choose_action(state, CTX))
+    state = make_state(avail=["powr"], power=(200, 80), buildings=built)
+    out = stub_agent(plan).choose_action(state, CTX)
+    assert out is WAIT or {"cmd": "build", "item": "powr"} not in orders_of(out)
+
+
+def test_enemy_harvesters_near_the_base_do_not_recall_the_army():
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=50, jev_slots=PINNED)
+    units = [{"id": 10, "type": "e3", "x": 22, "y": 22}]
+    state = make_state(units=units, combat=[10], buildings=[{"id": 1, "type": "fact", "x": 20, "y": 20}])
+    state.raw["observation"]["visible_enemies"] = [{"id": 90, "type": "harv", "x": 25, "y": 22}]
+    out = stub_agent(plan).choose_action(state, CTX)
+    assert out is WAIT or not any(o["cmd"] == "attack_move" and o["to"] == [25, 22] for o in orders_of(out))
+
+
+def test_missing_observation_fields_are_reported_once(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("RA_TRACE", "1")
+    monkeypatch.setenv("RA_TRACE_DIR", str(tmp_path))
+    import redalert.trace as tr
+    monkeypatch.setattr(tr, "_path", None)
+    agent = stub_agent(Plan(buildings=(), units=(), jev_slots=PINNED))
+    agent.choose_action(make_state(), CTX)
+    agent.choose_action(make_state(), CTX)
+    err = capsys.readouterr().err
+    assert err.count("missing fields") == 1 and "economy.ore" in err
+    rows = [json.loads(x) for f in tmp_path.iterdir() for x in f.read_text().splitlines()]
+    assert any(r["kind"] == "schema" and "economy.ore" in r["missing"] for r in rows)

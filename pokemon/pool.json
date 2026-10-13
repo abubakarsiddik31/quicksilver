@@ -461,6 +461,26 @@
       "species": "Landorus-Therian"
     },
     {
+      "ability": "Inner Focus",
+      "card_id": "vgc-lucario",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Life Orb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Close Combat",
+        "Bullet Punch",
+        "Poison Jab",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Lucario"
+    },
+    {
       "ability": "Competitive",
       "card_id": "vgc-milotic",
       "evs": {
@@ -683,6 +703,26 @@
       "species": "Ting-Lu"
     },
     {
+      "ability": "Drought",
+      "card_id": "vgc-torkoal",
+      "evs": {
+        "hp": 252,
+        "spa": 252,
+        "spd": 4
+      },
+      "item": "Charcoal",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Eruption",
+        "Heat Wave",
+        "Yawn",
+        "Protect"
+      ],
+      "nature": "Quiet",
+      "species": "Torkoal"
+    },
+    {
       "ability": "Prankster",
       "card_id": "vgc-tornadus",
       "evs": {
@@ -803,6 +843,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 40,
+  "count": 42,
   "expected_size": 18
 }

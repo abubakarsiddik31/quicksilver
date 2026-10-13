@@ -95,6 +95,16 @@ BARRACKS = ("barr", "tent")
 ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 20.0
 DEFEND_RADIUS = 24  # enemy units this close to the base centre (or 10 to any building) trigger the defence reflex
 DEFEND_EVERY_S = 1.5
+POWER_MARGIN = 40  # after the opening, keep this much spare power: low power slows every queue
+ORE_FULL = 0.75  # ore store this full: spend it now (a full store stops the harvesters unloading)
+NOT_A_THREAT = {"harv", "mcv", "truk"}  # enemy units that never pull the army home
+CRITICAL = {"fact", "proc", "weap"}  # always worth repairing; the rest only with money to spare
+EXPECTED = {  # documented observation fields we rely on; a missing one is reported once (the "ore" lesson)
+    "observation": ("tick", "economy", "military", "units", "buildings", "production", "available_production",
+                    "visible_enemies", "visible_enemy_buildings", "base_center", "events"),
+    "economy": ("cash", "ore", "power_provided", "power_drained", "resource_capacity", "harvesters"),
+    "legal_actions": ("deploy", "combat_units", "idle_units", "harvesters", "enemy_base"),
+}
 ATTACK_VALUE = 5000  # an army worth this much (credits) attacks even if the plan or Jev says hold
 FORWARD_RADIUS = 36  # idle fighters farther than this from home are already in the field: keep them fighting
 FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
@@ -154,7 +164,8 @@ class RedAlertAgent:
         self._secs: dict[str, float] = {}
         self._errors_logged: set[str] = set()
         self._state_at = 0.0
-        self._decisions = 0  # choose_action calls since the last state trace: our real decision rate
+        self._decisions = 0
+        self._schema_checked = False  # choose_action calls since the last state trace: our real decision rate
         self._attack_seq = -1
         self._attack_at = -1e9
         self._fired: set[str] = set()
@@ -356,6 +367,9 @@ class RedAlertAgent:
         avail = {str(x).lower() for x in (obs.get("available_production") or [])}
         econ = obs.get("economy") or {}
         cash = funds(econ)  # cash + refined ore: both are spendable
+        if not self._schema_checked:
+            self._schema_checked = True
+            self._safe("schema", lambda: self._check_schema(obs, econ, legal), None)
         provided, drained = econ.get("power_provided", 0) or 0, econ.get("power_drained", 0) or 0
         faction = str(obs.get("faction") or "").lower()
         units = [u for u in (obs.get("units") or []) if isinstance(u, dict) and not u.get("wreck")]
@@ -583,6 +597,15 @@ class RedAlertAgent:
             wants = [*opening, *rest]
         if drained > provided and "powr" in avail:  # emergency power: really in low power
             wants.insert(0, ("powr", owned.get("powr", 0) + queued.get("powr", 0) + 1))
+        elif owned.get("weap") and provided - drained < POWER_MARGIN and "powr" in avail and not queued.get("powr") \
+                and owned.get("powr", 0) < MAX_POWR:
+            # Before the next building tips us into low power (40 s of it in one match), not after.
+            wants.insert(0, ("powr", owned.get("powr", 0) + 1))
+        ore, capacity = econ.get("ore"), econ.get("resource_capacity")
+        ore_full = isinstance(ore, (int, float)) and isinstance(capacity, (int, float)) and capacity > 0 \
+            and ore >= ORE_FULL * capacity
+        if ore_full and "silo" in avail and owned.get("silo", 0) + queued.get("silo", 0) < 3:
+            wants.append(("silo", owned.get("silo", 0) + queued.get("silo", 0) + 1))
 
         # Army floor (computed above): once the war factory is up, an army that lags the clock gets the money first.
         essential: set[str] = {"powr", "weap", *BARRACKS}
@@ -708,7 +731,8 @@ class RedAlertAgent:
                     continue
                 unit_cost = max(1, self.cost_of(item))
                 # Floating cash (or an army behind the clock) is what this spends; the plan's wants came first.
-                if spendable < unit_cost + (0 if army_short else CASH_MARGIN) or not self._fresh(f"train:{item}", TTL["train"]):
+                margin = 0 if (army_short or ore_full) else CASH_MARGIN
+                if spendable < unit_cost + margin or not self._fresh(f"train:{item}", TTL["train"]):
                     continue
                 n = min(3, max(1, int(spendable // unit_cost))) if q == "infantry" else 1
                 if not owned.get("weap"):
@@ -729,13 +753,24 @@ class RedAlertAgent:
         ):
             diag.append("every structure and unit want in the plan is satisfied")
 
-        # Reflex 3: repairs.
+        # Reflex 3: repairs. Repairing costs money, so only the core buildings when cash is short.
         for b in buildings:
             if (
                 (b.get("hp", 100) or 100) < 75 and b.get("id") is not None and not b.get("repairing")
+                and (str(b.get("type")).lower() in CRITICAL or cash >= 600)
                 and self._fresh(f"repair:{b['id']}", 2.0)
             ):
                 orders.append({"cmd": "repair", "building": b["id"], "on": True})
+
+        # Reflex 4: idle harvesters go back to work (a depleted patch or a retreat leaves them standing).
+        idle_ids = set(legal.get("idle_units") or [])
+        lazy = [
+            u["id"] for u in units if str(u.get("type")).lower() == "harv" and isinstance(u.get("id"), int)
+            and (u.get("idle") is True or u["id"] in idle_ids)
+        ]
+        lazy = [h for h in lazy if self._fresh(f"harvest:{h}", 8.0)]
+        if lazy:
+            orders.append({"cmd": "harvest", "units": lazy[:50]})
 
         idle_combat = [u for u in idle_combat if u not in self._scouts]  # a scout picked this tick is not a fighter
         guard = None if plan.army_mode == "all_in" else self._safe(
@@ -843,6 +878,17 @@ class RedAlertAgent:
                 return [{"cmd": "train", "item": kind, "count": 1}]
         return []
 
+    def _check_schema(self, obs: dict[str, Any], econ: dict[str, Any], legal: dict[str, Any]) -> None:
+        """Record the real observation's shape once, and say loudly if a field we rely on is missing."""
+        missing = [f"observation.{k}" for k in EXPECTED["observation"] if k not in obs]
+        missing += [f"economy.{k}" for k in EXPECTED["economy"] if k not in econ]
+        missing += [f"legal_actions.{k}" for k in EXPECTED["legal_actions"] if legal and k not in legal]
+        unit = next((u for u in obs.get("units") or [] if isinstance(u, dict)), {})
+        trace.write("schema", observation=sorted(obs), economy=econ, unit_fields=sorted(unit),
+                    legal_actions=sorted(legal), missing=missing)
+        if missing:
+            print(f"[redalert] observation is missing fields the agent relies on: {missing}", file=sys.stderr, flush=True)
+
     def _choose_doctrine(self, plan: Plan, numbers: dict[str, Any], now: float) -> Plan:
         """Jev's battle-plan pick (fresh, allowed, confident) or the rules' pick, with hysteresis; then apply it."""
         pick = conf = answer_id = None
@@ -910,7 +956,7 @@ class RedAlertAgent:
             return None
         spots = [c for c in (_cell(b) for b in buildings) if c]
         intruders = [
-            c for c in (_cell(e) for e in enemies)
+            c for c in (_cell(e) for e in enemies if str(e.get("type")).lower() not in NOT_A_THREAT)
             if c and (math.dist(c, home) <= DEFEND_RADIUS or any(math.dist(c, s) <= 10 for s in spots))
         ]
         if not intruders:

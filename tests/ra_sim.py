@@ -7,6 +7,7 @@ starvation, tanks, defences), which is what the trace showed we lost on.
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 from altruagent import WAIT, DecisionContext
@@ -152,6 +153,7 @@ def run(make_agent, seconds: float = 340.0, decide_every: float = 0.2, faction: 
 
     ``make_agent(clock)`` builds the agent with the sim's clock so cooldowns run on game time.
     """
+    os.environ["RA_TRACE"] = "0"  # a simulated game must never look like a real match in traces/
     sim, m = Sim(faction), {"zero": 0.0, "idle": 0.0}
     agent = make_agent(lambda: sim.t)
     t_next = 0.0
