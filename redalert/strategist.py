@@ -77,6 +77,8 @@ class Strategist:
         self._last_seq = -1
         self._kind_at: dict[str, float] = {}
         self._seen_diag: set[str] = set()
+        self._seen_refusals: set[str] = set()
+        self._cap_logged = False
         self._endgame_sent = False
         self._system: str | None = None
         self._history: list[str] = []
@@ -133,15 +135,20 @@ class Strategist:
             self._last_seq = 0
         fresh = [d for d in diagnostics if d not in self._seen_diag]
         self._seen_diag = set(diagnostics)
-        for d in fresh[:2]:
-            self._add(f"harness:{d}")
-        if refusals:
+        if fresh and now - self._kind_at.get("harness", -1e9) >= 15.0:
+            self._kind_at["harness"] = now
+            for d in fresh[:2]:
+                self._add(f"harness:{d}")
+        new_refusals = [r for r in refusals if r not in self._seen_refusals]
+        self._seen_refusals = set(refusals)
+        if new_refusals and now - self._kind_at.get("refusal", -1e9) >= 10.0:
+            self._kind_at["refusal"] = now
             self._add("refusals")
         remaining = (raw.get("time") or {}).get("remaining_seconds")
         if isinstance(remaining, (int, float)) and remaining <= ENDGAME_S and not self._endgame_sent:
             self._endgame_sent = True
             self._add(f"endgame:{int(remaining)}s_left")
-        if now >= self._plan_at + self._plan.review_in_s:
+        if not self._busy and now >= self._plan_at + self._plan.review_in_s:
             self._add("scheduled_review")
 
     # -- consult -----------------------------------------------------------------
@@ -162,6 +169,9 @@ class Strategist:
         now = self._clock()
         with self._lock:
             self._detect(raw, diagnostics, refusals, now)
+            if self._calls >= self._max_calls and not self._cap_logged:
+                self._cap_logged = True
+                self._log(f"[strategist] call cap {self._max_calls} reached; the last plan stays in force")
             if (
                 not self._pending or self._busy or self._calls >= self._max_calls
                 or now < self._backoff_until or now - self._last_start < self._min_gap
@@ -210,6 +220,7 @@ class Strategist:
                 self._plan, self._plan_at = parsed, done
                 self._version += 1
                 self._errors = 0
+                self._pending = [r for r in self._pending if r != "scheduled_review"]
                 self._history = [*self._history, parsed.assessment][-HISTORY:]
             else:
                 self._errors += 1

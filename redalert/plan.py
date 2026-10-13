@@ -37,6 +37,7 @@ ORDER_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "deploy": (frozenset({"units"}), frozenset()),
     "unload": (frozenset({"units"}), frozenset()),
     "guard": (frozenset({"units", "target"}), frozenset({"queued"})),
+    "enter_transport": (frozenset({"units", "target"}), frozenset({"queued"})),
     "harvest": (frozenset({"units"}), frozenset({"to", "queued"})),
     "set_stance": (frozenset({"units", "stance"}), frozenset()),
     "build": (frozenset({"item"}), frozenset()),
@@ -232,7 +233,7 @@ def sanitize_order(
         return None
     if cmd == "attack" and "target" in out and out["target"] not in enemy_ids:
         return None
-    if cmd == "guard" and out["target"] not in (unit_ids | building_ids):
+    if cmd in {"guard", "enter_transport"} and out["target"] not in (unit_ids | building_ids):
         return None
     if cmd in {"build", "train"}:
         if str(out["item"]).lower() not in avail:

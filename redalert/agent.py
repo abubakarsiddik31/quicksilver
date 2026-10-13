@@ -19,6 +19,7 @@ raw orders are re-validated against the live state before they are sent.
 from __future__ import annotations
 
 import math
+import sys
 import time
 from typing import Any
 
@@ -27,6 +28,7 @@ from common.llm import GeminiClient
 from redalert.plan import DEFAULT_PLAN, Plan, sanitize_order
 from redalert.strategist import Strategist
 
+CORE_STRUCTURES = {"fact", "powr", "apwr", "proc", "weap", "tent", "barr"}
 NON_COMBAT = {"mcv", "harv", "medi", "mech", "e6", "spy", "thf", "truk"}
 DEFENSES = {"gun", "pbox", "hbox", "ftur", "tsla", "sam", "agun"}
 STRUCTURES = {
@@ -61,6 +63,8 @@ class RedAlertAgent:
 
     def __init__(self, strategist: Strategist | None = None) -> None:
         self.strategist = strategist if strategist is not None else Strategist(GeminiClient.from_env())
+        if not self.strategist.enabled:
+            print("[redalert] no GEMINI_API_KEY: playing the fixed default plan, no AI strategy", file=sys.stderr, flush=True)
         self._until: dict[str, float] = {}
         self._stanced: set[int] = set()
         self._gathered: set[int] = set()
@@ -72,6 +76,7 @@ class RedAlertAgent:
         self._cost: dict[str, int] = {}
         self._queue: dict[str, str] = {}
         self._needs: dict[str, list[str]] = {}
+        self._errors_logged: set[str] = set()
 
     # -- throttling and learning -------------------------------------------------
 
@@ -169,6 +174,17 @@ class RedAlertAgent:
     # -- the fast loop -----------------------------------------------------------
 
     def choose_action(self, state: GameState, context: DecisionContext):
+        """Never raises: an exception here would forfeit the match, so a bad state just waits."""
+        try:
+            return self._decide(state, context)
+        except Exception as exc:  # noqa: BLE001
+            key = f"{type(exc).__name__}:{exc}"[:120]
+            if key not in self._errors_logged:
+                self._errors_logged.add(key)
+                print(f"[redalert] decision error, waiting: {key}", file=sys.stderr, flush=True)
+            return WAIT
+
+    def _decide(self, state: GameState, context: DecisionContext):
         raw = getattr(state, "raw", None)
         obs = raw.get("observation") if isinstance(raw, dict) else None
         if not isinstance(obs, dict):
@@ -217,6 +233,8 @@ class RedAlertAgent:
             ):
                 orders.append({"cmd": "place", "item": p.get("item")})
                 placed.add(item)
+
+        orders += self._raw_orders(plan, raw, obs, units, buildings, avail)
 
         # Structures: the plan's wants in priority order, plus an emergency power plant.
         wants = [(self._barracks(i, faction, avail, owned), c) for i, c in plan.buildings]
@@ -280,7 +298,6 @@ class RedAlertAgent:
                 orders.append({"cmd": "repair", "building": b["id"], "on": True})
 
         orders += self._army(plan, raw, obs, legal, units)
-        orders += self._raw_orders(plan, raw, obs, units, buildings, avail)
 
         now = time.monotonic()
         self._diag_since = {d: self._diag_since.get(d, now) for d in diag}
@@ -339,6 +356,10 @@ class RedAlertAgent:
 
         if plan.army_mode == "hold":
             spot = plan.gather or _cell(obs.get("base_center"))
+            bounds = (raw.get("map") or {}).get("bounds")
+            if spot and isinstance(bounds, list) and len(bounds) == 4:
+                spot = (max(bounds[0], min(bounds[0] + bounds[2] - 1, spot[0])),
+                        max(bounds[1], min(bounds[1] + bounds[3] - 1, spot[1])))
             if spot:
                 pos = {u.get("id"): _cell(u) for u in units}
                 far = [
@@ -384,8 +405,9 @@ class RedAlertAgent:
         building_ids = {b["id"] for b in buildings if isinstance(b.get("id"), int)}
         enemies = (obs.get("visible_enemies") or []) + (obs.get("visible_enemy_buildings") or [])
         enemy_ids = {e["id"] for e in enemies if isinstance(e, dict) and isinstance(e.get("id"), int)}
+        core_ids = {b["id"] for b in buildings if str(b.get("type")).lower() in CORE_STRUCTURES and isinstance(b.get("id"), int)}
         clean = (sanitize_order(o, unit_ids, building_ids, enemy_ids, bounds_t, avail) for o in plan.orders)  # type: ignore[arg-type]
-        return [o for o in clean if o]
+        return [o for o in clean if o and not (o["cmd"] == "sell" and o.get("building") in core_ids)]
 
 
 def create_agent():

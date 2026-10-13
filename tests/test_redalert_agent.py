@@ -339,3 +339,58 @@ def test_dispatch_routes_and_forwards_result_hook(monkeypatch):
     wrapper = QuicksilverAgent()
     wrapper._delegate = offline()
     wrapper.on_action_result({"accepted": True, "results": []}, CTX)  # must not raise
+
+
+# --- regressions found in adversarial review ----------------------------------
+
+
+def test_standing_refusal_does_not_cause_a_consult_storm():
+    s, client, clock = harness('{"assessment":"ok","review_in_s":60}')
+    consult(s, make_state())
+    for _ in range(10):
+        clock.t += 2
+        consult(s, make_state(), refusals=["build weap: not_ready"])
+    assert client.calls == 2  # the first sighting only
+
+
+def test_overdue_review_during_a_slow_call_is_not_replayed():
+    s, client, clock = harness('{"assessment":"ok","review_in_s":4}')
+    consult(s, make_state())
+    before = client.calls
+    s._busy = True
+    clock.t += 10
+    consult(s, make_state())
+    s._busy = False
+    s._plan_at = clock.t
+    clock.t += 2
+    consult(s, make_state())
+    assert client.calls == before
+
+
+def test_choose_action_never_raises_on_malformed_state():
+    agent = offline()
+    for raw in (
+        {"observation": {"economy": {"cash": None, "power_provided": "x"}, "units": [{"id": "a", "type": None}],
+                         "production": [{"item": 5, "queue": 7, "ready": True}], "base_center": "??"},
+         "legal_actions": {"combat_units": ["x", 1, None]}, "map": {"bounds": "zz"}},
+        {"observation": {"units": None, "buildings": [None, 3], "production": [1]}, "legal_actions": None},
+    ):
+        agent.choose_action(SimpleNamespace(raw=raw), CTX)  # must not raise
+
+
+def test_model_cannot_sell_the_core_base():
+    plan = Plan(orders=({"cmd": "sell", "building": 1}, {"cmd": "sell", "building": 9}), buildings=(), units=())
+    agent = RedAlertAgent(Strategist(None))
+    agent.strategist = SimpleNamespace(enabled=True, version=1, maybe_update=lambda *a, **k: None, current=lambda: plan)
+    state = make_state(buildings=[{"id": 1, "type": "fact", "hp": 100}, {"id": 9, "type": "silo", "hp": 100}])
+    sells = [o for o in orders_of(agent.choose_action(state, CTX)) if o["cmd"] == "sell"]
+    assert sells == [{"cmd": "sell", "building": 9}]
+
+
+def test_all_nineteen_platform_orders_are_known():
+    from redalert.plan import ORDER_FIELDS
+
+    assert len(ORDER_FIELDS) == 19 and "enter_transport" in ORDER_FIELDS
+    order = {"cmd": "enter_transport", "units": [1], "target": 2}
+    assert sanitize_order(order, {1, 2}, set(), set(), None, set()) == order
+    assert sanitize_order(order, {1}, set(), set(), None, set()) is None  # transport gone
