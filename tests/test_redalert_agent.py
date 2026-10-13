@@ -31,7 +31,7 @@ CTX = DecisionContext(
 
 def make_state(*, tick=1, mcv_id=None, production=(), avail=(), cash=5000, power=(100, 0), buildings=(),
                units=(), combat=(), events=(), faction="russia", remaining=1200, enemy_base=None,
-               attack_now=None, visible_buildings=(), enemies=(), military=None):
+               attack_now=None, visible_buildings=(), enemies=(), military=None, production_buildings=()):
     obs = {
         "tick": tick,
         "faction": faction,
@@ -52,6 +52,7 @@ def make_state(*, tick=1, mcv_id=None, production=(), avail=(), cash=5000, power
         "idle_units": list(combat),
         "attack_now": attack_now,
         "enemy_base": enemy_base,
+        "production_buildings": list(production_buildings),
     }
     raw = {
         "observation": obs, "legal_actions": legal, "time": {"remaining_seconds": remaining, "game_seconds": tick / 25.0},
@@ -713,6 +714,51 @@ def test_a_guard_line_holds_the_front_while_the_rest_attacks():
     assert not (set(move["units"]) & set(wave["units"])) and len(wave["units"]) == 8  # the wave is the rest
 
 
+def test_clearly_ahead_finishes_and_clearly_behind_does_not_feed():
+    tanks = [{"id": 10 + i, "type": "3tnk", "x": 21, "y": 21} for i in range(6)]
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=6)
+    # Ahead (5,700 vs 2,850 seen): the wave leaves whole even though Jev says wait — pressing to finish.
+    agent, _ = advised({"wave": 0.1}, plan=plan)
+    ahead = make_state(units=tanks + [{"id": 30 + i, "type": "3tnk"} for i in range(3)],
+                       combat=[u["id"] for u in tanks], enemies=[{"id": 30 + i, "type": "3tnk"} for i in range(3)],
+                       enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": [10], "to": [60, 60]})
+    out = orders_of(agent.choose_action(ahead, CTX))  # the same decision that sees the advantage strikes
+    wave = [o for o in out if o["cmd"] == "attack_move"]
+    assert wave and sorted(wave[0]["units"]) == list(range(10, 16))
+    out = orders_of(agent.choose_action(ahead, CTX))
+    assert not any(o["cmd"] == "attack_move" for o in out)  # the 12 s ahead-cooldown assembles the next push
+    # Behind (400 vs 3,000 seen) mid-game: a "yes" from Jev no longer feeds the stronger enemy.
+    agent, _ = advised({"wave": 0.99}, plan=Plan(buildings=(), units=(), army_mode="attack", wave_min=3))
+    feed = make_state(units=[{"id": i, "type": "e1"} for i in range(1, 5)],
+                      combat=[1, 2, 3, 4],
+                      enemies=[{"id": 40 + i, "type": "e3"} for i in range(10)],
+                      enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": [1], "to": [60, 60]})
+    out = orders_of(agent.choose_action(feed, CTX))
+    assert any(o["cmd"] == "move" and o["to"] == [28, 28] for o in out)  # they assemble instead of feeding
+    out = agent.choose_action(feed, CTX)
+    assert out is WAIT or not any(o["cmd"] == "attack_move" for o in orders_of(out))
+
+
+def test_a_posture_flap_cannot_pull_the_army_home_mid_fight():
+    combat = list(range(10))
+    state = make_state(units=[{"id": i, "type": "e1"} for i in combat], combat=combat,
+                       enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]})
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=20)
+    clock = Clock()
+    agent, advisor = advised({"posture": "attack"}, plan=plan, clock=clock)
+    out = orders_of(agent.choose_action(state, CTX))
+    assert any(o["cmd"] == "move" and o["to"] == [28, 28] for o in out)  # attacking: muster toward the enemy
+    from redalert.tactics import Advice
+    advisor._advice = Advice(clock.t + 1, 2, 0.3, {"posture": "hold"}, {"posture": 0.99})
+    out = agent.choose_action(state, CTX)
+    assert out is WAIT or not any(o["cmd"] == "move" and o["to"] == [20, 20]
+                                  for o in orders_of(out))  # a 1 s old attack is not cancelled
+    clock.t += 7
+    advisor._advice = Advice(clock.t, 3, 0.3, {"posture": "hold"}, {"posture": 0.99})
+    out = orders_of(agent.choose_action(state, CTX))
+    assert any(o["cmd"] == "move" and o["to"] == [20, 20] for o in out)  # after the dwell a real hold lands
+
+
 def test_flank_packs_run_wide_alternating_sides_and_stay_out_of_the_blob():
     combat = list(range(10))
     state = make_state(tick=5000, units=[{"id": i, "type": "e1"} for i in combat], combat=combat,
@@ -723,6 +769,8 @@ def test_flank_packs_run_wide_alternating_sides_and_stay_out_of_the_blob():
     out = orders_of(agent.choose_action(state, CTX))
     pack = next(o for o in out if o["cmd"] == "attack_move" and len(o["units"]) == 3)
     assert pack["to"] == [69, 50]  # a wide arc, not the file everyone else takes
+    assert any(o["cmd"] == "set_stance" and o["units"] == pack["units"] and o["stance"] == "defend"
+               for o in out)  # they fight their way there and dig in: no solo diving
     blob = next(o for o in out if o["cmd"] == "move" and o["to"] == [28, 28])  # the muster point
     assert not (set(pack["units"]) & set(blob["units"]))
     clock.t += 70  # cooldown over: the next pack takes the other side
@@ -789,6 +837,147 @@ def test_the_general_is_woken_by_enemy_tech_and_surges():
     assert woken == ["enemy_tech:weap"]  # they can build vehicles now: re-plan
     agent.choose_action(make_state(visible_buildings=[{"id": 4, "type": "weap"}, {"id": 6, "type": "proc"}], **base), CTX)
     assert woken == ["enemy_tech:weap", "enemy_tech:proc"]  # and they expanded their economy
+
+
+def test_the_flank_pack_joins_the_main_wave_when_it_launches():
+    combat = list(range(10))
+    state = make_state(tick=5000, units=[{"id": i, "type": "e1"} for i in combat], combat=combat,
+                       enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]})
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=5)
+    agent, _ = advised({}, plan=plan)
+    out = orders_of(agent.choose_action(state, CTX))
+    pack = next(o for o in out if o["cmd"] == "attack_move" and o["to"] == [69, 50])
+    wave = next(o for o in out if o["cmd"] == "attack_move" and o["to"] == [60, 60] and len(o["units"]) == 6)
+    join = next(o for o in out if o["cmd"] == "attack_move" and o["to"] == [60, 60] and o["units"] == pack["units"])
+    assert set(wave["units"]) | set(join["units"]) == set(combat) - {0}  # one goal: everyone (bar the scout)
+    assert any(o["cmd"] == "set_stance" and o["units"] == join["units"] and o["stance"] == "attack_anything"
+               for o in out)  # the raiders go back on the offensive for the push
+
+
+def test_the_defence_line_faces_the_raid_not_their_base():
+    combat = list(range(10))
+    units = [{"id": i, "type": "e1", "x": 20, "y": 20} for i in combat]
+    state = make_state(units=units, combat=combat, enemy_base=[80, 80],
+                       enemies=[{"id": 50, "type": "e1", "x": 30, "y": 50},
+                                {"id": 51, "type": "e1", "x": 30, "y": 58}],
+                       attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]})
+    clock = Clock()
+    agent, _ = advised({}, plan=Plan(buildings=(), units=(), army_mode="attack", wave_min=20), clock=clock)
+    agent._attack_at = clock.t - 5  # being raided right now
+    out = orders_of(agent.choose_action(state, CTX))
+    line = [o for o in out if o["cmd"] == "move" and o["to"] == [22, 29]]
+    assert line and len(line[0]["units"]) == 2  # the defence line turns toward the raiders' centroid
+
+
+def test_rally_points_send_reinforcements_to_the_staging_point():
+    buildings = [{"id": 2, "type": "weap", "rally": None}, {"id": 3, "type": "barr", "rally": None},
+                 {"id": 4, "type": "proc", "rally": None}]
+    state = make_state(buildings=buildings, enemy_base=[80, 80],
+                       attack_now={"cmd": "attack_move", "units": [1], "to": [60, 60]},
+                       production_buildings=[{"id": 2, "type": "weap"}, {"id": 3, "type": "barr"},
+                                             {"id": 4, "type": "proc"}])
+    plan = Plan(buildings=(), units=(), army_mode="attack")
+    clock = Clock()
+    agent, _ = advised({}, plan=plan, clock=clock)
+    out = orders_of(agent.choose_action(state, CTX))
+    rallies = [o for o in out if o["cmd"] == "rally"]
+    assert {o["building"] for o in rallies} == {2, 3} and all(o["to"] == [28, 28] for o in rallies)  # not the proc
+    # already pointing at the staging point: no repeat order (WAIT is fine - there is nothing else to do)
+    clock.t += 6
+    state2 = make_state(buildings=[{"id": 2, "type": "weap", "rally": [28, 28]},
+                                   {"id": 3, "type": "barr", "rally": [28, 28]}], enemy_base=[80, 80],
+                        attack_now={"cmd": "attack_move", "units": [1], "to": [60, 60]},
+                        production_buildings=[{"id": 2, "type": "weap"}, {"id": 3, "type": "barr"}])
+    out = agent.choose_action(state2, CTX)
+    assert out is WAIT or not any(o["cmd"] == "rally" for o in orders_of(out))
+    # while holding, a stale forward rally is re-pointed home (slots pinned: no doctrine may flip the mode)
+    agent2, _ = advised({}, plan=Plan(buildings=(), units=(), army_mode="hold", jev_slots=PINNED))
+    out = orders_of(agent2.choose_action(state, CTX))
+    assert any(o["cmd"] == "rally" and o["to"] == [20, 20] for o in out)
+
+
+def test_harvesters_flee_a_raid_and_the_far_one_keeps_working():
+    units = [{"id": 1, "type": "harv", "x": 30, "y": 30}, {"id": 2, "type": "harv", "x": 34, "y": 34},
+             {"id": 3, "type": "harv", "x": 60, "y": 60}]
+    state = make_state(units=units, enemies=[{"id": 9, "type": "e1", "x": 32, "y": 32}],
+                       buildings=[{"id": 7, "type": "proc"}])
+    agent, _ = advised({}, plan=Plan(buildings=(), units=()))
+    out = orders_of(agent.choose_action(state, CTX))
+    flee = [o for o in out if o["cmd"] == "move" and o["to"] == [20, 20]]
+    assert flee and sorted(flee[0]["units"]) == [1, 2]  # the threatened pair runs; the far one keeps harvesting
+    assert not any(o["cmd"] == "harvest" and 1 in o["units"] or o["cmd"] == "harvest" and 2 in o["units"]
+                   for o in out)  # no work order fights the escape
+    assert agent.choose_action(state, CTX) is WAIT or not any(  # the reflex throttles itself
+        o["cmd"] == "move" and o["to"] == [20, 20] for o in orders_of(agent.choose_action(state, CTX)) or [])
+
+
+def test_a_finished_flank_run_recalls_instead_of_stranding():
+    combat = [21, 22, 23]
+    units = [{"id": i, "type": "e1", "x": 70, "y": 60} for i in combat]  # stranded at the old waypoint
+    state = make_state(units=units, combat=combat, enemy_base=[80, 80],
+                       attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]})
+    clock = Clock()
+    agent, _ = advised({}, plan=Plan(buildings=(), units=(), army_mode="attack", wave_min=8), clock=clock)
+    agent._flankers = {u: ([69, 50], clock.t - 1) for u in combat}  # the run is over, no wave followed
+    out = orders_of(agent.choose_action(state, CTX))
+    assert not any(o["cmd"] == "attack_move" for o in out)  # no one-by-one forward draft for the stragglers
+    assert {"cmd": "move", "units": combat, "to": [28, 28]} in out  # they walk back to the staging point
+
+
+def test_power_respects_the_cash_floor_unless_the_lights_are_actually_out():
+    """ra-1791891832: a plant queued at cash 1 (power fine) became a crawler that starved the recovery."""
+    blds = [{"id": 1, "type": "weap"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "powr"}]
+    state = make_state(cash=100, avail=["powr"], buildings=blds, power=(100, 60))
+    agent, _ = advised({}, plan=Plan(buildings=(("powr", 1),), units=(), jev_slots=PINNED))
+    out = agent.choose_action(state, CTX)
+    assert out is WAIT or not any(o["cmd"] == "build" and o["item"] == "powr"
+                                  for o in orders_of(out))  # the floor holds
+    low = make_state(cash=100, avail=["powr"], buildings=blds, power=(60, 100))
+    out = orders_of(agent.choose_action(low, CTX))
+    assert any(o["cmd"] == "build" and o["item"] == "powr" for o in out)  # real emergency: build through
+
+
+def test_a_queued_plant_at_cash_zero_is_cancelled_only_when_the_lights_are_on():
+    plan = Plan(buildings=(), units=(), jev_slots=PINNED)
+    blds = [{"id": 1, "type": "weap"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "powr"}]
+    production = [
+        {"item": "powr", "queue": "Building", "progress": 0.1},
+        {"item": "harv", "queue": "Vehicle", "progress": 0.2},
+    ]
+    clock = Clock()
+    agent = RedAlertAgent(SimpleNamespace(
+        enabled=True, version=1, maybe_update=lambda *a, **k: None, notify=lambda r: None,
+        current=lambda: plan,
+    ), TacticalAdvisor(None), clock=clock)
+    state = make_state(cash=0, avail=["powr", "harv"], buildings=blds, production=production, power=(100, 60))
+    agent.choose_action(state, CTX)  # arms the broke clock
+    clock.t += 11.0
+    out = orders_of(agent.choose_action(state, CTX))
+    assert {"cmd": "cancel", "item": "powr"} in out  # the plant is the crawler: the harvester gets the draw
+    low = make_state(cash=0, avail=["powr", "harv"], buildings=blds, production=production, power=(60, 100))
+    out = agent.choose_action(low, CTX)
+    assert out is WAIT or not any(o.get("cmd") == "cancel" and o.get("item") == "powr"
+                                  for o in orders_of(out))  # low power: keep it
+
+
+def test_towers_count_as_opposition_for_the_feed_gate():
+    """ra-1791893795: the mirror winner sat behind guns with a ZERO field army and still won the trades
+    tiebreak by +15,500 - our pushes kept feeding the guns because they carry no 'seen army' value."""
+    infantry = [{"id": 10 + i, "type": "e1", "x": 21, "y": 21} for i in range(6)]  # 600 of army
+    towers = [{"id": 50 + i, "type": "tsla"} for i in range(3)]  # 4,500 of defence, no field army
+    state = make_state(units=infantry, combat=[u["id"] for u in infantry], visible_buildings=towers,
+                       enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": [10], "to": [60, 60]})
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=3)
+    agent, _ = advised({"wave": 0.99}, plan=plan)  # Jev screaming yes cannot make 600 beat 4,500 of guns
+    out = orders_of(agent.choose_action(state, CTX))
+    assert not any(o["cmd"] == "attack_move" for o in out)
+    assert any(o["cmd"] == "move" for o in out)  # they assemble instead
+    tanks = [{"id": 30 + i, "type": "3tnk", "x": 21, "y": 21} for i in range(8)]  # 7,600: enough to siege
+    state2 = make_state(units=tanks, combat=[u["id"] for u in tanks], visible_buildings=towers,
+                        enemy_base=[80, 80], attack_now={"cmd": "attack_move", "units": [30], "to": [60, 60]})
+    agent2, _ = advised({"wave": 0.1}, plan=plan)
+    out = orders_of(agent2.choose_action(state2, CTX))
+    assert any(o["cmd"] == "attack_move" and len(o["units"]) == 8 for o in out)  # ahead of the guns: finish
 
 
 def test_jev_threat_builds_defence_and_pulls_back_but_never_breaks_all_in():
@@ -1154,17 +1343,28 @@ def test_a_big_army_attacks_even_when_the_plan_says_hold():
     plan = Plan(buildings=(), units=(), army_mode="hold", wave_min=8)
     tanks = [{"id": 10 + i, "type": "3tnk", "x": 21, "y": 21} for i in range(6)]  # 5,700 of army
     out = orders_of(stub_agent(plan).choose_action(_army_state(tanks, [u["id"] for u in tanks]), CTX))
-    assert any(o["cmd"] == "attack_move" and len(o["units"]) == 6 for o in out)
+    # six idle tanks muster (the 5,700 rule still flips hold into attack) but never bite as a 6-unit piece
+    assert any(o["cmd"] == "move" and o["to"] == [32, 32] for o in out)
+    assert not any(o["cmd"] == "attack_move" for o in out)
+    tanks += [{"id": 20 + i, "type": "3tnk", "x": 21, "y": 21} for i in range(2)]  # 8 idle: a whole wave
+    out = stub_agent(plan).choose_action(_army_state(tanks, [u["id"] for u in tanks]), CTX)
+    assert any(o["cmd"] == "attack_move" and len(o["units"]) == 8 for o in orders_of(out))
     small = tanks[:2]
     out = stub_agent(plan).choose_action(_army_state(small, [u["id"] for u in small]), CTX)
     assert out is WAIT or not any(o["cmd"] == "attack_move" for o in orders_of(out))
 
 
-def test_fighters_already_in_the_field_keep_attacking_without_a_wave():
+def test_fighters_in_the_field_press_together_and_lone_ones_regroup():
     plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=8)
-    out_there = [{"id": 30, "type": "e3", "x": 75, "y": 75}]
-    out = orders_of(stub_agent(plan).choose_action(_army_state(out_there, [30]), CTX))
-    assert any(o["cmd"] == "attack_move" and o["units"] == [30] for o in out)
+    trio = [{"id": 30, "type": "e3", "x": 75, "y": 75}, {"id": 31, "type": "e3", "x": 74, "y": 76},
+            {"id": 32, "type": "e3", "x": 76, "y": 74}]
+    out = orders_of(stub_agent(plan).choose_action(_army_state(trio, [30, 31, 32]), CTX))
+    assert any(o["cmd"] == "attack_move" and o["units"] == [30, 31, 32] for o in out)  # a group keeps pressing
+    lone = [trio[0]]
+    out = stub_agent(plan).choose_action(_army_state(lone, [30]), CTX)
+    orders = orders_of(out)
+    assert not any(o["cmd"] == "attack_move" for o in orders)
+    assert any(o["cmd"] == "move" and o["to"] == [32, 32] for o in orders)  # one fighter is not an attack
 
 
 def test_no_harvester_rebuys_while_the_army_is_short():
@@ -1244,7 +1444,7 @@ def test_the_draw_ledger_blocks_overcommitment_and_the_cash_floor_keeps_income_f
     blds = [{"id": 1, "type": "weap"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "powr"}]
     broke = make_state(cash=250, avail=["fix", "powr", "3tnk", "e3", "harv"], buildings=blds)
     items = [o["item"] for o in orders_of(stub_agent(plan).choose_action(broke, CTX)) if o["cmd"] in ("build", "train")]
-    assert items == ["powr", "harv"]  # the floor: only the economy commits; depot, tanks and rockets wait
+    assert items == ["harv"]  # the floor: only the economy commits (power too, but only when the lights are out)
     # Over budget but above the floor: a buy is allowed only when cash covers every commitment plus its price.
     busy2 = [{"item": "fix", "queue": "Building", "progress": 0.2}]  # ~35/s committed, 960 still owed
     poor = make_state(cash=2600, avail=["tsla", "e3"], buildings=blds, production=busy2)

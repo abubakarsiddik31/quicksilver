@@ -113,6 +113,7 @@ EXPECTED = {  # documented observation fields we rely on; a missing one is repor
 }
 ATTACK_VALUE = 5000  # an army worth this much (credits) attacks even if the plan or Jev says hold
 FORWARD_RADIUS = 36  # idle fighters farther than this from home are already in the field: keep them fighting
+FORWARD_MIN = 3  # fewer than this in the field and they regroup at the staging point instead of pressing
 WAVE_COOLDOWN_S = 25.0  # after a wave leaves, the next one assembles at the muster point instead of trickling out
 WAVE_MUSTER_RADIUS = 8.0  # idle fighters within this of the muster point count as assembled
 FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
@@ -132,6 +133,15 @@ FLANK_OFFSET = 14.0  # how wide: perpendicular offset from the target's center, 
 FLANK_FROM_S = 150.0  # no flank runs while the opening is still forming
 FLANK_MIN_ARMY = 6
 STYLE_FLANK_CD_S = {"turtle": 40.0, "mass_infantry": 40.0, "harass": 45.0, "mixed": 55.0, "mass_armor": 70.0}
+FINISH_AHEAD_RATIO = 1.5  # army worth this much more than the strongest enemy seen: press to finish them
+FINISH_MIN_SEEN = 1000.0
+FEED_BEHIND_RATIO = 0.7  # below this against a big seen enemy, mid-game attacks just feed the tiebreak
+FEED_MIN_SEEN = 2000.0
+AHEAD_COOLDOWN_S = 12.0  # when clearly ahead, waves follow twice as fast: constant pressure to finish
+MODE_HOLD_S = 6.0  # minimum dwell between posture flips, so half the army never walks home mid-fight
+THREAT_RADIUS = 40.0  # raiders this close to home turn the defence line to face them
+HARV_FLEE_RADIUS = 12.0  # raiders this close to a harvester pull it home: income and tiebreak losses
+PRODUCERS = {"weap", "barr", "tent"}  # unit-production buildings worth a rally point
 ENEMY_SURGE_VALUE = 1500.0  # enemy army value appearing within one window: they are staging a push, re-plan
 ENEMY_SURGE_WINDOW_S = 30.0
 ENEMY_TECH = {"weap", "fix", "proc"}  # new enemy production structures: vehicles, heavy tanks, or an expansion
@@ -201,6 +211,8 @@ class RedAlertAgent:
         self._enemy_seen_mark = (0.0, -1e9)  # (value, when) for spotting a surge
         self._surge_at = -1e9
         self._enemy_tech_seen: set[str] = set()
+        self._mode_cur = ""  # the resolved army mode, with hysteresis
+        self._mode_at = -1e9
         self._fired: set[str] = set()
         self._broke_since: float | None = None
 
@@ -468,6 +480,9 @@ class RedAlertAgent:
         refineries = owned.get("proc", 0)
         army_value = sum(self.cost_of(str(u.get("type")).lower()) for u in all_combat)
         enemy_seen = self._safe("intel", lambda: self.intel.enemy_army_value(self.cost_of), 0.0)
+        # Towers count as opposition: an army of zero behind guns has been winning the trades tiebreak
+        # against our pushes all match. Seen and not yet destroyed, so fog does not hide a defended base.
+        defence_seen = self._safe("intel", lambda: self.intel.enemy_defence_value(self.cost_of), 0.0)
         # The general re-plans when the enemy MOVES, not just on a timer: an army surge or a new production
         # structure each wake the strategist (Jev's style change is the third trigger, in tactics).
         prev, prev_at = self._enemy_seen_mark
@@ -501,6 +516,7 @@ class RedAlertAgent:
         )
         numbers["my_army_value_at_home"] = round(home_v)
         numbers["my_army_value_in_field"] = round(max(0.0, army_value - home_v))
+        numbers["enemy_defence_value_seen"] = round(defence_seen)
         doc = self.doctrines.doctrine
         army_floor *= doc.floor_scale
 
@@ -769,7 +785,7 @@ class RedAlertAgent:
             if army_short and item not in essential and q != "defense":
                 continue  # 2nd refinery, radar, tech: after the army has caught up with the clock
             rate = self.rate_of(item)
-            if not affordable(cost, rate, floor_exempt=item == "powr", reserve=army_claim):
+            if not affordable(cost, rate, floor_exempt=(item == "powr" and drained > provided), reserve=army_claim):
                 continue
             if self._cooling(f"build:{item}"):
                 cooling.add(q)
@@ -876,9 +892,14 @@ class RedAlertAgent:
             and mono - self._broke_since >= BROKE_CANCEL_S
             and burn_struct + burn_units > 2.0 * max(income, 1.0) and self._fresh("cancel", 8.0)
         ):
+            # The harvest is protected, and so is power - but only when the base actually needs it. A plant
+            # queued while the lights are on is just another crawler drawing from the recovery harvester.
+            protected = essential | {"harv"}
+            if drained <= provided:
+                protected = protected - {"powr"}
             victims = [
                 p for p in production
-                if not p.get("ready") and str(p.get("item")).lower() not in essential | {"harv"}
+                if not p.get("ready") and str(p.get("item")).lower() not in protected
             ]
             if victims:
                 def owed(p: dict[str, Any]) -> float:
@@ -908,15 +929,49 @@ class RedAlertAgent:
             ):
                 orders.append({"cmd": "repair", "building": b["id"], "on": True})
 
-        # Reflex 4: idle harvesters go back to work (a depleted patch or a retreat leaves them standing).
+        # Reflex 4: raiders near the ore field pull the harvesters home. Dying harvesters are income and
+        # tiebreak losses; an idle harvester walks back to work on its own once the raid is gone.
+        fleeing: list[int] = []
+        threat_cells = [c for c in (_cell(e) for e in enemies) if c]
+        if threat_cells and self._fresh("harv_flee", 4.0):
+            for u in units:
+                if str(u.get("type")).lower() != "harv" or not isinstance(u.get("id"), int):
+                    continue
+                p = _cell(u)
+                if p and any(math.dist(p, c) <= HARV_FLEE_RADIUS for c in threat_cells):
+                    fleeing.append(u["id"])
+            if fleeing and home:
+                orders.append({"cmd": "move", "units": fleeing[:20], "to": [int(home[0]), int(home[1])]})
+
+        # Reflex 5: idle harvesters go back to work (a depleted patch or a retreat leaves them standing).
         idle_ids = set(legal.get("idle_units") or [])
         lazy = [
             u["id"] for u in units if str(u.get("type")).lower() == "harv" and isinstance(u.get("id"), int)
-            and (u.get("idle") is True or u["id"] in idle_ids)
+            and (u.get("idle") is True or u["id"] in idle_ids) and u["id"] not in fleeing
         ]
         lazy = [h for h in lazy if self._fresh(f"harvest:{h}", 8.0)]
         if lazy:
             orders.append({"cmd": "harvest", "units": lazy[:50]})
+
+        # Rally points: fresh units roll toward the staging point, so reinforcements join the push instead
+        # of idling at the gate. While holding (or defending) they rally home, which also clears a stale one.
+        if legal.get("production_buildings") and self._fresh("rally", 5.0):
+            staging = self._staging_cell(_cell(obs.get("base_center")),
+                                         self._wave_target(plan, raw, obs, legal, adv),
+                                         (raw.get("map") or {}).get("bounds")) \
+                if (plan.army_mode in ("attack", "all_in") and not defend) else home
+            if staging:
+                rows = {b.get("id"): b for b in buildings}
+                for p in (legal.get("production_buildings") or [])[:4]:
+                    b = rows.get(p.get("id"))
+                    if not isinstance(b, dict) or str(p.get("type")).lower() not in PRODUCERS:
+                        continue
+                    cur = b.get("rally")
+                    if isinstance(cur, (list, tuple)) and len(cur) == 2 \
+                            and math.dist((cur[0], cur[1]), (staging[0], staging[1])) <= 1.5:
+                        continue  # already pointing there
+                    orders.append({"cmd": "rally", "building": p["id"],
+                                   "to": [int(staging[0]), int(staging[1])]})
 
         idle_combat = [u for u in idle_combat if u not in self._scouts]  # a scout picked this tick is not a fighter
         guard = None if plan.army_mode == "all_in" else self._safe(
@@ -924,7 +979,7 @@ class RedAlertAgent:
         )
         if guard is None:
             orders += self._army(plan, raw, obs, legal, units, adv, defend, forced_mode, idle_combat, army_value,
-                                 enemy_seen)
+                                 enemy_seen, defence_seen)
         else:
             orders += guard
 
@@ -1172,13 +1227,17 @@ class RedAlertAgent:
             x, y = max(bx, min(bx + bw - 1, x)), max(by, min(by + bh - 1, y))
         return [x, y]
 
-    def _prune_detachments(self, alive: set[int]) -> None:
-        """Dead or expired members rejoin the main force."""
+    def _prune_detachments(self, alive: set[int]) -> set[int]:
+        """Dead or expired members rejoin the main force; survivors of a finished flank run walk back."""
         self._guard &= alive
         now = self._clock()
+        expired: set[int] = set()
         for uid, run in list(self._flankers.items()):
             if uid not in alive or now >= run[1]:
                 del self._flankers[uid]
+                if uid in alive:
+                    expired.add(uid)
+        return expired
 
     def _front_cell(self, home_c: tuple[int, int] | None, enemy_c: tuple[int, int] | None,
                     bounds: Any, tiles: float) -> list[int] | None:
@@ -1189,6 +1248,15 @@ class RedAlertAgent:
         return self._clamp(
             [int(home_c[0] + step * (enemy_c[0] - home_c[0])), int(home_c[1] + step * (enemy_c[1] - home_c[1]))],
             bounds)
+
+    def _staging_cell(self, home_c: tuple[int, int] | None,
+                      target: list[int] | tuple[int, int] | None, bounds: Any) -> list[int] | None:
+        """The muster/rally point: a step toward the enemy that stays inside forward radius."""
+        if not home_c or not target:
+            return None
+        step = min(0.2, (FORWARD_RADIUS - 8) / max(1.0, math.dist(home_c, target)))
+        return self._clamp([int(home_c[0] + step * (target[0] - home_c[0])),
+                            int(home_c[1] + step * (target[1] - home_c[1]))], bounds)
 
     def _guard_orders(self, out: list[dict[str, Any]], idle: list[int], units: list[dict[str, Any]],
                       mode: str, defend: bool, bounds: Any, home_c: tuple[int, int] | None,
@@ -1231,12 +1299,10 @@ class RedAlertAgent:
                       home_c: tuple[int, int] | None, target: list[int] | None, bounds: Any,
                       plan: Plan, adv: Callable[[str], Any]) -> list[int]:
         """Small packs that run wide around the fight and come at the target from the sides; each run
-        alternates sides, so attacks arrive from different directions instead of one file."""
+        alternates sides, so attacks arrive from different directions instead of one file. The pack runs on
+        `defend` stance - fighting whatever it meets on the arc, then digging in at the point - and joins the
+        main wave the moment that launches, so the flank and the push are one plan, not two solo fights."""
         now = self._clock()
-        running = [u for u in idle if u in self._flankers]
-        if running and self._fresh("flank_go", 4.0):  # keep them on their arc: never drafted into the blob
-            for u in running:
-                out.append({"cmd": "attack_move", "units": [u], "to": self._flankers[u][0]})
         idle = [u for u in idle if u not in self._flankers]
         style = adv("style")
         cd = STYLE_FLANK_CD_S.get(style if isinstance(style, str) else "", FLANK_CD_S)
@@ -1258,14 +1324,24 @@ class RedAlertAgent:
         if wp is None:
             return idle
         self._flankers.update({u: (wp, now + FLANK_LIFE_S) for u in pack})
+        out.append({"cmd": "set_stance", "units": pack, "stance": GUARD_STANCE})
         out.append({"cmd": "attack_move", "units": pack, "to": wp})
         return [u for u in idle if u not in self._flankers]
+
+    def _wave_target(self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any],
+                     adv: Callable[[str], Any]) -> list[int] | None:
+        """The objective the army fights toward: the plan's, or Jev's override - shared by waves and rallies."""
+        name: Any = plan.target
+        choice = adv("target")
+        if isinstance(name, str) and choice in TARGET_NAMES:
+            name = choice
+        return self._target(name, raw, obs, legal)
 
     def _army(
         self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any],
         units: list[dict[str, Any]], adv: Callable[[str], Any] = lambda slot: None, defend: bool = False,
         forced_mode: str | None = None, idle_combat: list[int] | None = None, army_value: float = 0.0,
-        enemy_seen: float = 0.0,
+        enemy_seen: float = 0.0, enemy_defence: float = 0.0,
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         if idle_combat is None:
@@ -1277,7 +1353,10 @@ class RedAlertAgent:
 
         # Reactions and Jev may move the army between hold / attack / retreat, never out of a committed all-in.
         mode = plan.army_mode
-        if mode != "all_in":
+        now0 = self._clock()
+        if mode == "all_in":
+            self._mode_cur, self._mode_at = "all_in", now0
+        else:
             if forced_mode:
                 mode = forced_mode
             else:
@@ -1289,6 +1368,15 @@ class RedAlertAgent:
             if mode == "hold" and army_value >= ATTACK_VALUE and army_value >= 1.5 * enemy_seen \
                     and forced_mode is None and not defend:
                 mode = "attack"  # a big army sitting at home is wasted: one match was lost with 8,800 of it idle
+            # One goal at a time: a posture flap must not pull half the army home mid-fight. Emergencies
+            # (a reaction, defend, retreat) land at once, and recovery from a retreat is instant.
+            if mode == "retreat":
+                self._mode_cur, self._mode_at = "retreat", now0 - MODE_HOLD_S
+            elif mode != self._mode_cur:
+                if now0 - self._mode_at < MODE_HOLD_S and forced_mode is None and not defend:
+                    mode = self._mode_cur
+                else:
+                    self._mode_cur, self._mode_at = mode, now0
 
         bounds = (raw.get("map") or {}).get("bounds")
         home_cell = plan.gather or _cell(obs.get("base_center"))
@@ -1297,7 +1385,7 @@ class RedAlertAgent:
             u["id"] for u in units if isinstance(u.get("id"), int)
             and str(u.get("type")).lower() not in NON_COMBAT and u["id"] not in self._scouts
         ]
-        self._prune_detachments(set(fighters))
+        expired = self._prune_detachments(set(fighters))
 
         if mode == "retreat":
             if home and fighters and self._fresh("retreat", 5.0):
@@ -1307,9 +1395,19 @@ class RedAlertAgent:
 
         enemy_c = _cell(legal.get("enemy_base"))
         home_c0 = _cell(obs.get("base_center"))
+        # Defence faces the actual threat: raiders near home point the line at themselves, not at their base.
+        near_threat = [
+            c for c in (_cell(e) for e in (obs.get("visible_enemies") or []))
+            if c and home_c0 and math.dist(c, home_c0) <= THREAT_RADIUS
+        ]
+        threat_c = None
+        if near_threat:
+            threat_c = (int(sum(c[0] for c in near_threat) / len(near_threat)),
+                        int(sum(c[1] for c in near_threat) / len(near_threat)))
+        defence_toward = threat_c or enemy_c
         if mode == "hold":
             # The defence line holds the front; the rest of the army gathers at home. Flankers keep working.
-            idle_combat = self._guard_orders(out, idle_combat, units, mode, defend, bounds, home_c0, enemy_c)
+            idle_combat = self._guard_orders(out, idle_combat, units, mode, defend, bounds, home_c0, defence_toward)
             if home:
                 pos = {u.get("id"): _cell(u) for u in units}
                 far = [
@@ -1322,11 +1420,7 @@ class RedAlertAgent:
                     out.append({"cmd": "move", "units": far[:50], "to": home})
             return out
 
-        name: Any = plan.target
-        choice = adv("target")
-        if isinstance(name, str) and choice in TARGET_NAMES:
-            name = choice
-        target = self._target(name, raw, obs, legal)
+        target = self._wave_target(plan, raw, obs, legal, adv)
         if target is None:
             return out
         if mode == "all_in":
@@ -1335,41 +1429,62 @@ class RedAlertAgent:
                     out.append({"cmd": "attack_move", "units": fighters[i:i + 50], "to": target})
             return out
 
-        # Fighters already out in the field (a wave that took its target) keep going without waiting for a wave.
+        # Fighters already out in the field (a wave that took its target) keep going without waiting for a wave —
+        # but a lone straggler regroups at the staging point instead of trickling into the enemy's guns.
         pos = {u.get("id"): _cell(u) for u in units}
         home_c = home_c0
-        idle_combat = self._guard_orders(out, idle_combat, units, mode, defend, bounds, home_c, enemy_c)
+        idle_combat = self._guard_orders(out, idle_combat, units, mode, defend, bounds, home_c, defence_toward)
         idle_combat = self._flank_orders(out, idle_combat, raw, home_c, target, bounds, plan, adv)
+        if expired:
+            idle_combat = [u for u in idle_combat if u not in expired]
+            back = self._staging_cell(home_c, target, bounds) or home
+            if self._fresh("flank_recall", 5.0):
+                out.append({"cmd": "move", "units": sorted(expired)[:50], "to": back})
         forward = [
             u for u in idle_combat
             if u not in self._flankers and home_c and pos.get(u) and math.dist(pos[u], home_c) > FORWARD_RADIUS
         ]
-        if forward and self._fresh("forward", 2.0):
-            out.append({"cmd": "attack_move", "units": forward[:50], "to": target})
+        if forward:
+            if len(forward) >= FORWARD_MIN:
+                if self._fresh("forward", 2.0):
+                    out.append({"cmd": "attack_move", "units": forward[:50], "to": target})
+            elif self._fresh("regroup", 4.0):
+                back = self._staging_cell(home_c, target, bounds) or home
+                out.append({"cmd": "move", "units": forward[:50], "to": back})
         idle_combat = [u for u in idle_combat if u not in forward]
         n = len(idle_combat)
         now = self._clock()
+        remaining = (raw.get("time") or {}).get("remaining_seconds")
+        opposition = enemy_seen + enemy_defence  # towers are the army you have to beat to take a base
+        ahead = opposition >= FINISH_MIN_SEEN and army_value >= FINISH_AHEAD_RATIO * opposition
+        behind = opposition >= FEED_MIN_SEEN and army_value < FEED_BEHIND_RATIO * opposition
         wave_ok = adv("wave")
-        if isinstance(wave_ok, float):
+        if ahead:
+            go = n >= plan.wave_min  # clearly stronger: finish them; a "wait" answer cannot hold the wave home
+        elif isinstance(wave_ok, float):
             # Jev judges the moment, but a wave is the whole idle army: approval never halves it.
             go = n >= plan.wave_min and (wave_ok >= WAVE_YES or n >= max(20, 2 * plan.wave_min))
         else:
             go = n >= plan.wave_min
-        if not go and army_value >= ATTACK_VALUE and n >= max(6, plan.wave_min // 2):
-            go = True  # big enough to attack whatever Jev thinks, but never a token force
+        if not go and army_value >= ATTACK_VALUE and n >= plan.wave_min:
+            go = True  # a big army must not sit home all match - but it attacks as a whole wave, never a piece
+        if behind and not (isinstance(remaining, (int, float)) and remaining <= ENDGAME_PUSH_S):
+            go = False  # feeding a clearly stronger enemy loses the tiebreak: assemble instead (the closing
+            # push still fires inside the last five minutes when the trades are negative anyway)
         if now < self._wave_until:
             go = False  # a wave just left: let the next one assemble instead of dribbling out
         if go:
             self._gathered.difference_update(idle_combat)
-            self._wave_until = now + WAVE_COOLDOWN_S
+            self._wave_until = now + (AHEAD_COOLDOWN_S if ahead else WAVE_COOLDOWN_S)
             out.append({"cmd": "attack_move", "units": idle_combat[:50], "to": target})
+            raiders = list(self._flankers)
+            if raiders:  # the anvil joins the hammer: the flank and the push hit the target together
+                self._flankers.clear()
+                out.append({"cmd": "set_stance", "units": raiders[:50], "stance": "attack_anything"})
+                out.append({"cmd": "attack_move", "units": raiders[:50], "to": target})
         elif idle_combat and self._fresh("muster", 4.0):
             # Waiting for the next wave: mass at a staging point toward the enemy so the strike leaves together.
-            # Stepping 20% of the way in stays inside FORWARD_RADIUS, so mustering units are not seen as strays.
-            step = min(0.2, (FORWARD_RADIUS - 8) / max(1.0, math.dist(home_c, target))) if home_c else 0.0
-            muster = self._clamp(
-                [int(home_c[0] + step * (target[0] - home_c[0])), int(home_c[1] + step * (target[1] - home_c[1]))],
-                bounds) if home_c else home
+            muster = self._staging_cell(home_c, target, bounds) or home
             away = [
                 u for u in idle_combat
                 if pos.get(u) is None or math.dist(pos[u], muster) > WAVE_MUSTER_RADIUS

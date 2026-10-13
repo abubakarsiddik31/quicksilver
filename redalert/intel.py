@@ -92,6 +92,13 @@ class Intel:
     def enemy_army_value(self, cost_of: Callable[[str], int]) -> float:
         return float(sum(cost_of(u["type"]) for u in self.units.values() if u["type"] not in NON_COMBAT))
 
+    def enemy_defence_value(self, cost_of: Callable[[str], int]) -> float:
+        """Credit value of enemy defensive structures seen and not yet destroyed. Towers never show up in
+        the army value, but they are exactly what shreds a push into a defended base (a lost mirror match:
+        the opponent sat behind guns with zero field army and our waves kept feeding them the tiebreak)."""
+        return float(sum(cost_of(str(b.get("type")).lower())
+                         for b in self.buildings.values() if str(b.get("type")).lower() in TOWERS))
+
     def enemy_near(self, home: tuple[int, int] | None, cost_of: Callable[[str], int], now: float,
                    fresh_s: float = 10.0) -> tuple[int, float]:
         """Enemy combat units seen in the last ``fresh_s`` within ``NEAR_BASE`` of ``home``: (count, value)."""
