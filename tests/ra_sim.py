@@ -29,7 +29,16 @@ ITEMS = {
     "ftrk": (600, 20, "Vehicle", ["weap"]),
 }
 INCOME_PER_HARV = 20.0  # measured from the lost-match trace: one harvester ~20 cr/s
-CTX = DecisionContext(session_id="sim", tournament_id=None, game_type="red_alert", agent_id="q", seat_position=0)
+# The rules table a live match hands the agent through ``context.game_config`` (prerequisites included).
+GAME_CONFIG: dict = {"rules": {"buildings": {}, "units": {}}}
+for _name, (_cost, _secs, _queue, _pre) in ITEMS.items():
+    GAME_CONFIG["rules"]["buildings" if _queue in ("Building", "Defense") else "units"][_name] = {
+        "cost": _cost, "queue": _queue, "build_time_s": _secs, "prerequisites": list(_pre),
+    }
+CTX = DecisionContext(session_id="sim", tournament_id=None, game_type="red_alert", agent_id="q", seat_position=0,
+                      game_config=GAME_CONFIG)
+# Faction-only items (Soviets: flame tower, heavy tank; Allies: pillbox, light tank).
+SOVIET_ONLY, ALLIED_ONLY = {"ftur", "3tnk"}, {"pbox", "1tnk"}
 
 
 class Sim:
@@ -49,8 +58,7 @@ class Sim:
             return []
         out = []
         for name, (_, _, _, pre) in ITEMS.items():
-            if all(self.owned.get(p) for p in pre) and not (self.faction == "russia" and name == "pbox") \
-                    and not (self.faction != "russia" and name == "ftur"):
+            if all(self.owned.get(p) for p in pre) and name not in (ALLIED_ONLY if self.faction == "russia" else SOVIET_ONLY):
                 out.append(name)
         return out
 

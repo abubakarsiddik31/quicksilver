@@ -20,6 +20,7 @@ from typing import Any
 
 VEHICLES = {"1tnk", "2tnk", "3tnk", "4tnk", "apc", "ftrk", "jeep", "harv", "v2rl", "arty", "mgg", "mrj", "ttnk", "mcv"}
 TANKS = {"1tnk", "2tnk", "3tnk", "4tnk"}
+UNIT_TYPES = VEHICLES | {"e1", "e2", "e3", "e4", "e6", "e7", "dog", "medi", "mech", "spy", "thf", "shok"}
 DEFENSES = {"gun", "pbox", "hbox", "ftur", "tsla", "sam", "agun"}
 
 # metric -> (target, True if lower is better)
@@ -31,7 +32,10 @@ TARGETS: dict[str, tuple[float, bool]] = {
     "tanks_at_330s": (6, False),
     "first_defence_s": (240, True),
     "first_scout_s": (100, True),
+    "first_attack_s": (360, True),
+    "no_army_s": (0, True),
 }
+NON_COMBAT = {"mcv", "harv", "medi", "mech", "e6", "spy", "thf", "truk"}
 
 
 def load(path: str) -> list[dict[str, Any]]:
@@ -74,6 +78,28 @@ def score(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 zero += dt
         prev = (s, u, queue, r.get("cash"))
     m["vehicle_idle_s"], m["zero_cash_s"] = round(idle), round(zero)
+    # Seconds with a war factory but not one combat unit alive (the army was never rebuilt).
+    no_army, prev = 0.0, None
+    for r in states:
+        s = _clock(r, t0)
+        u = r.get("units") or {}
+        if prev is not None and prev[1]:
+            no_army += max(0.0, s - prev[0])
+        fighters = sum(v for k, v in u.items() if k in UNIT_TYPES and k not in NON_COMBAT)
+        prev = (s, bool(u.get("weap")) and fighters == 0)
+    m["no_army_s"] = round(no_army)
+    # An offensive attack-move (3+ units) that is not the base-defence reflex.
+    defends = [r["t"] for r in rows if r["kind"] == "defend"]
+    state_clock = [(r["t"], _clock(r, t0)) for r in states]
+    for r in rows:
+        if r["kind"] != "orders" or any(abs(r["t"] - d) < 0.5 for d in defends):
+            continue
+        if any(o.get("cmd") == "attack_move" and (o.get("n") or 0) >= 3 for o in r.get("orders") or []):
+            near = min(state_clock, key=lambda x: abs(x[0] - r["t"]), default=(r["t"], r["t"] - t0))
+            m["first_attack_s"] = round(near[1] + (r["t"] - near[0]))
+            break
+    rates = [r["decisions_per_s"] for r in states if isinstance(r.get("decisions_per_s"), (int, float))]
+    m["decisions_per_s"] = round(sum(rates) / len(rates), 1) if rates else None
 
     def at(sec: float) -> dict[str, int]:
         best = min(states, key=lambda r: abs(_clock(r, t0) - sec), default=None)
@@ -102,7 +128,7 @@ def report(m: dict[str, Any]) -> str:
         ok = "?" if v is None else ("ok" if (v <= target if lower else v >= target) else "MISS")
         lines.append(f"{k:<24}{'-' if v is None else v:>10}  {'<=' if lower else '>='} {target:g}   {ok}")
     lines.append("")
-    for k in ("consults", "consult_latency_mean_s", "narration_consults", "duration_s"):
+    for k in ("decisions_per_s", "consults", "consult_latency_mean_s", "narration_consults", "duration_s"):
         lines.append(f"{k:<24}{m.get(k)!s:>10}")
     return "\n".join(lines)
 

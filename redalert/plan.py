@@ -22,7 +22,7 @@ from typing import Any
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
 # Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
-JEV_SLOTS = ("structure", "unit", "posture", "wave", "target", "threat", "harvester", "power", "stage")
+JEV_SLOTS = ("doctrine", "structure", "unit", "posture", "wave", "target", "threat", "harvester", "power", "stage")
 ITEM_RE = re.compile(r"^[a-z0-9_]{2,8}$")
 
 MAX_WANTS = 24

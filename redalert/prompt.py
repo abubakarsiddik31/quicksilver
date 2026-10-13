@@ -85,6 +85,9 @@ happens (see "triggers"), never to narrate progress: do not describe what the ha
 WHAT THE HARNESS DOES ON ITS OWN (do not order these)
 - deploys the MCV; places every finished building immediately; repairs buildings under 75% hp; queues an
   emergency power plant if the base is actually in low power.
+- LOCKED OPENING: power plant -> barracks -> refinery -> war factory, in that order, whatever your list says
+  (a plan that put barracks or tech ahead of the war factory lost a match). Before the war factory the barracks
+  trains only a 3-rifleman guard. Plan from the war factory onward.
 - STRUCTURES: walks your `buildings` list in priority order; an item is built when its owned+queued count is below
   its count and it is in available_production. Structures and Defenses are SEPARATE queues and run in parallel.
   The next structure is queued once the current one is 40% done, so the Building queue never waits for a decision.
@@ -97,11 +100,21 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   faster, they all starve (one match was lost with cash at 0 for two minutes).
 - ALIASES you may use as item names: "barracks" (your faction's tent/barr), "tower" (cheapest defensive tower
   you can build; its count is the TOTAL of towers of any kind), "aa" (anti-air site; total of AA sites).
+- ARMY FLOOR: from 100 s, combat value must be at least 20 credits per second of game time (4,000 at 300 s).
+  Below it, units get the money first and non-essential structures (2nd refinery, radar, tech) wait; power,
+  barracks, towers and whatever unlocks a unit you want (e.g. fix for 3tnk) still go ahead.
+- KEEP BUSY: once your unit counts are met, an idle barracks / war factory keeps training (riflemen with rocket
+  soldiers, more e3 when enemy vehicles outnumber infantry; the war factory your listed vehicles first).
+- BATTLE PLAN (doctrine): after the war factory, Jev picks one of expand / mass_army / pressure / defend /
+  rebuild / all_in about once a second from both sides' numbers (rules pick when Jev is unsure). It sets the
+  army mode, wave size, army_first and adds its units/towers in front of your lists. Keep "doctrine" in
+  `tactics.jev_slots` to let it adapt; drop it to pin your own army mode.
+- BASE DEFENCE REFLEX: enemy units within 24 cells of the base (or 10 of a building) pull every fighter onto them
+  with attack-move, re-aimed every 1.5 s (a raid of 1-2 only pulls those at home). You do not need to order it.
 - BASELINE DEFENCE: one tower by 200 s and two by 300 s once a war factory exists, even if you do not list any.
 - ANTI-AIR-ONLY units (ftrk, sam, agun) are filtered out of your unit wants until enemy aircraft is seen.
-- SCOUT: from ~70 s one cheap fast unit is kept sent toward the enemy (via the midpoint, then their base), so
-  `visible_enemies` / `visible_enemy_buildings` fill in. Re-read them; you were blind until the attack landed
-  in the match that was lost.
+- SCOUT: at ~70 s ONE cheap fast unit is sent toward the enemy (via the midpoint, then their base), once per
+  match (re-sending lone scouts fed the enemy free kills), so `visible_enemies` / `visible_enemy_buildings` fill in.
 - ARMY: sets idle fighters to attack_anything; "hold" gathers idle fighters at `gather` (default your base);
   "attack" sends idle fighters as one attack-move wave once `wave_min` are idle; "all_in" attack-moves EVERY
   combat unit repeatedly. Targets: "nearest", "base", "building" (nearest visible enemy structure) or [x, y].

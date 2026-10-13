@@ -53,7 +53,10 @@ force a fresh login and retry exactly once, exactly like ``request()``.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
+import os
+import threading
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -197,6 +200,126 @@ async def _call_tool_once(
     return payload if isinstance(payload, dict) else {}
 
 
+# -- fast path: one JSON-RPC POST per call on a kept-alive connection ------------------
+#
+# The game server is stateless (mcp.md, "Raw JSON-RPC: one POST per call, no handshake"): a tool call needs no
+# MCP session. The SDK path above pays a fresh TCP + TLS handshake and an ``initialize`` round trip on EVERY
+# call; measured in a live Red Alert match that held the decision loop to one decision every ~2.6 s (the
+# opponent acted every second). One shared ``httpx.Client`` keeps the connection open, so a call is one round
+# trip. ``ALTRUAGENT_MCP_SESSION=1`` switches back to the SDK path.
+
+_RAW_CLIENT: httpx.Client | None = None
+_RAW_LOCK = threading.Lock()
+_RAW_IDS = itertools.count(1)
+
+
+def _raw_client() -> httpx.Client:
+    global _RAW_CLIENT
+    with _RAW_LOCK:
+        if _RAW_CLIENT is None:
+            _RAW_CLIENT = httpx.Client(
+                timeout=httpx.Timeout(MCP_READ_TIMEOUT_SECONDS, connect=MCP_CONNECT_TIMEOUT_SECONDS),
+                limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=60.0),
+            )
+        return _RAW_CLIENT
+
+
+def _use_raw() -> bool:
+    return os.environ.get("ALTRUAGENT_MCP_SESSION", "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+def _parse_rpc_body(response: httpx.Response) -> dict:
+    """The JSON-RPC envelope from a plain JSON reply, or from an SSE stream's last ``data:`` line."""
+    ctype = response.headers.get("content-type", "")
+    if "text/event-stream" in ctype:
+        envelope: Any = None
+        for line in response.text.splitlines():
+            if line.startswith("data:"):
+                try:
+                    envelope = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+        if isinstance(envelope, dict):
+            return envelope
+        raise ValueError("no JSON-RPC message in the event stream")
+    body = response.json()
+    if not isinstance(body, dict):
+        raise ValueError("JSON-RPC reply is not an object")
+    return body
+
+
+def _call_tool_raw(mcp_url: str, token: str, name: str, arguments: dict) -> dict:
+    """One tool call as a single POST. Same results and errors as ``_call_tool_once``."""
+    request_id = next(_RAW_IDS)
+    response = _raw_client().post(
+        mcp_url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+              "params": {"name": name, "arguments": arguments}},
+    )
+    if response.status_code >= 400:
+        response.raise_for_status()
+    envelope = _parse_rpc_body(response)
+    if "error" in envelope and "result" not in envelope:
+        err = envelope.get("error") or {}
+        raise MCPToolError(
+            f"MCP tool {name!r} failed at the protocol level: {err.get('message') if isinstance(err, dict) else err}",
+            status_code=None,
+            error_code=None,
+            protocol_error=True,
+        )
+    result = envelope.get("result") or {}
+    if result.get("isError"):
+        content = result.get("content") or [{}]
+        text = content[0].get("text") if isinstance(content[0], dict) else None
+        raise MCPToolError(
+            f"MCP tool {name!r} failed at the protocol level: {text or result}",
+            status_code=None,
+            error_code=None,
+            protocol_error=True,
+        )
+    payload = result.get("structuredContent")
+    if payload is None:
+        content = result.get("content") or []
+        text = content[0].get("text") if content and isinstance(content[0], dict) else None
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            payload = {}
+    if isinstance(payload, dict) and "error" in payload:
+        raise MCPToolError(
+            payload.get("detail") or f"MCP tool {name!r} returned error {payload['error']!r}.",
+            status_code=None,
+            error_code=payload["error"],
+            next_action=(payload.get("next_actions") or [None])[0],
+        )
+    return payload if isinstance(payload, dict) else {}
+
+
+def _call_raw_with_relogin(client: "AltruAgentClient", mcp_url: str, name: str, arguments: dict) -> dict:
+    token = client._current_access_token()
+    for attempt in (1, 2):
+        try:
+            return _call_tool_raw(mcp_url, token, name, arguments)
+        except MCPToolError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401 and attempt == 1:
+                token = client._current_access_token(force_relogin=True)
+                continue
+            raise _wrap_http_status_error(name, exc) from exc
+        except Exception as exc:  # noqa: BLE001 - network errors surface as MCPToolError (retried by the runner)
+            suffix = " after re-login" if attempt == 2 else ""
+            raise MCPToolError(
+                f"MCP tool {name!r} failed{suffix}: {exc!r}", status_code=None, error_code=None
+            ) from exc
+    raise AssertionError("unreachable")
+
+
 def _extract_text(result: Any) -> str:
     content = getattr(result, "content", None)
     if content:
@@ -279,6 +402,8 @@ def call_tool(
     production callers never pass it.
     """
     _check_arguments(name, arguments)
+    if httpx_client_factory is None and _use_raw():
+        return _call_raw_with_relogin(client, mcp_url, name, arguments)
     token = client._current_access_token()
     try:
         return asyncio.run(

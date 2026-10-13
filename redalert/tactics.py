@@ -32,6 +32,7 @@ from typing import Any
 
 from common.jev import Answer, JevClient
 from redalert import trace
+from redalert.doctrine import DOCTRINES
 from redalert.plan import Plan
 
 REFRESH_S = 1.0
@@ -80,6 +81,9 @@ class Candidates:
     income: float = 0.0
     scout_alive: bool = False
     describe: dict[str, str] = field(default_factory=dict)
+    battle: dict[str, Any] = field(default_factory=dict)  # both sides, from redalert.intel
+    doctrine: str = ""  # the battle plan in force
+    doctrine_for_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -186,10 +190,18 @@ class TacticalAdvisor:
                 "kills_cost", "deaths_cost", "army_value", "assets_value", "units_lost", "units_killed")},
             "measured_income_per_s": round(cands.income, 1),
             "scout_alive": cands.scout_alive,
-            "strategy": plan.assessment,
-            "strategy_hint": plan.tactics_hint,
-            "plan_army_mode": plan.army_mode,
+            # Both sides in numbers. Fog of war: the enemy is what we have seen (units for 90 s, buildings until
+            # destroyed). No plan text or army mode goes in: Jev echoed "hold" from it for ten minutes.
+            "battle": cands.battle,
+            "current_battle_plan": {"name": cands.doctrine, "for_s": round(cands.doctrine_for_s)},
+            "rules_of_victory": (
+                "Destroy every enemy building and the MCV. At the time limit the higher (kills value - losses "
+                "value) wins, then assets. A stronger army that attacks wins trades; a big army idle at home "
+                "wins nothing; attacking into a stronger army or towers loses it."
+            ),
         }
+        if plan.tactics_hint:
+            state["strategy_hint"] = plan.tactics_hint
         questions: dict[str, dict[str, Any]] = {}
         meta: dict[str, Any] = {}
 
@@ -204,18 +216,11 @@ class TacticalAdvisor:
         choice("next_unit", "unit",
                "Which unit should I train next to counter what the enemy fields and keep my economy and army balanced?",
                {i: cands.describe.get(i) for i in cands.units})
-        if cands.all_combat >= 1:
-            choice("army_posture", "posture",
-                   "What should my army do right now: attack, hold at home, or retreat?", dict(POSTURES))
-        choice("stage_now", "stage",
-               "Given my income, what the enemy has shown and the clock, what should my money go into right now?",
-               dict(STAGES))
-        if cands.idle_combat >= 3 and "wave" in plan.jev_slots:
-            questions["wave_ok"] = {
-                "type": "noul",
-                "instructions": "Is it a good moment to send my idle combat units to attack: would this wave trade well against the enemy's visible forces and defenses?",
-            }
-            meta["wave_ok"] = "wave"
+        choice("battle_plan", "doctrine",
+               "You command my side in this real-time Red Alert 1v1. Compare both armies in `battle` (value, unit "
+               "types, health, where they are), the economies and the clock. Which battle plan should my side "
+               "follow for the next ten seconds?",
+               {name: d.when for name, d in DOCTRINES.items()})
         if cands.idle_combat >= 3:
             choice("attack_target", "target", "Where should the next attack wave go?", dict(TARGETS))
         if "threat" in plan.jev_slots:
@@ -327,7 +332,7 @@ class TacticalAdvisor:
         threat = advice.values.get("threat")
         if isinstance(threat, int) and threat >= ESCALATE_LEVEL and advice.confidence.get("threat", 1.0) >= plan.min_confidence:
             push(f"jev_threat:{threat}", THREAT_COOLDOWN_S)
-        for slot in ("posture", "stage"):
+        for slot in ("doctrine",):
             c = advice.confidence.get(slot)
             if slot in plan.jev_slots and c is not None and c < plan.min_confidence:
                 push(f"jev_uncertain:{slot}", UNCERTAIN_COOLDOWN_S)

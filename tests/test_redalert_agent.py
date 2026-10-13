@@ -9,7 +9,10 @@ import pytest
 
 from altruagent import WAIT, DecisionContext, WithReasoning
 from redalert.agent import RedAlertAgent
-from redalert.plan import DEFAULT_PLAN, Plan, parse_plan, sanitize_order
+from redalert.plan import DEFAULT_PLAN, JEV_SLOTS, Plan, parse_plan, sanitize_order
+
+# A plan that pins its own army and money rules (no battle-plan doctrine on top), for tests of those rules.
+PINNED = tuple(s for s in JEV_SLOTS if s != "doctrine")
 from redalert.prompt import build_system, build_user
 from redalert.strategist import Strategist
 
@@ -142,10 +145,13 @@ def test_one_structure_per_queue_in_plan_order_and_barracks_alias():
     state = make_state(avail=["proc", "barr", "powr"],
                        buildings=[{"id": 1, "type": "powr", "hp": 100}, {"id": 2, "type": "fact", "hp": 100}])
     out = orders_of(offline().choose_action(state, CTX))
+    assert [o["item"] for o in out if o["cmd"] == "build"] == ["barr"]  # the locked opening: barracks second
+    state = make_state(avail=["proc", "weap", "powr"], buildings=[
+        {"id": 1, "type": "powr"}, {"id": 2, "type": "fact"}, {"id": 3, "type": "barr"}])
+    out = orders_of(offline().choose_action(state, CTX))
     assert [o["item"] for o in out if o["cmd"] == "build"] == ["proc"]
-    # The war factory (vehicles, harvesters) now comes before the barracks.
     state = make_state(avail=["barr", "tent", "weap"], faction="russia",
-                       buildings=[{"id": 1, "type": "powr"}, {"id": 3, "type": "proc"}])
+                       buildings=[{"id": 1, "type": "powr"}, {"id": 3, "type": "proc"}, {"id": 5, "type": "barr"}])
     out = orders_of(offline().choose_action(state, CTX))
     assert [o["item"] for o in out if o["cmd"] == "build"] == ["weap"]
     # With it owned, "barracks" resolves to the Soviet barr even when the tent is also listed.
@@ -175,7 +181,8 @@ def test_defense_queue_builds_in_parallel_with_structures():
 
 
 def test_units_hold_back_only_the_next_structure():
-    # The refinery (1,400) is the next structure: with 1,450 cash the riflemen (100 each) wait; with 2,600 they train.
+    # The refinery (1,400) is the next structure: with 1,450 cash the guard riflemen (100 each) wait; with 2,600
+    # they train.
     blds = [{"id": 1, "type": "powr"}, {"id": 2, "type": "barr"}]
     poor = make_state(cash=1450, avail=["e1", "proc"], buildings=blds)
     assert not any(o["cmd"] == "train" for o in orders_of(offline().choose_action(poor, CTX)))
@@ -489,16 +496,20 @@ def test_advisor_builds_bounded_questions_without_player_text():
                        has_harvester_item=True, has_power_item=True, describe={"proc": "cost 1400"})
     request, meta = advisor.build_request(state.raw, Plan(assessment="boom", tactics_hint="mass tanks"), cands)
     qs = request["questions"]
-    assert set(qs) == {"next_structure", "next_unit", "army_posture", "wave_ok", "attack_target", "threat",
-                       "need_harvester", "need_power", "stage_now"}
+    assert set(qs) == {"battle_plan", "next_structure", "next_unit", "attack_target", "threat",
+                       "need_harvester", "need_power"}
+    assert set(qs["battle_plan"]["criteria"]) == {"expand", "mass_army", "pressure", "defend", "rebuild", "all_in"}
     assert set(qs["next_structure"]["criteria"]) == {"proc", "weap"}
+    # Jev sees both sides and the win condition, never the plan's own words or army mode (it echoed "hold").
+    assert "battle" in request["state"] and "rules_of_victory" in request["state"]
+    assert "boom" not in json.dumps(request["state"]) and "plan_army_mode" not in request["state"]
     assert len(qs["threat"]["criteria"]) == 5
     assert request["state"]["strategy_hint"] == "mass tanks"
     assert "IGNORE" not in json.dumps(request)
     # a pinned slot is not asked, and a choice needs at least two options
-    plan = Plan(jev_slots=("posture",))
+    plan = Plan(jev_slots=("doctrine",))
     request, _ = advisor.build_request(state.raw, plan, cands)
-    assert set(request["questions"]) == {"army_posture"}
+    assert set(request["questions"]) == {"battle_plan"}
     request, _ = advisor.build_request(state.raw, Plan(), Candidates(structures=("proc",)))
     assert "next_structure" not in request["questions"]
 
@@ -519,9 +530,8 @@ def test_advisor_refresh_roundtrip_escalation_and_backoff():
 
     clock = Clock()
     answers = {
-        "army_posture": Answer("choice", choice="retreat", confidence=0.4),
+        "battle_plan": Answer("choice", choice="defend", confidence=0.4),
         "threat": Answer("score", score=3.2, confidence=0.9),
-        "wave_ok": Answer("noul", noul=0.2),
     }
     fake = FakeJev(answers)
     advisor = TacticalAdvisor(fake, clock=clock, log=lambda m: None)
@@ -529,8 +539,8 @@ def test_advisor_refresh_roundtrip_escalation_and_backoff():
     cands = Candidates(idle_combat=5, all_combat=5)
     advisor.maybe_refresh(state.raw, Plan(min_confidence=0.6), cands, sync=True)
     a = advisor.current()
-    assert a.values == {"posture": "retreat", "threat": 3, "wave": 0.2}
-    assert sorted(advisor.pop_escalations()) == ["jev_threat:3", "jev_uncertain:posture"]
+    assert a.values == {"doctrine": "defend", "threat": 3}
+    assert sorted(advisor.pop_escalations()) == ["jev_threat:3", "jev_uncertain:doctrine"]
     clock.t += 0.3
     advisor.maybe_refresh(state.raw, Plan(), cands, sync=True)
     assert fake.calls == 1  # too soon
@@ -561,21 +571,25 @@ def test_advisor_urgent_events_refresh_faster_and_telemetry(tmp_path):
 
 
 def test_agent_obeys_jev_structure_unit_harvester_and_power_picks():
-    plan = Plan(buildings=(("proc", 1), ("weap", 1)), units=(("e1", 5), ("3tnk", 5)))
-    state = make_state(avail=["proc", "weap", "e1", "3tnk"], cash=5000, buildings=[{"id": 1, "type": "powr"}])
-    agent, _ = advised({"structure": "weap", "unit": "3tnk"}, {"structure": 0.9, "unit": 0.9}, plan=plan)
+    # After the locked opening (power, refinery, war factory), Jev may reorder the plan's structures.
+    plan = Plan(buildings=(("proc", 2), ("fix", 1)), units=(("e1", 5), ("3tnk", 5)))
+    built = [{"id": 1, "type": "powr"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "weap"}]
+    state = make_state(avail=["proc", "fix", "e1", "3tnk"], cash=5000, buildings=built)
+    agent, _ = advised({"structure": "fix", "unit": "3tnk"}, {"structure": 0.9, "unit": 0.9}, plan=plan)
     out = orders_of(agent.choose_action(state, CTX))
-    assert [o["item"] for o in out if o["cmd"] == "build"] == ["weap"]  # plan order said proc first
+    assert [o["item"] for o in out if o["cmd"] == "build"] == ["fix"]  # plan order said proc first
     assert [o["item"] for o in out if o["cmd"] == "train"][:1] == ["3tnk"]
-    agent, _ = advised({"structure": "weap"}, {"structure": 0.3}, plan=plan)  # not confident: the plan's order
+    agent, _ = advised({"structure": "fix"}, {"structure": 0.3}, plan=plan)  # not confident: the plan's order
     assert [o["item"] for o in orders_of(agent.choose_action(state, CTX)) if o["cmd"] == "build"] == ["proc"]
 
     agent, _ = advised({"harvester": 0.9, "power": 0.9}, plan=Plan(buildings=(), units=()))
-    out = orders_of(agent.choose_action(make_state(avail=["harv", "powr"], cash=5000), CTX))
+    base = [{"id": 1, "type": "powr"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "weap"},
+            {"id": 4, "type": "harv"}, {"id": 5, "type": "harv"}]  # auto-harvester goal (2 per refinery) met
+    out = orders_of(agent.choose_action(make_state(avail=["harv", "powr"], cash=5000, buildings=base), CTX))
     assert {"cmd": "build", "item": "powr"} in out
     assert any(o["cmd"] == "train" and o["item"] == "harv" for o in out)
     agent, _ = advised({"harvester": 0.3, "power": 0.5}, plan=Plan(buildings=(), units=()))
-    assert agent.choose_action(make_state(avail=["harv", "powr"], cash=5000), CTX) is WAIT  # both "no"
+    assert agent.choose_action(make_state(avail=["harv", "powr"], cash=5000, buildings=base), CTX) is WAIT  # both "no"
 
 
 def test_agent_obeys_jev_posture_wave_and_target():
@@ -685,7 +699,7 @@ def test_war_factory_done_means_a_harvester_even_with_expensive_wants_pending():
 
 def test_next_structure_is_prequeued_once_the_current_one_is_well_along():
     plan = Plan(buildings=(("powr", 1), ("barracks", 1)), units=())
-    blds = [{"id": 1, "type": "fact"}]
+    blds = [{"id": 1, "type": "fact"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "weap"}]  # past the locked opening
     early = make_state(avail=["powr", "barr"], buildings=blds,
                        production=[{"item": "powr", "queue": "Building", "progress": 0.1}])
     assert not any(o["cmd"] == "build" for o in orders_of(stub_agent(plan).choose_action(early, CTX)) if o) \
@@ -697,7 +711,7 @@ def test_next_structure_is_prequeued_once_the_current_one_is_well_along():
 
 
 def test_governor_keeps_queues_from_starving_each_other():
-    plan = Plan(buildings=(("tsla", 1),), units=(("3tnk", 5), ("e3", 5), ("harv", 3)))
+    plan = Plan(buildings=(("tsla", 1),), units=(("3tnk", 5), ("e3", 5), ("harv", 3)), jev_slots=PINNED)
     blds = [{"id": 1, "type": "weap"}, {"id": 2, "type": "proc"}]
     busy = [{"item": "fix", "queue": "Building", "progress": 0.2}]  # 1,200 depot, 960 still to be paid
     poor = make_state(cash=900, avail=["tsla", "3tnk", "e3", "harv"], buildings=blds, production=busy)
@@ -787,8 +801,9 @@ def test_baseline_defence_and_jev_stage_and_army_first():
     state.raw["time"]["game_seconds"] = 210
     assert any(o.get("item") == "pbox" for o in orders_of(stub_agent(plan).choose_action(state, CTX)))
     # Jev's "build_army" gives units the first claim on cash: they train even while a structure is unfunded.
-    plan2 = Plan(buildings=(("proc", 1),), units=(("e1", 5),))
-    state = make_state(cash=600, avail=["e1", "proc"], buildings=[{"id": 1, "type": "powr"}, {"id": 2, "type": "barr"}])
+    plan2 = Plan(buildings=(("proc", 2),), units=(("e1", 5),), jev_slots=PINNED)
+    state = make_state(cash=600, avail=["e1", "proc"], buildings=[
+        {"id": i, "type": t} for i, t in enumerate(["powr", "barr", "proc", "weap", "harv", "harv"])])
     agent, _ = advised({"stage": "build_army"}, {"stage": 0.9}, plan=plan2)
     assert any(o["cmd"] == "train" for o in orders_of(agent.choose_action(state, CTX)))
     agent, _ = advised({"stage": "expand_economy"}, {"stage": 0.9}, plan=plan2)
@@ -823,11 +838,11 @@ def test_jev_doubt_about_units_and_structures_no_longer_wakes_the_llm():
     advisor = TacticalAdvisor(FakeJev({
         "next_unit": Answer("choice", choice="e1", confidence=0.2),
         "next_structure": Answer("choice", choice="proc", confidence=0.2),
-        "army_posture": Answer("choice", choice="hold", confidence=0.3),
+        "battle_plan": Answer("choice", choice="mass_army", confidence=0.3),
     }), clock=Clock(), log=lambda m: None)
     advisor.maybe_refresh(make_state(units=[{"id": 1, "type": "3tnk"}]).raw, Plan(),
                           Candidates(structures=("proc", "weap"), units=("e1", "e3"), all_combat=1), sync=True)
-    assert advisor.pop_escalations() == ["jev_uncertain:posture"]
+    assert advisor.pop_escalations() == ["jev_uncertain:doctrine"]
 
 
 def test_prompt_is_trimmed_and_teaches_the_new_harness():
@@ -870,3 +885,125 @@ def test_cash_only_reactions_cannot_jump_the_opening():
     state = make_state(cash=5000, avail=["powr", "weap"])  # match start
     out = orders_of(stub_agent(plan).choose_action(state, CTX))
     assert [o["item"] for o in out if o["cmd"] == "build"] == ["powr"]
+
+
+# -- match 2 lessons: locked opening, army floor, base defence reflex, one scout, short labels --------------
+
+
+def test_opening_is_locked_even_if_the_plan_wants_barracks_first():
+    plan = Plan(buildings=(("barracks", 1), ("weap", 1), ("fix", 1)), units=())
+    built = [{"id": 1, "type": "fact"}, {"id": 2, "type": "powr"}]
+    state = make_state(avail=["barr", "proc", "fix"], cash=5000, buildings=built)
+    builds = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "build"]
+    assert builds == ["barr"]
+    built += [{"id": 3, "type": "barr"}, {"id": 4, "type": "proc"}]
+    state = make_state(avail=["weap", "fix"], cash=5000, buildings=built)
+    builds = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "build"]
+    assert builds == ["weap"]  # the plan said fix; the war factory comes first
+
+
+def test_before_the_war_factory_the_barracks_trains_only_a_small_guard():
+    plan = Plan(buildings=(), units=(("e3", 8), ("e1", 8)))
+    built = [{"id": 1, "type": "fact"}, {"id": 2, "type": "powr"}, {"id": 3, "type": "barr"}, {"id": 4, "type": "proc"}]
+    state = make_state(avail=["e1", "e3", "weap"], cash=5000, buildings=built)
+    trains = [o for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "train"]
+    assert sum(o["count"] for o in trains) <= 3 and all(o["item"] == "e1" for o in trains)
+    guard = [{"id": 10 + i, "type": "e1"} for i in range(3)]
+    state = make_state(avail=["e1", "e3", "weap"], cash=5000, buildings=built, units=guard)
+    out = stub_agent(plan).choose_action(state, CTX)
+    assert out is WAIT or not any(o["cmd"] == "train" for o in orders_of(out))
+
+
+def test_army_floor_defers_tech_but_not_power_or_what_unlocks_wanted_units():
+    plan = Plan(buildings=(("proc", 2), ("dome", 1)), units=(("e3", 10),))
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "proc", "weap", "barr", "harv", "harv"])]
+    state = make_state(avail=["proc", "dome", "e3"], cash=5000, buildings=built)
+    state.raw["time"]["game_seconds"] = 240  # floor 2,800 credits of army, we have none
+    out = orders_of(stub_agent(plan).choose_action(state, CTX))
+    assert not any(o["cmd"] == "build" for o in out)
+    assert any(o["cmd"] == "train" and o["item"] == "e3" for o in out)
+    state.raw["time"]["game_seconds"] = 90  # before the floor starts: structures as planned
+    assert {"cmd": "build", "item": "proc"} in orders_of(stub_agent(plan).choose_action(state, CTX))
+
+
+def test_enemy_push_in_base_pulls_every_fighter_onto_it():
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=50)
+    units = [{"id": 10, "type": "e3", "x": 22, "y": 22}, {"id": 11, "type": "3tnk", "x": 70, "y": 70}]
+    state = make_state(units=units, combat=[10], buildings=[{"id": 1, "type": "fact", "x": 20, "y": 20}])
+    state.raw["observation"]["visible_enemies"] = [
+        {"id": 90 + i, "type": "2tnk", "x": 28, "y": 24 + i} for i in range(3)
+    ]
+    agent = stub_agent(plan)
+    out = orders_of(agent.choose_action(state, CTX))
+    moves = [o for o in out if o["cmd"] == "attack_move"]
+    assert moves and set(moves[0]["units"]) == {10, 11} and moves[0]["to"] == [28, 24]
+    assert agent._label(out, True) == "defending the base"
+    # A lone scout only pulls who is home, never the army far away.
+    state.raw["observation"]["visible_enemies"] = [{"id": 95, "type": "e1", "x": 26, "y": 22}]
+    moves = [o for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "attack_move"]
+    assert moves and moves[0]["units"] == [10]
+
+
+def test_only_one_scout_per_match():
+    clock = Clock()
+    agent = RedAlertAgent(SimpleNamespace(
+        enabled=True, version=1, maybe_update=lambda *a, **k: None, notify=lambda r: None,
+        current=lambda: Plan(buildings=(), units=()),
+    ), TacticalAdvisor(None), clock=clock)
+    def scouting(uid):
+        state = make_state(units=[{"id": uid, "type": "e1", "x": 20, "y": 20}], enemy_base=[80, 80])
+        state.raw["observation"]["units"][0]["x"] = 20
+        state.raw["legal_actions"]["idle_units"] = [uid]
+        state.raw["time"]["game_seconds"] = 120
+        out = agent.choose_action(state, CTX)
+        return out is not WAIT and any(o["cmd"] == "move" for o in orders_of(out))
+    assert scouting(1)
+    clock.t += 100
+    assert not scouting(2)  # the first scout died: no second sacrifice
+
+
+# -- match 3 lessons: the army sat on "hold" for ten minutes, then was never rebuilt -----------------------------
+
+
+def test_gemini_is_opt_in(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("RA_LLM", raising=False)
+    assert not RedAlertAgent(advisor=TacticalAdvisor(None)).strategist.enabled
+    monkeypatch.setenv("RA_LLM", "1")
+    assert RedAlertAgent(advisor=TacticalAdvisor(None)).strategist.enabled
+
+
+def _army_state(units, combat, home=(20, 20)):
+    state = make_state(units=units, combat=combat, enemy_base=[80, 80],
+                       buildings=[{"id": 1, "type": "fact", "x": home[0], "y": home[1]}])
+    return state
+
+
+def test_a_big_army_attacks_even_when_the_plan_says_hold():
+    plan = Plan(buildings=(), units=(), army_mode="hold", wave_min=8)
+    tanks = [{"id": 10 + i, "type": "3tnk", "x": 21, "y": 21} for i in range(6)]  # 5,700 of army
+    out = orders_of(stub_agent(plan).choose_action(_army_state(tanks, [u["id"] for u in tanks]), CTX))
+    assert any(o["cmd"] == "attack_move" and len(o["units"]) == 6 for o in out)
+    small = tanks[:2]
+    out = stub_agent(plan).choose_action(_army_state(small, [u["id"] for u in small]), CTX)
+    assert out is WAIT or not any(o["cmd"] == "attack_move" for o in orders_of(out))
+
+
+def test_fighters_already_in_the_field_keep_attacking_without_a_wave():
+    plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=8)
+    out_there = [{"id": 30, "type": "e3", "x": 75, "y": 75}]
+    out = orders_of(stub_agent(plan).choose_action(_army_state(out_there, [30]), CTX))
+    assert any(o["cmd"] == "attack_move" and o["units"] == [30] for o in out)
+
+
+def test_no_harvester_rebuys_while_the_army_is_short():
+    plan = Plan(buildings=(), units=(("e3", 10),))
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "barr", "proc", "proc", "weap"])]
+    harvs = [{"id": 50, "type": "harv"}, {"id": 51, "type": "harv"}]
+    state = make_state(avail=["harv", "e3"], cash=3000, buildings=built, units=harvs)
+    state.raw["time"]["game_seconds"] = 400  # floor 6,000: we have no army at all
+    items = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "train"]
+    assert "harv" not in items and "e3" in items
+    state.raw["time"]["game_seconds"] = 90  # no floor yet: 2 per refinery
+    items = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "train"]
+    assert "harv" in items

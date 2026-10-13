@@ -35,10 +35,12 @@ from altruagent import WAIT, DecisionContext, GameState, WithReasoning
 from common.jev import JevClient
 from common.llm import GeminiClient
 from redalert import trace
-from redalert.econ import EconTracker
+from redalert import doctrine as doctrines
+from redalert.econ import EconTracker, funds
+from redalert.intel import Intel
 from redalert.plan import DEFAULT_PLAN, Plan, Reaction, sanitize_order
 from redalert.strategist import Strategist
-from redalert.tactics import ESCALATE_LEVEL, Candidates, TacticalAdvisor
+from redalert.tactics import ADVICE_TTL_S, ESCALATE_LEVEL, Candidates, TacticalAdvisor
 
 CORE_STRUCTURES = {"fact", "powr", "apwr", "proc", "weap", "tent", "barr"}
 NON_COMBAT = {"mcv", "harv", "medi", "mech", "e6", "spy", "thf", "truk"}
@@ -82,6 +84,20 @@ BUDGET_FACTOR = 1.5  # of measured income: queues may run slightly ahead of inco
 CASH_MARGIN = 300
 PRE_QUEUE_PROGRESS = 0.4  # queue the next structure once the current one is this far along
 SCOUT_AT_S = 70
+SCOUT_MAX = 1  # one scout per match: re-sending lone units fed the enemy five free kills
+# Locked until the war factory is up; no plan may reorder it. Barracks second: the enemy's opening scout
+# walked through our empty base in live matches, and a few riflemen kill it (and anything that follows).
+OPENING = (("powr", 1), ("barracks", 1), ("proc", 1), ("weap", 1))
+EARLY_GUARD = 3  # infantry trained before the war factory; the rest of the money is the war factory's
+BARRACKS = ("barr", "tent")
+# Army floor: after this many seconds, combat value (credits) must keep pace with the clock or units go first
+# and non-essential structures (2nd refinery, radar, tech) wait.
+ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 20.0
+DEFEND_RADIUS = 24  # enemy units this close to the base centre (or 10 to any building) trigger the defence reflex
+DEFEND_EVERY_S = 1.5
+ATTACK_VALUE = 5000  # an army worth this much (credits) attacks even if the plan or Jev says hold
+FORWARD_RADIUS = 36  # idle fighters farther than this from home are already in the field: keep them fighting
+FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
 OPENING_S = 150  # until then (or a war factory) defences wait unless there is an emergency
 TOWER_BY_S = ((200, 1), (300, 2))  # baseline defence timeline: (game seconds, towers)
 ATTACK_MEMORY_S = 8.0
@@ -110,14 +126,23 @@ class RedAlertAgent:
         self.advisor = advisor if advisor is not None else TacticalAdvisor(
             JevClient.from_env(), telemetry_path=os.environ.get("RA_TELEMETRY") or None
         )
-        self.strategist = strategist if strategist is not None else Strategist(GeminiClient.from_env())
+        if strategist is None:
+            # Opt-in: in live matches the LLM kept the army on "hold" for ten minutes at ~6.5 s a consult, while the
+            # built-in playbook attacks on its own. RA_LLM=1 turns the Gemini strategist back on.
+            on = os.environ.get("RA_LLM", "0").strip().lower() in ("1", "true", "yes", "on")
+            strategist = Strategist(GeminiClient.from_env() if on else None)
+        self.strategist = strategist
         if not self.strategist.enabled:
-            print("[redalert] no GEMINI_API_KEY: playing the fixed default plan, no AI strategy", file=sys.stderr, flush=True)
+            print("[redalert] playing the built-in playbook (Gemini off; RA_LLM=1 turns it on)", file=sys.stderr, flush=True)
         self.econ = EconTracker()
         self._until: dict[str, float] = {}
         self._stanced: set[int] = set()
         self._gathered: set[int] = set()
+        self.intel = Intel()
+        self.doctrines = doctrines.DoctrineState()
+        self._battle: dict[str, Any] = {}
         self._scouts: set[int] = set()
+        self._scouts_sent = 0
         self._exec_version = -1
         self._diag_since: dict[str, float] = {}
         self._refusals: list[tuple[float, str]] = []
@@ -129,6 +154,7 @@ class RedAlertAgent:
         self._secs: dict[str, float] = {}
         self._errors_logged: set[str] = set()
         self._state_at = 0.0
+        self._decisions = 0  # choose_action calls since the last state trace: our real decision rate
         self._attack_seq = -1
         self._attack_at = -1e9
         self._fired: set[str] = set()
@@ -329,7 +355,7 @@ class RedAlertAgent:
         production = [p for p in (obs.get("production") or []) if isinstance(p, dict)]
         avail = {str(x).lower() for x in (obs.get("available_production") or [])}
         econ = obs.get("economy") or {}
-        cash = econ.get("cash", 0) or 0
+        cash = funds(econ)  # cash + refined ore: both are spendable
         provided, drained = econ.get("power_provided", 0) or 0, econ.get("power_drained", 0) or 0
         faction = str(obs.get("faction") or "").lower()
         units = [u for u in (obs.get("units") or []) if isinstance(u, dict) and not u.get("wreck")]
@@ -388,6 +414,26 @@ class RedAlertAgent:
             and u["id"] not in self._scouts
         ]
         air_seen = any(str(e.get("type")).lower() in ENEMY_AIR for e in enemies)
+
+        # The battle picture (both sides, with memory through the fog) and the battle plan in force.
+        self._safe("intel", lambda: self.intel.update(obs, mono), None)
+        refineries = owned.get("proc", 0)
+        army_value = sum(self.cost_of(str(u.get("type")).lower()) for u in all_combat)
+        enemy_seen = self._safe("intel", lambda: self.intel.enemy_army_value(self.cost_of), 0.0)
+        near_n, near_v = self._safe("intel", lambda: self.intel.enemy_near(home, self.cost_of, mono), (0, 0.0))
+        towers_up = sum(n for t, n in owned.items() if t in DEFENSES or t in TOWER_ORDER)
+        army_floor = max(0.0, (game_s - ARMY_FLOOR_FROM_S) * ARMY_FLOOR_PER_S)
+        military = obs.get("military") or {}
+        numbers = doctrines.battle_state(
+            game_s=game_s, remaining_s=(raw.get("time") or {}).get("remaining_seconds"), my_army=army_value,
+            enemy_army_seen=enemy_seen, enemy_near_base=near_n, enemy_army_near_base=near_v,
+            my_losses=military.get("deaths_cost") or 0, my_kills=military.get("kills_cost") or 0, income=income,
+            harvesters=owned.get("harv", 0), refineries=refineries, towers=towers_up, army_floor=army_floor,
+        )
+        if owned.get("weap") and "doctrine" in plan.jev_slots:  # the opening is locked; a plan may pin its army
+            plan = self._safe("doctrine", lambda: self._choose_doctrine(plan, numbers, mono), plan)
+        doc = self.doctrines.doctrine
+        army_floor *= doc.floor_scale
 
         # Reactions: the model's if-then rules, evaluated in microseconds.
         fired = self._safe("reactions", lambda: self._react(plan, {
@@ -456,8 +502,15 @@ class RedAlertAgent:
                 if w and owned.get("weap"):  # the Defense queue is separate: this never delays structures
                     wants.append(w)
                 break
-        refineries = owned.get("proc", 0)
-        harv_goal = min(MAX_HARV, 2 * refineries) if owned.get("weap") else 0
+        if doc.extra_towers and (owned.get("weap") or near_n):
+            w = self._group_want("tower", min(MAX_DEFENSES, towers_up + doc.extra_towers), faction, avail, owned, queued)
+            if w:
+                wants.insert(0, w)
+        harv_goal = min(MAX_HARV, doc.harv_per_proc * refineries) if owned.get("weap") else 0
+        army_short = bool(owned.get("weap")) and army_value < army_floor
+        if army_short and owned.get("harv", 0) >= refineries:
+            # One per refinery keeps income alive; rebuying 1,100 harvesters with no army left lost a match.
+            harv_goal = min(harv_goal, refineries)
         harvs = owned.get("harv", 0) + queued.get("harv", 0)
         if harv_goal and harvs < harv_goal and "harv" in avail:
             unit_wants.insert(0, ("harv", harv_goal))
@@ -489,6 +542,8 @@ class RedAlertAgent:
                 all_combat=len(all_combat), has_harvester_item="harv" in avail, has_power_item="powr" in avail,
                 describe={i: f"cost {self.cost_of(i)}" for i in (*struct_cands, *unit_cands)},
                 income=income, scout_alive=bool(self._scouts),
+                battle=self._battle_summary(obs, mono, home, legal, idle_combat, numbers),
+                doctrine=self.doctrines.name, doctrine_for_s=mono - self.doctrines.since,
             )), None)
             advice = self.advisor.current()
         now_adv = self.advisor.now()
@@ -504,7 +559,7 @@ class RedAlertAgent:
             unit_wants.sort(key=lambda w: w[0] != pick)
         need = adv("harvester")
         harvs = owned.get("harv", 0) + queued.get("harv", 0)
-        if isinstance(need, float) and need >= YES and "harv" in avail and harvs < MAX_HARV:
+        if isinstance(need, float) and need >= YES and "harv" in avail and harvs < MAX_HARV and not army_short:
             unit_wants.insert(0, ("harv", harvs + 1))
         need = adv("power")
         powrs = owned.get("powr", 0) + queued.get("powr", 0)
@@ -520,12 +575,31 @@ class RedAlertAgent:
                 wants.insert(0, (tower, owned.get(tower, 0) + queued.get(tower, 0) + 1))
         if stage in ("build_army", "defend_now"):
             army_first = True
+        if not owned.get("weap"):
+            # The opening is fixed: power, refinery, war factory. A plan that puts barracks or tech first
+            # cost 40-60 s of war factory (and so of harvesters) in live matches.
+            opening = [(self._resolve(i, faction, avail, owned), c) for i, c in OPENING]
+            rest = [w for w in wants if w[0] not in {i for i, _ in opening} | set(BARRACKS)]
+            wants = [*opening, *rest]
         if drained > provided and "powr" in avail:  # emergency power: really in low power
             wants.insert(0, ("powr", owned.get("powr", 0) + queued.get("powr", 0) + 1))
+
+        # Army floor (computed above): once the war factory is up, an army that lags the clock gets the money first.
+        essential: set[str] = {"powr", "weap", *BARRACKS}
+        if not owned.get("proc"):
+            essential.add("proc")
+        unlocks: set[str] = set()
+        for item, count in unit_wants:  # what unlocks a wanted unit is essential too (e.g. fix for heavy tanks)
+            if item not in avail:
+                unlocks.update(n for n in self._needs.get(item) or [] if not owned.get(n))
+        essential |= unlocks
+        if army_short:
+            army_first = True
 
         # Whoever has priority (structures, or units when army_first) sees the other side's commitments as free.
         free_s = max(0.0, cash - committed_s - (committed_u if army_first else 0.0))
         free_u = max(0.0, cash - committed_u - (0.0 if army_first else committed_s))
+        spent_s = 0.0  # structures ordered this decision
 
         # Structures: priority order; one per queue, pre-queued, within the spending budget.
         held: set[str] = set()  # queues where a higher-priority want is still waiting on a prerequisite
@@ -550,9 +624,13 @@ class RedAlertAgent:
                 continue  # a higher-priority want of this queue is waiting out its resend cooldown
             if q == "defense" and not owned.get("weap") and game_s < OPENING_S and not emergency:
                 continue  # towers must not compete with the opening for the war factory's 2,000
+            if army_short and item not in essential and q != "defense":
+                continue  # 2nd refinery, radar, tech: after the army has caught up with the clock
             rate = self.rate_of(item)
-            # Structures have priority over units unless the model said army_first.
-            if burn_struct + (burn_units if army_first else 0.0) + rate > budget and free_s < cost + CASH_MARGIN:
+            # Structures have priority over units unless army_first; what unlocks a wanted unit always does.
+            units_first = army_first and item not in unlocks
+            fs = free_s if units_first else max(0.0, cash - committed_s - spent_s)
+            if burn_struct + (burn_units if units_first else 0.0) + rate > budget and fs < cost + CASH_MARGIN:
                 continue
             if self._cooling(f"build:{item}"):
                 cooling.add(q)
@@ -561,6 +639,8 @@ class RedAlertAgent:
                 orders.append({"cmd": "build", "item": item})
                 entries.setdefault(q, []).append({"item": item, "ready": False, "progress": 0.0})
                 burn_struct += rate
+                spent_s += cost
+                queued[item] = queued.get(item, 0) + 1
                 free_s = max(0.0, free_s - cost)
                 if not army_first:
                     free_u = max(0.0, free_u - cost)
@@ -582,6 +662,8 @@ class RedAlertAgent:
             q = self.queue_of(item)
             if q in used or not unit_slot_free(item):
                 continue
+            if q == "infantry" and not owned.get("weap") and not fired:
+                continue  # before the war factory the barracks only trains the guard (below)
             unit_cost = max(1, self.cost_of(item))
             n = min(count - have, 3, max(1, int(spendable // unit_cost))) if q == "infantry" else 1
             cost = unit_cost * n
@@ -609,6 +691,34 @@ class RedAlertAgent:
             burn_units += rate
             trained = True
 
+        # Keep busy: a barracks or war factory with nothing queued is wasted. Once the plan's counts are met,
+        # keep training (the opponent that beat us never let its barracks idle).
+        waiting = any(short(i, c) and i in avail and i in essential and not queued.get(i) for i, c in wants)
+        if not saving_for and not waiting:  # an unfunded war factory / depot / barracks gets the money first
+            enemy_vehicles = sum(1 for e in enemies if self.queue_of(str(e.get("type")).lower()) == "vehicle")
+            enemy_infantry = sum(1 for e in enemies if self.queue_of(str(e.get("type")).lower()) == "infantry")
+            for q in ("infantry", "vehicle"):
+                if q in used or entries.get(q):
+                    continue
+                guard_left = EARLY_GUARD - sum(owned.get(i, 0) + queued.get(i, 0) for i in INFANTRY)
+                if not owned.get("weap") and guard_left <= 0:
+                    continue  # a guard, not an army: the war factory comes first
+                item = self._filler(q, avail, owned, plan, air_seen, enemy_vehicles > enemy_infantry)
+                if item is None or self._cooling(f"train:{item}"):
+                    continue
+                unit_cost = max(1, self.cost_of(item))
+                # Floating cash (or an army behind the clock) is what this spends; the plan's wants came first.
+                if spendable < unit_cost + (0 if army_short else CASH_MARGIN) or not self._fresh(f"train:{item}", TTL["train"]):
+                    continue
+                n = min(3, max(1, int(spendable // unit_cost))) if q == "infantry" else 1
+                if not owned.get("weap"):
+                    n = min(n, guard_left)
+                orders.append({"cmd": "train", "item": item, "count": n})
+                entries.setdefault(q, []).append({"item": item, "ready": False, "progress": 0.0})
+                spendable -= unit_cost * n
+                burn_units += self.rate_of(item)
+                trained = True
+
         orders += self._safe("scout", lambda: self._scout(units, legal, avail, entries, game_s, home, raw), [])
 
         unmet_structure = any(short(i, c) for i, c in wants)
@@ -628,7 +738,14 @@ class RedAlertAgent:
                 orders.append({"cmd": "repair", "building": b["id"], "on": True})
 
         idle_combat = [u for u in idle_combat if u not in self._scouts]  # a scout picked this tick is not a fighter
-        orders += self._army(plan, raw, obs, legal, units, adv, defend, forced_mode, idle_combat)
+        guard = None if plan.army_mode == "all_in" else self._safe(
+            "defend", lambda: self._defend(home, buildings, enemies, all_combat), None
+        )
+        if guard is None:
+            orders += self._army(plan, raw, obs, legal, units, adv, defend, forced_mode, idle_combat, army_value,
+                                 enemy_seen)
+        else:
+            orders += guard
 
         now = self._clock()
         self._diag_since = {d: self._diag_since.get(d, now) for d in diag}
@@ -653,15 +770,18 @@ class RedAlertAgent:
                 },
             )
 
+        self._decisions += 1
         if now - self._state_at >= 5.0:
-            self._state_at = now
+            rate = self._decisions / max(1e-6, now - self._state_at) if self._state_at else None
+            self._state_at, self._decisions = now, 0
             trace.write(
-                "state", tick=obs.get("tick"), cash=cash, power=[provided, drained], income=round(income, 1),
+                "state", tick=obs.get("tick"), cash=cash, ore=econ.get("ore"), ore_capacity=econ.get("resource_capacity"), power=[provided, drained], income=round(income, 1),
                 time=raw.get("time"), units=dict(owned), queue=[p.get("item") for p in production],
                 idle_combat=len(idle_combat), enemies=len(enemies), enemy_buildings=len(enemy_buildings),
                 military=obs.get("military"), plan_version=self.strategist.version,
                 jev=(advice.values if advice else None), reactions=[r.name for r in fired],
                 burn=[round(burn_struct, 1), round(burn_units, 1)], budget=round(budget, 1), scout=sorted(self._scouts),
+                decisions_per_s=round(rate, 2) if rate is not None else None, army_value=army_value,
             )
         if not orders:
             return WAIT
@@ -671,8 +791,24 @@ class RedAlertAgent:
             for o in batch
         ])
         self._last_sent = batch
-        summary = f"v{self.strategist.version} {plan.assessment}"[:480] if self.strategist.enabled else "default plan"
-        return WithReasoning({"type": "orders", "orders": batch}, summary)
+        return WithReasoning({"type": "orders", "orders": batch}, self._label(batch, guard is not None))
+
+    @staticmethod
+    def _label(batch: list[dict[str, Any]], defending: bool) -> str:
+        """A few words on what this batch does (shown to spectators); the plan's essay stays in the trace."""
+        if defending:
+            return "defending the base"
+        cmds = {o.get("cmd") for o in batch}
+        if cmds & {"attack_move", "attack"}:
+            return "attacking"
+        made = [str(o.get("item")) for o in batch if o.get("cmd") in ("build", "train")]
+        if made:
+            return "producing " + ", ".join(dict.fromkeys(made))
+        if "place" in cmds:
+            return "placing " + ", ".join(str(o.get("item")) for o in batch if o.get("cmd") == "place")
+        if "move" in cmds:
+            return "moving"
+        return str(next(iter(cmds), "orders"))
 
     # -- scouting ----------------------------------------------------------------
 
@@ -684,7 +820,7 @@ class RedAlertAgent:
         alive = {u["id"] for u in units if isinstance(u.get("id"), int)}
         self._scouts &= alive
         enemy = _cell(legal.get("enemy_base"))
-        if self._scouts or game_s < SCOUT_AT_S or enemy is None or home is None:
+        if self._scouts or self._scouts_sent >= SCOUT_MAX or game_s < SCOUT_AT_S or enemy is None or home is None:
             return []
         idle = set(legal.get("idle_units") or [])
         kinds = {u["id"]: str(u.get("type")).lower() for u in units if isinstance(u.get("id"), int)}
@@ -695,6 +831,7 @@ class RedAlertAgent:
                                       (raw.get("map") or {}).get("bounds"))
                     far = self._clamp(enemy, (raw.get("map") or {}).get("bounds"))
                     self._scouts.add(uid)
+                    self._scouts_sent += 1
                     trace.write("scout", unit=uid, unit_type=kind, via=mid, to=far, game_s=round(game_s))
                     return [
                         {"cmd": "move", "units": [uid], "to": mid},
@@ -706,7 +843,97 @@ class RedAlertAgent:
                 return [{"cmd": "train", "item": kind, "count": 1}]
         return []
 
+    def _choose_doctrine(self, plan: Plan, numbers: dict[str, Any], now: float) -> Plan:
+        """Jev's battle-plan pick (fresh, allowed, confident) or the rules' pick, with hysteresis; then apply it."""
+        pick = conf = answer_id = None
+        advice = self.advisor.current() if self.advisor.enabled else None
+        if advice is not None and "doctrine" in plan.jev_slots:
+            if self.advisor.now() - advice.at <= ADVICE_TTL_S:
+                pick, conf, answer_id = advice.values.get("doctrine"), advice.confidence.get("doctrine"), advice.at
+        rule = doctrines.fallback(numbers, self.doctrines.name)
+        before = self.doctrines.name
+        if not self.doctrines.since:
+            self.doctrines.since = now  # the dwell clock starts when the war factory does
+        if self.doctrines.update(now, pick, conf, rule, answer_id):
+            trace.write("doctrine", name=self.doctrines.name, was=before, source=self.doctrines.source,
+                        jev=pick, jev_confidence=conf, rules=rule, numbers=numbers)
+        return doctrines.apply(self.doctrines.doctrine, plan)
+
+    def _battle_summary(
+        self, obs: dict[str, Any], now: float, home: tuple[int, int] | None, legal: dict[str, Any],
+        idle: list[int], numbers: dict[str, Any],
+    ) -> dict[str, Any]:
+        out = self._safe("intel", lambda: self.intel.summary(
+            obs=obs, now=now, home=home, enemy_base=_cell(legal.get("enemy_base")), cost_of=self.cost_of,
+            idle=set(idle),
+        ), {})
+        out["key_numbers"] = numbers
+        self._battle = out
+        return out
+
+    def _filler(
+        self, q: str, avail: set[str], owned: dict[str, int], plan: Plan, air_seen: bool, vs_armor: bool,
+    ) -> str | None:
+        """What an idle barracks / war factory should train next when the plan's counts are already met."""
+        ok = [
+            i for i in avail
+            if self.queue_of(i) == q and i not in NON_COMBAT and (i not in AA_ONLY or air_seen)
+        ]
+        if not ok:
+            return None
+        if q == "infantry":
+            if vs_armor and "e3" in ok:
+                return "e3"  # rockets against tanks
+            mix = [i for i in ("e1", "e3") if i in ok]
+            if mix:  # roughly two riflemen per rocket soldier: cheap bodies plus anti-armour
+                return "e3" if "e3" in mix and owned.get("e3", 0) * 2 < owned.get("e1", 0) else mix[0]
+        for item, _ in plan.units:  # the plan's own unit choices first, in its order
+            if item in ok:
+                return item
+        for item in FILLER_VEHICLES:
+            if item in ok:
+                return item
+        return None
+
     # -- army --------------------------------------------------------------------
+
+    def _defend(
+        self, home: tuple[int, int] | None, buildings: list[dict[str, Any]], enemies: list[dict[str, Any]],
+        army: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        """Reflex: enemy units in the base pull every fighter onto them, re-aimed every 1.5 s.
+
+        ``None`` when the base is clear (the plan's army mode applies); a list (maybe empty while the
+        re-aim timer runs) while it is not, so nothing else moves the army away mid-fight.
+        """
+        if home is None or not army:
+            return None
+        spots = [c for c in (_cell(b) for b in buildings) if c]
+        intruders = [
+            c for c in (_cell(e) for e in enemies)
+            if c and (math.dist(c, home) <= DEFEND_RADIUS or any(math.dist(c, s) <= 10 for s in spots))
+        ]
+        if not intruders:
+            return None
+        # A raid of one or two (a scout, a lone harasser) is handled by whoever is home; a push recalls everyone.
+        fighters = [
+            u["id"] for u in army if u["id"] not in self._scouts
+            and (len(intruders) > 2 or (_cell(u) is not None and math.dist(_cell(u), home) <= 2 * DEFEND_RADIUS))
+        ]
+        if not fighters:
+            return None
+        out: list[dict[str, Any]] = []
+        fresh = [u for u in fighters if u not in self._stanced]
+        if fresh:
+            self._stanced.update(fresh[:20])
+            out.append({"cmd": "set_stance", "units": fresh[:20], "stance": "attack_anything"})
+        if self._fresh("defend", DEFEND_EVERY_S):
+            target = min(intruders, key=lambda c: math.dist(c, home))
+            self._gathered.clear()  # after the fight, hold mode regroups everyone
+            for i in range(0, min(len(fighters), 150), 50):
+                out.append({"cmd": "attack_move", "units": fighters[i:i + 50], "to": [int(target[0]), int(target[1])]})
+            trace.write("defend", intruders=len(intruders), fighters=len(fighters), to=list(target))
+        return out
 
     def _target(self, target: Any, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any]) -> list[int] | None:
         bounds = (raw.get("map") or {}).get("bounds")
@@ -743,7 +970,8 @@ class RedAlertAgent:
     def _army(
         self, plan: Plan, raw: dict[str, Any], obs: dict[str, Any], legal: dict[str, Any],
         units: list[dict[str, Any]], adv: Callable[[str], Any] = lambda slot: None, defend: bool = False,
-        forced_mode: str | None = None, idle_combat: list[int] | None = None,
+        forced_mode: str | None = None, idle_combat: list[int] | None = None, army_value: float = 0.0,
+        enemy_seen: float = 0.0,
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         if idle_combat is None:
@@ -764,6 +992,9 @@ class RedAlertAgent:
                     mode = "retreat"
                 elif posture in ("hold", "attack"):
                     mode = posture
+            if mode == "hold" and army_value >= ATTACK_VALUE and army_value >= 1.5 * enemy_seen \
+                    and forced_mode is None and not defend:
+                mode = "attack"  # a big army sitting at home is wasted: one match was lost with 8,800 of it idle
 
         bounds = (raw.get("map") or {}).get("bounds")
         home_cell = plan.gather or _cell(obs.get("base_center"))
@@ -804,6 +1035,16 @@ class RedAlertAgent:
                     out.append({"cmd": "attack_move", "units": fighters[i:i + 50], "to": target})
             return out
 
+        # Fighters already out in the field (a wave that took its target) keep going without waiting for a wave.
+        pos = {u.get("id"): _cell(u) for u in units}
+        home_c = _cell(obs.get("base_center"))
+        forward = [
+            u for u in idle_combat
+            if home_c and pos.get(u) and math.dist(pos[u], home_c) > FORWARD_RADIUS
+        ]
+        if forward and self._fresh("forward", 2.0):
+            out.append({"cmd": "attack_move", "units": forward[:50], "to": target})
+        idle_combat = [u for u in idle_combat if u not in forward]
         n = len(idle_combat)
         wave_ok = adv("wave")
         if isinstance(wave_ok, float):
@@ -811,6 +1052,8 @@ class RedAlertAgent:
             go = n >= max(3, plan.wave_min // 2) and (wave_ok >= WAVE_YES or n >= max(20, 2 * plan.wave_min))
         else:
             go = n >= plan.wave_min
+        if not go and army_value >= ATTACK_VALUE and n >= max(3, plan.wave_min // 2):
+            go = True  # big enough to attack: reinforcements join in groups
         if go:
             self._gathered.difference_update(idle_combat)
             out.append({"cmd": "attack_move", "units": idle_combat[:50], "to": target})
