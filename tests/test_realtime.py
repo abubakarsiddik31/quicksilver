@@ -237,7 +237,10 @@ def test_other_agent_errors_in_a_real_time_game_keep_the_usual_message():
         run_game(game, RED_ALERT, broken, sleep=lambda s: None)
 
 
-def test_the_real_placeholder_module_in_red_alert_says_plainly_it_cant_play_it():
+def test_the_real_placeholder_module_in_red_alert_says_plainly_it_cant_play_it(monkeypatch):
+    # With ENABLE_RED_ALERT set (as in a live .env) agent.agent dispatches to the real player; this
+    # test pins the unset case, where the entry point must fall back to the loud placeholder.
+    monkeypatch.delenv("ENABLE_RED_ALERT", raising=False)
     from agent.agent import create_agent
 
     game = RealtimeFakeGame(CONFIG).queue_state(ra_state(100))

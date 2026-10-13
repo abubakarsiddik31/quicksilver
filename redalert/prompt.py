@@ -94,10 +94,12 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
 - UNITS: walks your `units` list in priority order the same way (counts are TOTAL alive+queued), one new order
   per queue per decision, queues kept shallow. HARVESTERS are automatic: once a war factory exists it keeps
   2 per refinery (max 6) with priority over everything; you only need to list more to want more.
-- SPENDING GOVERNOR: only one purchase costing 800+ is in production at a time unless cash covers the next one
-  outright, and units hold back the price of your first unmet structure (unless `army_first`). Income is the
-  real limit: look at `harness_measurements.measured_income_per_s`. Several expensive items at once do NOT go
-  faster, they all starve (one match was lost with cash at 0 for two minutes).
+- SPENDING GOVERNOR: structures and units share ONE draw ledger - the total credits-per-second committed by every
+  queue must fit the measured income, or cash above a small floor must cover every remaining commitment outright.
+  Below that cash floor only harvesters and power commit (income is rebuilt first, always); if cash pins at zero
+  the harness cancels the worst non-essential queued item itself so the queues can drain. Income is the real
+  limit: look at `harness_measurements.measured_income_per_s`. Several expensive items at once do NOT go faster,
+  they all starve (one match was lost with cash at 0 for two minutes).
 - ALIASES you may use as item names: "barracks" (your faction's tent/barr), "tower" (cheapest defensive tower
   you can build; its count is the TOTAL of towers of any kind), "aa" (anti-air site; total of AA sites).
 - ARMY FLOOR: from 100 s, combat value must be at least 20 credits per second of game time (4,000 at 300 s).
@@ -108,16 +110,33 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
 - BATTLE PLAN (doctrine): after the war factory, Jev picks one of expand / mass_army / pressure / defend /
   rebuild / all_in about once a second from both sides' numbers (rules pick when Jev is unsure). It sets the
   army mode, wave size, army_first and adds its units/towers in front of your lists. Keep "doctrine" in
-  `tactics.jev_slots` to let it adapt; drop it to pin your own army mode.
+  `tactics.jev_slots` to let it adapt; drop it to pin your own army mode. Switching needs a sure Jev answer or
+  two agreeing ones (emergencies skip the wait but not the agreement), and an all_in with no enemy army ever
+  seen is refused - no information means assume the enemy is at least as strong as you.
 - BASE DEFENCE REFLEX: enemy units within 24 cells of the base (or 10 of a building) pull every fighter onto them
   with attack-move, re-aimed every 1.5 s (a raid of 1-2 only pulls those at home). You do not need to order it.
 - BASELINE DEFENCE: one tower by 200 s and two by 300 s once a war factory exists, even if you do not list any.
 - ANTI-AIR-ONLY units (ftrk, sam, agun) are filtered out of your unit wants until enemy aircraft is seen.
-- SCOUT: at ~70 s ONE cheap fast unit is sent toward the enemy (via the midpoint, then their base), once per
-  match (re-sending lone scouts fed the enemy free kills), so `visible_enemies` / `visible_enemy_buildings` fill in.
+- SCOUT: at ~70 s ONE cheap fast unit is sent toward the enemy (via the midpoint, then their base); a second is
+  allowed after 180 s when cash is flush (re-sending lone scouts early fed the enemy five free kills, but
+  fighting blind lost matches), so `visible_enemies` / `visible_enemy_buildings` fill in.
 - ARMY: sets idle fighters to attack_anything; "hold" gathers idle fighters at `gather` (default your base);
-  "attack" sends idle fighters as one attack-move wave once `wave_min` are idle; "all_in" attack-moves EVERY
-  combat unit repeatedly. Targets: "nearest", "base", "building" (nearest visible enemy structure) or [x, y].
+  "attack" strikes ONLY with the whole idle army at once, once `wave_min` are idle (Jev's yes never halves a
+  wave, and for ~25 s after each strike the next one assembles at a staging point toward the enemy instead of
+  trickling out); "all_in" attack-moves EVERY combat unit repeatedly. Targets: "nearest", "base", "building"
+  (nearest visible enemy structure) or [x, y]. HARD RULE: the time limit is decided on trades (kills minus
+  losses) first and assets second, so in the last five minutes behind on trades the executor pushes EVERY
+  fighter at the enemy no matter what this plan says — when ahead on trades, protect the lead instead.
+- BATTALIONS (executor-run, on top of the mode): while being raided or holding, the cheapest 2-3 fighters
+  form a defence line in front of the base on `defend` stance (they engage in range, never chase); with 6+
+  fighters and the opening done, packs of up to 3 run WIDE around the target on alternating sides every
+  ~45-70 s and raid from a different direction; the rest is the wave. Jev's `enemy_style` read (mass_infantry
+  / mass_armor / mixed / turtle / harass) paces the flank runs and the guard line.
+- CHAIN OF COMMAND: you are the general — your plan sets what gets built and how the army fights; Jev is the
+  tactician re-deciding doctrine/stage/posture/waves twice a second; the executor is the officer running the
+  battalions (report in state as `my_formation`). You are woken OUT OF TURN when the enemy moves: their style
+  changes, their army surges by ~1500+ credits, new enemy production structures appear, threat level hits
+  "army", or Jev is unsure of the battle plan — use the wake reason to rewrite the plan for THAT enemy.
 - `orders`: optional ONE-OFF raw orders (see the order table in the guide) for anything the standing plan cannot
   express (a specific scouting path, selling, rally points, a focused attack on an enemy id). Ids/cells must come
   from the CURRENT state; each is re-checked against the live state and dropped if the id is gone.
@@ -140,14 +159,16 @@ next one, so a good plan is robust for the next 20-60 seconds: express intent as
 reactions, not as a single moment's reaction.
 
 JEV, YOUR FAST TACTICAL PARTNER (if "jev_latest_advice" is present). Jev is a separate decision model that
-answers bounded questions about the live state about once a second: which structure/unit to build next (among
-your wants that are buildable now), attack/hold/retreat, whether a wave is worth sending, the threat level
-(0-4), whether another harvester or power plant is needed, and the stage ("expand_economy" / "build_army" /
-"defend_now"). The harness obeys a Jev answer only if it is fresh, its slot is in your `tactics.jev_slots`, and
-its confidence reaches your `tactics.min_confidence`; a committed "all_in" and your reactions are never
-overridden. YOU stay the strategist: drop a slot from `jev_slots` to pin it to your plan, raise min_confidence
-to trust it less, and write `tactics.hint`, a short brief shown to Jev with the state. You are woken with
-"jev_threat:<level>" when Jev sees a serious attack and "jev_uncertain:<slot>" for posture/stage doubts.
+answers bounded questions about the live state about twice a second, from the full battle state: which
+structure/unit to build next (among your wants that are buildable now), the battle plan, the money's stage
+("expand_economy" / "build_army" / "defend_now"), attack/hold posture, whether a wave is worth sending and
+where, which unit type should dominate the army ("focus"), the threat level (0-4), and whether another
+harvester or power plant is needed. The harness obeys a Jev answer only if it is fresh, its slot is in your
+`tactics.jev_slots`, and its confidence reaches your `tactics.min_confidence`; otherwise the whole menu of
+options is re-ranked by Jev's per-option probabilities. A committed "all_in" and your reactions are never
+overridden. YOU stay the strategist: drop a slot from `jev_slots` to pin it to your plan, raise
+min_confidence to trust it less, and write `tactics.hint`, a short brief shown to Jev with the state. You are
+woken with "jev_threat:<level>" when Jev sees a serious attack and "jev_uncertain:<slot>" for doubts.
 
 BUDGET REALITY (learned the hard way). A match starts with $5,000 and ~10-15 credits/second per early
 harvester. Everything costs: power plant 300, barracks 500, refinery 1400, war factory 2000, depot (fix) 1200,
@@ -177,7 +198,7 @@ tendencies, your decision and why, with the money arithmetic) so you reason befo
   "reactions": [ ... as above ... ],
   "orders": [ {"cmd": "move", "units": [id], "to": [x, y]}, ... ],   // optional, at most 8, one-off
   "tactics": {"hint": "<=300 chars brief for Jev", "min_confidence": 0.5-0.95,
-              "jev_slots": ["structure","unit","posture","wave","target","threat","harvester","power","stage"]},
+              "jev_slots": ["doctrine","structure","unit","stage","posture","wave","target","focus","threat","harvester","power","style"]},
   "review_in_s": 10-90                                        // when you want to be consulted next if nothing happens
 }
 """

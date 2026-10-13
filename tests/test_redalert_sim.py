@@ -31,7 +31,8 @@ def test_default_opening_is_fast_and_never_starves(faction):
     assert result["zero_cash_s"] <= 110, result  # lost match: ~170, with nothing to show for it
     assert result["tanks_at_330s"] >= 2, result  # lost match: 0
     assert 0 < result["first_defence_s"] <= 260, result  # lost match: never
-    assert result["placed"]["proc"] <= 80 and result["placed"]["fix"] <= 230, result
+    assert result["placed"]["proc"] <= 80 and result["placed"]["fix"] <= 240, result  # the second (baseline)
+    # refinery delays the depot a few seconds; tanks_at_330s is the number that shows the trade was worth it
 
 
 def test_the_same_run_is_deterministic():

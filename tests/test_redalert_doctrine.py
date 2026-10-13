@@ -45,11 +45,23 @@ def test_switching_has_hysteresis():
     assert not s.update(20.0, "expand", 0.6, "pressure", answer_id=3)
     assert not s.update(20.2, "expand", 0.6, "pressure", answer_id=3)  # the same answer read again at 5 Hz
     assert s.update(21.0, "expand", 0.6, "pressure", answer_id=4) and s.name == "expand"
-    # an emergency switches at once, dwell or not
-    assert s.update(22.0, "defend", 0.6, "expand", answer_id=5) and s.name == "defend"
+    # an emergency skips the dwell but not the agreement: a single 0.6 pick must not flip the economy
+    # (a lone 0.62 "defend" mid-opening once over-committed everything at once)
+    assert not s.update(22.0, "defend", 0.6, "expand", answer_id=5)
+    assert s.update(22.2, "defend", 0.6, "expand", answer_id=6) and s.name == "defend"
+    # a sure emergency switches on the first answer
+    assert s.update(30.0, "rebuild", 0.9, "defend", answer_id=7) and s.name == "rebuild"
     # an unsure Jev hands over to the rules, which must hold for 2 s
     assert not s.update(40.0, "all_in", 0.3, "mass_army")
     assert s.update(42.5, "all_in", 0.3, "mass_army") and s.name == "mass_army" and s.source == "rules"
+
+
+def test_all_in_needs_information_or_a_forced_clock():
+    assert not d.all_in_allowed(numbers(enemy_army_seen=0))  # blind: assume the enemy is at least as strong
+    assert d.all_in_allowed(numbers(enemy_army_seen=500))
+    assert d.all_in_allowed(numbers(enemy_army_seen=0, remaining_s=100, my_kills=0, my_losses=2000))
+    assert not d.all_in_allowed(numbers(enemy_army_seen=0, remaining_s=100, my_kills=5000, my_losses=0))
+    assert not d.all_in_allowed(numbers(enemy_army_seen=0, remaining_s=900))
 
 
 def cost(t):

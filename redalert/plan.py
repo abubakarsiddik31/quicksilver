@@ -22,7 +22,8 @@ from typing import Any
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
 # Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
-JEV_SLOTS = ("doctrine", "structure", "unit", "posture", "wave", "target", "threat", "harvester", "power", "stage")
+JEV_SLOTS = ("doctrine", "structure", "unit", "stage", "posture", "wave", "target", "focus", "threat",
+             "harvester", "power", "style")
 ITEM_RE = re.compile(r"^[a-z0-9_]{2,8}$")
 
 MAX_WANTS = 24
@@ -170,7 +171,7 @@ class Plan:
     gather: tuple[int, int] | None = None
     army_first: bool = False  # True: don't hold back cash for wanted structures
     orders: tuple[dict, ...] = ()  # one-off raw orders, run once per plan
-    review_in_s: int = 25  # when the model wants to be consulted again
+    review_in_s: int = 15  # when the model wants to be consulted again (clamped to 10-90)
     reactions: tuple[Reaction, ...] = DEFAULT_REACTIONS
     # Guidance for the fast tactical model (Jev): a short strategic brief that is
     # added to its state, how sure it must be to be obeyed, and which slots it may drive.
@@ -203,11 +204,13 @@ class Plan:
 
 # The opening every plan starts from until the model's first answer lands, and
 # the fallback when no model is configured. "barracks" resolves to this
-# faction's tent (Allies) or barr (Soviets).
+# faction's tent (Allies) or barr (Soviets). A second refinery is baseline: one
+# refinery caps income near one harvester's worth, and the match we won on a
+# second refinery out-earned the one we lost on a single one three to one.
 DEFAULT_PLAN = Plan(
     assessment="default opening: power, refinery, war factory, barracks; harvesters; cheap defence; then army",
     buildings=(
-        ("powr", 1), ("proc", 1), ("weap", 1), ("barracks", 1), ("powr", 2), ("fix", 1),
+        ("powr", 1), ("proc", 1), ("weap", 1), ("barracks", 1), ("powr", 2), ("proc", 2), ("fix", 1),
     ),
     units=(
         ("harv", 3), ("e3", 4), ("e1", 3), ("1tnk", 4), ("3tnk", 8), ("2tnk", 4), ("e3", 8), ("e1", 6),

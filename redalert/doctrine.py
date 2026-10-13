@@ -85,7 +85,9 @@ DOCTRINES: dict[str, Doctrine] = {d.name: d for d in (
     Doctrine(
         "all_in",
         "All in: my_army_vs_enemy_seen is 2.5 or more, or remaining_s is under 150 and "
-        "kills_value_minus_losses_value is not positive; send every unit at the enemy's buildings.",
+        "kills_value_minus_losses_value is not positive; send every unit at the enemy's buildings. Never on no "
+        "information: the enemy army must actually have been seen (or the clock must force it) - on no "
+        "information assume the enemy is at least as strong as mine.",
         army_mode="all_in", wave_min=3, army_first=True, target="building",
     ),
 )}
@@ -155,6 +157,21 @@ def fallback(b: dict[str, Any], current: str = DEFAULT) -> str:
     return "mass_army"
 
 
+def all_in_allowed(b: dict[str, Any]) -> bool:
+    """True when an all-in is informed: the enemy army was seen, or the clock leaves no choice.
+
+    A blind all-in (nothing seen since the scout died) is how a whole army dies into an unseen
+    defence line: on no information the enemy is assumed at least as strong as we are.
+    """
+    seen = b.get("enemy_army_value_seen_last_90s", 0)
+    if isinstance(seen, (int, float)) and seen > 0:
+        return True
+    remaining = b.get("remaining_s")
+    forced = isinstance(remaining, (int, float)) and remaining < 150 \
+        and b.get("kills_value_minus_losses_value", 0) <= 0
+    return bool(forced)
+
+
 class DoctrineState:
     """The doctrine in force, switched with hysteresis."""
 
@@ -175,7 +192,10 @@ class DoctrineState:
         """Fold in this decision's evidence; True when the doctrine changed.
 
         Called at 5 Hz while Jev answers about once a second, so "picked twice" means two different Jev
-        answers (``answer_id``); a rules pick must instead hold for ``RULE_CONFIRM_S``.
+        answers (``answer_id``); a rules pick must instead hold for ``RULE_CONFIRM_S``. Only a sure pick
+        (``SWITCH_NOW_CONFIDENCE``) switches on one answer. An emergency (``defend``/``rebuild``) waives the
+        dwell clock but still needs that sureness or a second confirming answer: a single 0.6-confidence
+        "defend" mid-opening once flipped the whole economy into an over-commit it never recovered from.
         """
         if jev_pick in DOCTRINES and jev_conf is not None and jev_conf >= SWITCH_CONFIDENCE:
             pick, source, sure = jev_pick, "jev", jev_conf >= SWITCH_NOW_CONFIDENCE
@@ -185,9 +205,8 @@ class DoctrineState:
             self._pending = None
             self.source = source
             return False
-        emergency = pick in EMERGENCY
-        if not emergency and now - self.since < MIN_DWELL_S:
-            return False
+        if pick not in EMERGENCY and now - self.since < MIN_DWELL_S:
+            return False  # emergencies waive the dwell, never the confirmation below
         confirmed = False
         if self._pending and self._pending[0] == pick:
             _, first, last_id = self._pending
@@ -196,7 +215,7 @@ class DoctrineState:
             self._pending = (pick, first, answer_id if answer_id is not None else last_id)
         else:
             self._pending = (pick, now, answer_id)
-        if not (sure or emergency or confirmed):
+        if not (sure or confirmed):
             return False
         self.name, self.since, self._pending, self.source = pick, now, None, source
         return True
