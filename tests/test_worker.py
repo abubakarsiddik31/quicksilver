@@ -148,7 +148,7 @@ def test_run_worker_match_scoped_errors_return_match_failure_and_close_client(er
         WORKER_INPUT,
         client_factory=lambda: fake_client,
         match_factory=lambda data, *, client: "fake-match",
-        agent_module=make_agent_module(create_agent=lambda: (lambda s, c: 0)),
+        agent_module=make_agent_module(create_agent=lambda: lambda s, c: 0),
         run_match_fn=run_match_fn,
     )
 
@@ -170,7 +170,7 @@ def test_run_worker_unexpected_exception_returns_unexpected_and_closes_client():
         WORKER_INPUT,
         client_factory=lambda: fake_client,
         match_factory=lambda data, *, client: "fake-match",
-        agent_module=make_agent_module(create_agent=lambda: (lambda s, c: 0)),
+        agent_module=make_agent_module(create_agent=lambda: lambda s, c: 0),
         run_match_fn=run_match_fn,
     )
 
@@ -188,7 +188,7 @@ def test_run_worker_keyboard_interrupt_exits_cleanly_as_success():
         WORKER_INPUT,
         client_factory=lambda: fake_client,
         match_factory=lambda data, *, client: "fake-match",
-        agent_module=make_agent_module(create_agent=lambda: (lambda s, c: 0)),
+        agent_module=make_agent_module(create_agent=lambda: lambda s, c: 0),
         run_match_fn=run_match_fn,
     )
 
@@ -253,14 +253,18 @@ def test_two_worker_invocations_get_distinct_contestant_instances():
         return run_match_fn
 
     run_worker(
-        WorkerInput(session_id="s-1", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1"),
+        WorkerInput(
+            session_id="s-1", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1"
+        ),
         client_factory=lambda: FakeClient(),
         match_factory=lambda data, *, client: "fake-match",
         agent_module=make_agent_module(create_agent=create_agent),
         run_match_fn=make_run_match_fn("s-1"),
     )
     run_worker(
-        WorkerInput(session_id="s-2", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1"),
+        WorkerInput(
+            session_id="s-2", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1"
+        ),
         client_factory=lambda: FakeClient(),
         match_factory=lambda data, *, client: "fake-match",
         agent_module=make_agent_module(create_agent=create_agent),

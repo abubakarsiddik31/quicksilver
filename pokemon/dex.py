@@ -19,7 +19,7 @@ Everything is lazy and cached: importing this module reads no JSON.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -30,13 +30,28 @@ _TAKEN_MULTIPLIER = {0: 1.0, 1: 2.0, 2: 0.5, 3: 0.0}
 
 # The 18 types, in the game's own display order.
 ALL_TYPES: tuple[str, ...] = (
-    "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost",
-    "Steel", "Fire", "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon",
-    "Dark", "Fairy",
+    "Normal",
+    "Fighting",
+    "Flying",
+    "Poison",
+    "Ground",
+    "Rock",
+    "Bug",
+    "Ghost",
+    "Steel",
+    "Fire",
+    "Water",
+    "Grass",
+    "Electric",
+    "Psychic",
+    "Ice",
+    "Dragon",
+    "Dark",
+    "Fairy",
 )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load(name: str) -> dict:
     try:
         text = (DATA_DIR / f"{name}.json").read_text(encoding="utf-8")
@@ -75,8 +90,53 @@ def to_id(name: Any) -> str:
 # -- species ----------------------------------------------------------------
 
 
+# Species and moves the vendored Showdown data lacks (a new release, a new form),
+# learned from the live observation. The vendored data always wins.
+_LEARNED_SPECIES: dict[str, dict] = {}
+_LEARNED_MOVES: dict[str, dict] = {}
+
+
+def learn_species(name: Any, *, types: Any, base_stats: Any) -> None:
+    key = to_id(name)
+    if not key or key in pokedex() or key in _LEARNED_SPECIES:
+        return
+    if (
+        isinstance(types, list)
+        and types
+        and all(isinstance(t, str) for t in types)
+        and isinstance(base_stats, dict)
+        and all(
+            isinstance(base_stats.get(k), int) for k in ("hp", "atk", "def", "spa", "spd", "spe")
+        )
+    ):
+        _LEARNED_SPECIES[key] = {"name": name, "types": list(types), "baseStats": dict(base_stats)}
+
+
+def learn_move(entry: dict) -> None:
+    key = to_id(entry.get("id") or entry.get("move_id") or entry.get("name"))
+    if not key or key in moves() or key in _LEARNED_MOVES:
+        return
+    category, mtype = entry.get("category"), entry.get("type")
+    power = entry.get("base_power", entry.get("basePower"))
+    if category not in ("Physical", "Special", "Status") or not isinstance(mtype, str):
+        return
+    accuracy = entry.get("accuracy")
+    _LEARNED_MOVES[key] = {
+        "name": entry.get("name") or key,
+        "type": mtype,
+        "category": category,
+        "basePower": power if isinstance(power, int) and not isinstance(power, bool) else 0,
+        "accuracy": accuracy
+        if isinstance(accuracy, (int, float)) and not isinstance(accuracy, bool) and accuracy > 0
+        else True,
+        "priority": entry.get("priority") if isinstance(entry.get("priority"), int) else 0,
+        "target": entry.get("target") if isinstance(entry.get("target"), str) else "normal",
+    }
+
+
 def species(name: Any) -> dict | None:
-    entry = pokedex().get(to_id(name))
+    key = to_id(name)
+    entry = pokedex().get(key) or _LEARNED_SPECIES.get(key)
     return entry if isinstance(entry, dict) else None
 
 
@@ -108,7 +168,8 @@ def abilities_of(name: Any) -> tuple[str, ...]:
 
 
 def move(name: Any) -> dict | None:
-    entry = moves().get(to_id(name))
+    key = to_id(name)
+    entry = moves().get(key) or _LEARNED_MOVES.get(key)
     return entry if isinstance(entry, dict) else None
 
 
@@ -187,3 +248,60 @@ def nature_multiplier(nature_name: Any, stat: str) -> float:
     if entry.get("minus") == stat:
         return 0.9
     return 1.0
+
+
+def move_accuracy(name: Any) -> float:
+    """Hit chance in ``[0, 1]``; moves that never miss report ``True`` upstream."""
+    value = (move(name) or {}).get("accuracy")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 1.0
+    return max(0.0, min(1.0, value / 100.0))
+
+
+_GENERIC: dict[tuple[str, str], str | None] = {}
+
+
+def generic_move(move_type: str, category: str) -> str | None:
+    """A representative ~90-power move of this type and category.
+
+    Used to estimate the threat of a foe whose real moves we cannot see: a
+    plain, accurate, single-target attack with no recoil or recharge.
+    """
+    key = (move_type, category)
+    if key not in _GENERIC:
+        best: tuple[int, str] | None = None
+        for move_id, entry in moves().items():
+            if (
+                not isinstance(entry, dict)
+                or entry.get("isNonstandard")
+                or entry.get("type") != move_type
+            ):
+                continue
+            power = entry.get("basePower")
+            if (
+                entry.get("category") != category
+                or not isinstance(power, int)
+                or not 80 <= power <= 95
+                or entry.get("accuracy") is not True
+                and entry.get("accuracy") != 100
+                or entry.get("target") != "normal"
+                or entry.get("priority", 0) != 0
+                or any(
+                    entry.get(f)
+                    for f in (
+                        "recoil",
+                        "selfdestruct",
+                        "self",
+                        "multihit",
+                        "drain",
+                        "willCrit",
+                        "ohko",
+                    )
+                )
+                or any(f in (entry.get("flags") or {}) for f in ("recharge", "charge"))
+            ):
+                continue
+            if best is None or (abs(power - 90), move_id) < best:
+                best = (abs(power - 90), move_id)
+        _GENERIC[key] = best[1] if best else None
+    return _GENERIC[key]

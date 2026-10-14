@@ -72,7 +72,9 @@ def test_status_moves_receive_competitive_scores():
     score_t1, _ = battle.move_score("Tailwind", attacker=active, defenders=[], targets=[0], turn=1)
     assert score_t1 == 42.0
 
-    score_reflect, _ = battle.move_score("Reflect", attacker=active, defenders=[], targets=[0], turn=1)
+    score_reflect, _ = battle.move_score(
+        "Reflect", attacker=active, defenders=[], targets=[0], turn=1
+    )
     assert score_reflect == 32.0
 
 
@@ -121,6 +123,10 @@ def test_overkill_avoids_redundant_double_targeting():
 
 def test_draft_archetype_bonus():
     """Incineroar and speed control (Talonflame) receive archetype bonuses."""
-    card_incineroar = {"species": "Incineroar", "card_id": "vgc-incineroar", "stats": {"hp": 95, "atk": 115, "def": 90, "spa": 80, "spd": 90, "spe": 60}}
+    card_incineroar = {
+        "species": "Incineroar",
+        "card_id": "vgc-incineroar",
+        "stats": {"hp": 95, "atk": 115, "def": 90, "spa": 80, "spd": 90, "spe": 60},
+    }
     bonus = draft.archetype_bonus(card_incineroar, [])
     assert bonus >= 3.0

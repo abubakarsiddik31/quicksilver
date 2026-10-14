@@ -127,20 +127,21 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 # Allow running this script directly without having pip-installed the project.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import httpx  # noqa: E402
+from _agent_file_swap import AgentFileSwapError, restore_real_agent, temporary_agent  # noqa: E402
 
 from altruagent.client import AltruAgentClient  # noqa: E402
 
-from _agent_file_swap import AgentFileSwapError, restore_real_agent, temporary_agent  # noqa: E402
-
-NUM_ROUNDS = 3  # small on purpose — bounds how many messaging<->moving cycles this test waits through
+NUM_ROUNDS = (
+    3  # small on purpose — bounds how many messaging<->moving cycles this test waits through
+)
 HTTP_TIMEOUT_SECONDS = 10.0
 COMPETITION_POLL_TIMEOUT_SECONDS = 60.0
 COMPETITION_POLL_INTERVAL_SECONDS = 3.0
@@ -152,7 +153,7 @@ SUBPROCESS_TERMINATE_TIMEOUT_SECONDS = 10.0
 EXAMPLES_DIR = REPO_ROOT / "examples"
 
 SCENARIOS = {
-    "default": EXAMPLES_DIR / "basic_agent.py",       # no choose_message -> auto-terminate
+    "default": EXAMPLES_DIR / "basic_agent.py",  # no choose_message -> auto-terminate
     "messaging": EXAMPLES_DIR / "messaging_agent.py",  # real SendMessage flow
 }
 
@@ -193,7 +194,10 @@ def signup_temporary_agent(http: httpx.Client, control_url: str) -> tuple[str, s
     name = f"acceptance-test-{uuid.uuid4().hex[:10]}"
     response = http.post(
         f"{control_url}/auth/agent/signup",
-        json={"name": name, "description": "Milestone 5 acceptance-test opponent (safe to ignore/delete)"},
+        json={
+            "name": name,
+            "description": "Milestone 5 acceptance-test opponent (safe to ignore/delete)",
+        },
     )
     body = _json_or_fail(response, "temporary agent signup")
     api_key = body.get("api_key")
@@ -203,7 +207,9 @@ def signup_temporary_agent(http: httpx.Client, control_url: str) -> tuple[str, s
     return name, api_key, claim_token
 
 
-def claim_temporary_agent(http: httpx.Client, control_url: str, claim_token: str, human_token: str) -> None:
+def claim_temporary_agent(
+    http: httpx.Client, control_url: str, claim_token: str, human_token: str
+) -> None:
     response = http.post(
         f"{control_url}/auth/human/claim",
         json={"claim_token": claim_token},
@@ -351,7 +357,10 @@ def run_scenario(
         with temporary_agent(SCENARIOS[scenario].read_text(encoding="utf-8")):
             processes: list[subprocess.Popen] = []
             try:
-                for label, api_key in (("primary", primary_api_key), ("opponent", opponent_api_key)):
+                for label, api_key in (
+                    ("primary", primary_api_key),
+                    ("opponent", opponent_api_key),
+                ):
                     env = {
                         **os.environ,
                         "ALTRUAGENT_CONTROL_URL": control_url,
@@ -384,11 +393,15 @@ def run_scenario(
                 control_url_client = httpx.Client(timeout=HTTP_TIMEOUT_SECONDS)
                 try:
                     wait_for_completed(
-                        lambda: control_url_client.get(f"{control_url}/competitions/{session_id}").json()
+                        lambda: control_url_client.get(
+                            f"{control_url}/competitions/{session_id}"
+                        ).json()
                     )
                 finally:
                     control_url_client.close()
-                _checkpoint(f"scenario {scenario!r} match completed via real python -m agent subprocesses")
+                _checkpoint(
+                    f"scenario {scenario!r} match completed via real python -m agent subprocesses"
+                )
             finally:
                 for process in processes:
                     if process.poll() is None:
@@ -417,7 +430,8 @@ def _find_current_actor(clients: list[AltruAgentClient], *, session_id: str, gam
     from altruagent.mcp_game import MCPGameSession  # local import: only needed here
 
     sessions: list[MCPGameSession] = [
-        client.mcp_game(session_id=session_id, game_server_url=game_server_url) for client in clients
+        client.mcp_game(session_id=session_id, game_server_url=game_server_url)
+        for client in clients
     ]
     deadline = time.monotonic() + CURRENT_ACTOR_POLL_TIMEOUT_SECONDS
     while True:
@@ -433,14 +447,18 @@ def _find_current_actor(clients: list[AltruAgentClient], *, session_id: str, gam
         time.sleep(CURRENT_ACTOR_POLL_INTERVAL_SECONDS)
 
 
-def run_tic_tac_toe_mcp_check(primary: AltruAgentClient, control_url: str, human_token: str) -> None:
+def run_tic_tac_toe_mcp_check(
+    primary: AltruAgentClient, control_url: str, human_token: str
+) -> None:
     print("\n=== MCP check A: tic_tac_toe ===")
     http = httpx.Client(timeout=HTTP_TIMEOUT_SECONDS)
     opponent_client = None
     try:
         _, opponent_api_key, claim_token = signup_temporary_agent(http, control_url)
         claim_temporary_agent(http, control_url, claim_token, human_token)
-        opponent_client = AltruAgentClient(control_url=control_url, api_key=opponent_api_key, load_env_file=False)
+        opponent_client = AltruAgentClient(
+            control_url=control_url, api_key=opponent_api_key, load_env_file=False
+        )
         _checkpoint("temporary tic_tac_toe opponent signed up and claimed")
 
         session_id = create_plain_competition(
@@ -448,7 +466,9 @@ def run_tic_tac_toe_mcp_check(primary: AltruAgentClient, control_url: str, human
         )
         join_competition(primary, session_id)
         join_competition(opponent_client, session_id)
-        competition = wait_for_in_progress(lambda: http.get(f"{control_url}/competitions/{session_id}").json())
+        competition = wait_for_in_progress(
+            lambda: http.get(f"{control_url}/competitions/{session_id}").json()
+        )
         game_server_url = competition["game_server_url"]
         _checkpoint(f"tic_tac_toe competition in_progress (session_id={session_id})")
 
@@ -466,14 +486,18 @@ def run_tic_tac_toe_mcp_check(primary: AltruAgentClient, control_url: str, human
         _checkpoint(f"MCP get_legal_actions: {[a.action_id for a in actions]}")
 
         state_version_before = legal["state_version"]
-        play_result = mover_session.play_action(action_id=actions[0].action_id, state_version=state_version_before)
+        play_result = mover_session.play_action(
+            action_id=actions[0].action_id, state_version=state_version_before
+        )
         state_version_after = play_result["state_version"]
         if state_version_after <= state_version_before:
             _fail(
                 f"state_version did not advance after play_action "
                 f"({state_version_before} -> {state_version_after})."
             )
-        _checkpoint(f"MCP play_action: state_version {state_version_before} -> {state_version_after}")
+        _checkpoint(
+            f"MCP play_action: state_version {state_version_before} -> {state_version_after}"
+        )
 
         # Bounded cleanup: resign rather than play out a full match — this
         # check's job is proving the MCP wire mechanics, not a real game.
@@ -494,7 +518,9 @@ def run_avalon_mcp_check(primary: AltruAgentClient, control_url: str, human_toke
         for _ in range(4):
             _, api_key, claim_token = signup_temporary_agent(http, control_url)
             claim_temporary_agent(http, control_url, claim_token, human_token)
-            opponent_clients.append(AltruAgentClient(control_url=control_url, api_key=api_key, load_env_file=False))
+            opponent_clients.append(
+                AltruAgentClient(control_url=control_url, api_key=api_key, load_env_file=False)
+            )
         _checkpoint("4 temporary avalon participants signed up and claimed")
 
         session_id = create_plain_competition(
@@ -503,7 +529,9 @@ def run_avalon_mcp_check(primary: AltruAgentClient, control_url: str, human_toke
         all_clients = [primary, *opponent_clients]
         for client in all_clients:
             join_competition(client, session_id)
-        competition = wait_for_in_progress(lambda: http.get(f"{control_url}/competitions/{session_id}").json())
+        competition = wait_for_in_progress(
+            lambda: http.get(f"{control_url}/competitions/{session_id}").json()
+        )
         game_server_url = competition["game_server_url"]
         _checkpoint(f"avalon competition in_progress (session_id={session_id})")
 
@@ -517,7 +545,9 @@ def run_avalon_mcp_check(primary: AltruAgentClient, control_url: str, human_toke
             _fail("get_legal_actions returned no actions for the current actor.")
         state_version_before = legal["state_version"]
         action_id = legal["actions"][0]["action_id"]
-        play_result = mover_session.play_action(action_id=action_id, state_version=state_version_before)
+        play_result = mover_session.play_action(
+            action_id=action_id, state_version=state_version_before
+        )
         state_version_after = play_result["state_version"]
         if state_version_after <= state_version_before:
             _fail(
@@ -546,7 +576,9 @@ def run_pokemon_mcp_check(primary: AltruAgentClient, control_url: str, human_tok
     try:
         _, opponent_api_key, claim_token = signup_temporary_agent(http, control_url)
         claim_temporary_agent(http, control_url, claim_token, human_token)
-        opponent_client = AltruAgentClient(control_url=control_url, api_key=opponent_api_key, load_env_file=False)
+        opponent_client = AltruAgentClient(
+            control_url=control_url, api_key=opponent_api_key, load_env_file=False
+        )
         _checkpoint("temporary pokemon opponent signed up and claimed")
 
         session_id = create_plain_competition(
@@ -554,14 +586,18 @@ def run_pokemon_mcp_check(primary: AltruAgentClient, control_url: str, human_tok
         )
         join_competition(primary, session_id)
         join_competition(opponent_client, session_id)
-        competition = wait_for_in_progress(lambda: http.get(f"{control_url}/competitions/{session_id}").json())
+        competition = wait_for_in_progress(
+            lambda: http.get(f"{control_url}/competitions/{session_id}").json()
+        )
         game_server_url = competition["game_server_url"]
         _checkpoint(f"pokemon_gen9ou_draft competition in_progress (session_id={session_id})")
 
         mover_session, state = _find_current_actor(
             [primary, opponent_client], session_id=session_id, game_server_url=game_server_url
         )
-        _checkpoint(f"MCP get_game_state: is_current_actor found, phase={state.phase!r} (expected 'draft')")
+        _checkpoint(
+            f"MCP get_game_state: is_current_actor found, phase={state.phase!r} (expected 'draft')"
+        )
 
         legal = mover_session.get_legal_actions()
         if not legal.get("actions"):
@@ -572,14 +608,18 @@ def run_pokemon_mcp_check(primary: AltruAgentClient, control_url: str, human_tok
         _checkpoint(f"MCP get_legal_actions: structured action_id confirmed ({action_id!r})")
 
         state_version_before = legal["state_version"]
-        play_result = mover_session.play_action(action_id=action_id, state_version=state_version_before)
+        play_result = mover_session.play_action(
+            action_id=action_id, state_version=state_version_before
+        )
         state_version_after = play_result["state_version"]
         if state_version_after <= state_version_before:
             _fail(
                 f"state_version did not advance after play_action "
                 f"({state_version_before} -> {state_version_after})."
             )
-        _checkpoint(f"MCP play_action: state_version {state_version_before} -> {state_version_after}")
+        _checkpoint(
+            f"MCP play_action: state_version {state_version_before} -> {state_version_after}"
+        )
 
         print(
             "\n[ENVIRONMENT BLOCKER] Not attempting a full Pokemon battle "
@@ -598,7 +638,9 @@ def run_pokemon_mcp_check(primary: AltruAgentClient, control_url: str, human_tok
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--mcp",
         action="store_true",
@@ -634,7 +676,9 @@ def main() -> int:
             run_tic_tac_toe_mcp_check(primary, control_url, human_token)
             run_avalon_mcp_check(primary, control_url, human_token)
             run_pokemon_mcp_check(primary, control_url, human_token)
-            print("\nMILESTONE 6 MCP ACCEPTANCE CHECKS PASSED (A, C, D — see B above for repeated_pd)")
+            print(
+                "\nMILESTONE 6 MCP ACCEPTANCE CHECKS PASSED (A, C, D — see B above for repeated_pd)"
+            )
             print(
                 "NOTE: check B (repeated_pd, incl. messaging) is proven by running this "
                 "script WITHOUT --mcp — those scenarios already exercise MCP unconditionally "

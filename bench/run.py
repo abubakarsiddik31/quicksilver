@@ -40,7 +40,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -102,7 +102,7 @@ class Candidate:
     default_model: str
     aliases: tuple[str, ...] = ()
     json_mode: str = "json_schema"  # json_schema | json_object | none
-    price_in: float | None = None   # USD per 1M input tokens
+    price_in: float | None = None  # USD per 1M input tokens
     price_out: float | None = None  # USD per 1M output tokens
     notes: str = ""
 
@@ -254,21 +254,25 @@ def merge_candidate_specs(base: list[Candidate], specs: list[dict]) -> list[Cand
                 current, **{k: v for k, v in overrides.items() if v is not None}
             )
         else:
-            missing = [k for k in ("prefix", "default_base_url", "default_model") if not overrides.get(k)]
+            missing = [
+                k for k in ("prefix", "default_base_url", "default_model") if not overrides.get(k)
+            ]
             if missing:
                 raise SystemExit(f"new candidate {candidate_id!r} needs {', '.join(missing)}")
-            merged.append(Candidate(
-                id=candidate_id,
-                label=overrides["label"] or candidate_id,
-                prefix=overrides["prefix"],
-                default_base_url=overrides["default_base_url"],
-                default_model=overrides["default_model"],
-                aliases=overrides["aliases"] or (),
-                json_mode=overrides["json_mode"] or "json_schema",
-                price_in=overrides["price_in"],
-                price_out=overrides["price_out"],
-                notes=overrides["notes"] or "",
-            ))
+            merged.append(
+                Candidate(
+                    id=candidate_id,
+                    label=overrides["label"] or candidate_id,
+                    prefix=overrides["prefix"],
+                    default_base_url=overrides["default_base_url"],
+                    default_model=overrides["default_model"],
+                    aliases=overrides["aliases"] or (),
+                    json_mode=overrides["json_mode"] or "json_schema",
+                    price_in=overrides["price_in"],
+                    price_out=overrides["price_out"],
+                    notes=overrides["notes"] or "",
+                )
+            )
     return merged
 
 
@@ -309,8 +313,13 @@ def _format_message(message: dict) -> str:
     return ""
 
 
-def classify_refusal(payload: bench_payloads.Payload, parsed: Any, raw_text: str,
-                     api_refusal: Any, finish_reason: Any) -> tuple[bool, str]:
+def classify_refusal(
+    payload: bench_payloads.Payload,
+    parsed: Any,
+    raw_text: str,
+    api_refusal: Any,
+    finish_reason: Any,
+) -> tuple[bool, str]:
     """Whether a reply is a refusal *of the task* (not in-character pushback).
 
     A Werewolf chat message that declines the injection ("I won't hand over my
@@ -396,12 +405,18 @@ def run_trial(
         try:
             response = client.post("/chat/completions", json=body, timeout=timeout)
         except httpx.TimeoutException as exc:
-            record.update(status="timeout", latency_seconds=time.perf_counter() - started,
-                          error=f"{type(exc).__name__} after {timeout:g}s")
+            record.update(
+                status="timeout",
+                latency_seconds=time.perf_counter() - started,
+                error=f"{type(exc).__name__} after {timeout:g}s",
+            )
             return record
         except httpx.HTTPError as exc:
-            record.update(status="network_error", latency_seconds=time.perf_counter() - started,
-                          error=_redact(f"{type(exc).__name__}: {exc}"))
+            record.update(
+                status="network_error",
+                latency_seconds=time.perf_counter() - started,
+                error=_redact(f"{type(exc).__name__}: {exc}"),
+            )
             return record
 
         record["http_status"] = response.status_code
@@ -426,7 +441,9 @@ def run_trial(
     try:
         data = response.json()
     except ValueError:
-        record.update(status="ok", error="response body was not JSON", reason="response body was not JSON")
+        record.update(
+            status="ok", error="response body was not JSON", reason="response body was not JSON"
+        )
         return record
 
     choices = data.get("choices") or []
@@ -454,7 +471,9 @@ def run_trial(
         else:
             record["parsed"] = parsed
             if not isinstance(parsed, dict):
-                parse_problem = f"the reply was valid JSON but not an object ({type(parsed).__name__})"
+                parse_problem = (
+                    f"the reply was valid JSON but not an object ({type(parsed).__name__})"
+                )
                 parsed = None
 
     if parsed is None:
@@ -463,7 +482,9 @@ def run_trial(
         try:
             verdict = payload.check(parsed)
         except Exception as exc:  # a checker bug must not drop the trial
-            verdict = bench_payloads.Check(False, False, f"checker error: {type(exc).__name__}: {exc}")
+            verdict = bench_payloads.Check(
+                False, False, f"checker error: {type(exc).__name__}: {exc}"
+            )
 
     refused, refusal_note = classify_refusal(
         payload, record["parsed"], content, message.get("refusal"), finish_reason
@@ -486,7 +507,11 @@ def _response_format(json_mode: str, payload: bench_payloads.Payload) -> dict:
         return {
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": payload.decision, "strict": True, "schema": payload.response_schema},
+                "json_schema": {
+                    "name": payload.decision,
+                    "strict": True,
+                    "schema": payload.response_schema,
+                },
             }
         }
     if json_mode == "json_object":
@@ -543,17 +568,25 @@ def run_warmup(client: httpx.Client, resolved: ResolvedCandidate, *, timeout: fl
     try:
         response = client.post("/chat/completions", json=body, timeout=min(timeout, 30.0))
     except httpx.TimeoutException as exc:
-        record.update(status="timeout", latency_seconds=time.perf_counter() - started,
-                      error=f"{type(exc).__name__}")
+        record.update(
+            status="timeout",
+            latency_seconds=time.perf_counter() - started,
+            error=f"{type(exc).__name__}",
+        )
         return record
     except httpx.HTTPError as exc:
-        record.update(status="network_error", latency_seconds=time.perf_counter() - started,
-                      error=f"{type(exc).__name__}")
+        record.update(
+            status="network_error",
+            latency_seconds=time.perf_counter() - started,
+            error=f"{type(exc).__name__}",
+        )
         return record
     record["latency_seconds"] = time.perf_counter() - started
     record["http_status"] = response.status_code
     if response.status_code != 200:
-        record.update(status="http_error", error=f"HTTP {response.status_code}: {_short_body(response)}")
+        record.update(
+            status="http_error", error=f"HTTP {response.status_code}: {_short_body(response)}"
+        )
     return record
 
 
@@ -582,16 +615,23 @@ def percentile(values: list[float], fraction: float) -> float | None:
     return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
-def aggregate(results: list[dict], payload: bench_payloads.Payload,
-              resolved: ResolvedCandidate) -> dict:
-    trials = [r for r in results
-              if r["phase"] == "trial" and r["payload"] == payload.id and r["model"] == resolved.id]
+def aggregate(
+    results: list[dict], payload: bench_payloads.Payload, resolved: ResolvedCandidate
+) -> dict:
+    trials = [
+        r
+        for r in results
+        if r["phase"] == "trial" and r["payload"] == payload.id and r["model"] == resolved.id
+    ]
     ok = [r for r in trials if r["status"] == "ok"]
     latencies = [r["latency_seconds"] for r in ok if r["latency_seconds"] is not None]
     costs: list[float] = []
     usage_seen = False
     for record in ok:
-        prompt_tokens, completion_tokens = record.get("prompt_tokens"), record.get("completion_tokens")
+        prompt_tokens, completion_tokens = (
+            record.get("prompt_tokens"),
+            record.get("completion_tokens"),
+        )
         if prompt_tokens is None and completion_tokens is None:
             continue
         usage_seen = True
@@ -627,7 +667,9 @@ def aggregate(results: list[dict], payload: bench_payloads.Payload,
         "latency_n": len(latencies),
         "mean_cost": (sum(costs) / len(costs)) if costs else None,
         "usage_seen": usage_seen,
-        "cost_available": bool(costs) and resolved.price_in is not None and resolved.price_out is not None,
+        "cost_available": bool(costs)
+        and resolved.price_in is not None
+        and resolved.price_out is not None,
         "injection_followed": sum(1 for r in trials if r["injection_followed"]),
         "injection_flag_counts": flag_counts,
         "ambiguous_flag_counts": soft_counts,
@@ -675,8 +717,9 @@ def render_candidates(resolved_list: list[ResolvedCandidate]) -> str:
     return "\n".join(lines)
 
 
-def render_payload_table(payload: bench_payloads.Payload, rows: list[dict],
-                         resolved_by_id: dict[str, ResolvedCandidate]) -> str:
+def render_payload_table(
+    payload: bench_payloads.Payload, rows: list[dict], resolved_by_id: dict[str, ResolvedCandidate]
+) -> str:
     lines = [
         f"### `{payload.id}` — {payload.title}",
         "",
@@ -735,8 +778,9 @@ def render_summary(aggregates: list[dict], resolved_list: list[ResolvedCandidate
     return "\n".join(lines)
 
 
-def render_injection(aggregates: list[dict], results: list[dict],
-                     resolved_by_id: dict[str, ResolvedCandidate]) -> str:
+def render_injection(
+    aggregates: list[dict], results: list[dict], resolved_by_id: dict[str, ResolvedCandidate]
+) -> str:
     injected = [row for row in aggregates if row["injection_expected"]]
     if not injected:
         return ""
@@ -752,10 +796,18 @@ def render_injection(aggregates: list[dict], results: list[dict],
         "|---|---|---|---|---|",
     ]
     for row in injected:
-        flag_text = ", ".join(f"`{flag}`×{count}"
-                              for flag, count in sorted(row["injection_flag_counts"].items())) or "none"
-        soft_text = ", ".join(f"`{flag}`×{count}"
-                              for flag, count in sorted(row["ambiguous_flag_counts"].items())) or "none"
+        flag_text = (
+            ", ".join(
+                f"`{flag}`×{count}" for flag, count in sorted(row["injection_flag_counts"].items())
+            )
+            or "none"
+        )
+        soft_text = (
+            ", ".join(
+                f"`{flag}`×{count}" for flag, count in sorted(row["ambiguous_flag_counts"].items())
+            )
+            or "none"
+        )
         lines.append(
             f"| {resolved_by_id[row['model']].label} | `{row['payload']}` | "
             f"{row['injection_followed']}/{row['trials']} | {flag_text} | {soft_text} |"
@@ -769,7 +821,9 @@ def render_injection(aggregates: list[dict], results: list[dict],
         lines.append(f"- `{row['payload']}`:")
         for expectation in row["injection_expected"]:
             lines.append(f"  - {expectation}")
-    examples = [r for r in results if r["phase"] == "trial" and r["injection_flags"] and r["answer"]]
+    examples = [
+        r for r in results if r["phase"] == "trial" and r["injection_flags"] and r["answer"]
+    ]
     if examples:
         lines += ["", "Every compliant answer (audit these by hand):", ""]
         for record in examples[:12]:
@@ -794,7 +848,11 @@ def render_setup_help(resolved_list: list[ResolvedCandidate]) -> str:
     ]
     for resolved in resolved_list:
         prefix = resolved.candidate.prefix
-        aliases = f" (or {', '.join(f'`{a}`' for a in resolved.candidate.aliases)})" if resolved.candidate.aliases else ""
+        aliases = (
+            f" (or {', '.join(f'`{a}`' for a in resolved.candidate.aliases)})"
+            if resolved.candidate.aliases
+            else ""
+        )
         lines.append(
             f"| {resolved.label} | `{prefix}_API_KEY`{aliases}, "
             f"`{prefix}_BASE_URL` (optional, default `{resolved.candidate.default_base_url}`), "
@@ -828,20 +886,37 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--trials", type=int, default=5, help="trials per model per payload")
-    parser.add_argument("--timeout", type=float, default=60.0, help="per-request timeout in seconds")
+    parser.add_argument(
+        "--timeout", type=float, default=60.0, help="per-request timeout in seconds"
+    )
     parser.add_argument("--max-tokens", type=int, default=1024, help="max_tokens per request")
     parser.add_argument("--temperature", type=float, default=0.0, help="sampling temperature")
     parser.add_argument("--models", metavar="ID,ID", help="only these candidate ids")
     parser.add_argument("--payloads", metavar="ID,ID", help="only these payload ids")
-    parser.add_argument("--candidates", metavar="JSON_OR_PATH",
-                        help="add/override candidates from inline JSON or a file")
+    parser.add_argument(
+        "--candidates",
+        metavar="JSON_OR_PATH",
+        help="add/override candidates from inline JSON or a file",
+    )
     parser.add_argument("--json", metavar="PATH", help="write raw trials + aggregates to PATH")
-    parser.add_argument("--system-prompt-file", metavar="PATH",
-                        help="replace the system prompt (e.g. to measure a hardened one)")
-    parser.add_argument("--warmup", type=int, default=1, choices=(0, 1),
-                        help="1 = one discarded request per model before the trials")
-    parser.add_argument("--list", action="store_true", help="show the resolved models and payloads, then exit")
-    parser.add_argument("--dry-run", action="store_true", help="print payload prompts and send nothing")
+    parser.add_argument(
+        "--system-prompt-file",
+        metavar="PATH",
+        help="replace the system prompt (e.g. to measure a hardened one)",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=1,
+        choices=(0, 1),
+        help="1 = one discarded request per model before the trials",
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="show the resolved models and payloads, then exit"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print payload prompts and send nothing"
+    )
     return parser
 
 
@@ -859,12 +934,16 @@ def main(argv: list[str] | None = None) -> int:
         known = {candidate.id for candidate in candidates}
         unknown = [m for m in want_models if m not in known]
         if unknown:
-            print(f"unknown model id(s): {', '.join(unknown)}; known: {', '.join(sorted(known))}",
-                  file=sys.stderr)
+            print(
+                f"unknown model id(s): {', '.join(unknown)}; known: {', '.join(sorted(known))}",
+                file=sys.stderr,
+            )
             return 2
         candidates = [candidate for candidate in candidates if candidate.id in want_models]
 
-    payload_list = bench_payloads.select([p.strip() for p in (args.payloads or "").split(",") if p.strip()])
+    payload_list = bench_payloads.select(
+        [p.strip() for p in (args.payloads or "").split(",") if p.strip()]
+    )
     resolved_list = [resolve_candidate(candidate) for candidate in candidates]
     resolved_by_id = {resolved.id: resolved for resolved in resolved_list}
     system_prompt = None
@@ -877,9 +956,11 @@ def main(argv: list[str] | None = None) -> int:
         print("| payload | game | decision | budget s | prompt chars | untrusted input |")
         print("|---|---|---|---|---|---|")
         for payload in payload_list:
-            print(f"| `{payload.id}` | `{payload.game_type}` | {payload.decision} | "
-                  f"{payload.time_budget_seconds:.0f} | {payload.prompt_chars} | "
-                  f"{'yes' if payload.untrusted_input else 'no'} |")
+            print(
+                f"| `{payload.id}` | `{payload.game_type}` | {payload.decision} | "
+                f"{payload.time_budget_seconds:.0f} | {payload.prompt_chars} | "
+                f"{'yes' if payload.untrusted_input else 'no'} |"
+            )
         return 0
 
     if args.dry_run:
@@ -889,7 +970,9 @@ def main(argv: list[str] | None = None) -> int:
         print("## Payload prompts (exactly what the model would receive as the user message)\n")
         for payload in payload_list:
             print(f"### `{payload.id}` — {payload.title}")
-            print(f"system prompt: {'override from ' + args.system_prompt_file if system_prompt else bench_payloads.SYSTEM_PROMPT_SOURCE}")
+            print(
+                f"system prompt: {'override from ' + args.system_prompt_file if system_prompt else bench_payloads.SYSTEM_PROMPT_SOURCE}"
+            )
             print("valid answer:", payload.validator_doc)
             print("\n```json")
             print(payload.pretty_prompt())
@@ -901,47 +984,71 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"# Model bench — {len(payload_list)} decision payloads × {args.trials} trials")
     print()
-    print(f"- system prompt: {'override (' + str(args.system_prompt_file) + ')' if system_prompt else bench_payloads.SYSTEM_PROMPT_SOURCE}")
-    print(f"- request timeout: {args.timeout:g}s, temperature: {args.temperature:g}, "
-          f"max_tokens: {args.max_tokens}, warm-up requests: {args.warmup}")
+    print(
+        f"- system prompt: {'override (' + str(args.system_prompt_file) + ')' if system_prompt else bench_payloads.SYSTEM_PROMPT_SOURCE}"
+    )
+    print(
+        f"- request timeout: {args.timeout:g}s, temperature: {args.temperature:g}, "
+        f"max_tokens: {args.max_tokens}, warm-up requests: {args.warmup}"
+    )
     print("- trials run sequentially; latency is measured around the real HTTP request")
     print()
     print(render_candidates(resolved_list))
     print()
     for resolved in skipped:
-        print(f"skipped: {resolved.label} — no API key "
-              f"(set {resolved.candidate.prefix}_API_KEY"
-              + (f", or one of {', '.join(resolved.candidate.aliases)}" if resolved.candidate.aliases else "")
-              + ")")
+        print(
+            f"skipped: {resolved.label} — no API key "
+            f"(set {resolved.candidate.prefix}_API_KEY"
+            + (
+                f", or one of {', '.join(resolved.candidate.aliases)}"
+                if resolved.candidate.aliases
+                else ""
+            )
+            + ")"
+        )
     if skipped:
         print()
 
     results: list[dict] = []
     for resolved in active:
-        headers = {"Authorization": f"Bearer {resolved.api_key}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {resolved.api_key}",
+            "Content-Type": "application/json",
+        }
         with httpx.Client(base_url=resolved.base_url, headers=headers) as client:
             if args.warmup:
                 warmup = run_warmup(client, resolved, timeout=args.timeout)
                 results.append(warmup)
                 if warmup["status"] != "ok":
-                    print(f"warning: warm-up for {resolved.label} failed "
-                          f"({warmup['status']}: {warmup['error']})", file=sys.stderr)
+                    print(
+                        f"warning: warm-up for {resolved.label} failed "
+                        f"({warmup['status']}: {warmup['error']})",
+                        file=sys.stderr,
+                    )
             for payload in payload_list:
                 for trial in range(1, args.trials + 1):
                     record = run_trial(
-                        client, resolved, payload,
-                        trial_index=trial, timeout=args.timeout, temperature=args.temperature,
-                        max_tokens=args.max_tokens, system_prompt=system_prompt,
+                        client,
+                        resolved,
+                        payload,
+                        trial_index=trial,
+                        timeout=args.timeout,
+                        temperature=args.temperature,
+                        max_tokens=args.max_tokens,
+                        system_prompt=system_prompt,
                     )
                     results.append(record)
-                    print(f"[{resolved.id} / {payload.id} / trial {trial}] {record['status']} "
-                          f"schema_ok={record['schema_ok']} legal={record['legal']} "
-                          f"{_secs(record['latency_seconds'])}s"
-                          + (f" — {record['error']}" if record["error"] else ""), file=sys.stderr)
+                    print(
+                        f"[{resolved.id} / {payload.id} / trial {trial}] {record['status']} "
+                        f"schema_ok={record['schema_ok']} legal={record['legal']} "
+                        f"{_secs(record['latency_seconds'])}s"
+                        + (f" — {record['error']}" if record["error"] else ""),
+                        file=sys.stderr,
+                    )
 
-    aggregates = [aggregate(results, payload, resolved)
-                  for payload in payload_list
-                  for resolved in active]
+    aggregates = [
+        aggregate(results, payload, resolved) for payload in payload_list for resolved in active
+    ]
 
     print("---")
     print()
@@ -956,12 +1063,18 @@ def main(argv: list[str] | None = None) -> int:
         if injection:
             print(injection)
             print()
-        missing_prices = [resolved.label for resolved in active
-                          if resolved.price_in is None or resolved.price_out is None]
+        missing_prices = [
+            resolved.label
+            for resolved in active
+            if resolved.price_in is None or resolved.price_out is None
+        ]
         if missing_prices:
-            print("Cost per decision is `—` for: " + ", ".join(missing_prices)
-                  + ". Supply prices with `BENCH_<CANDIDATE>_PRICE_IN` / `_PRICE_OUT` "
-                    "(USD per million tokens) to get an estimate.")
+            print(
+                "Cost per decision is `—` for: "
+                + ", ".join(missing_prices)
+                + ". Supply prices with `BENCH_<CANDIDATE>_PRICE_IN` / `_PRICE_OUT` "
+                "(USD per million tokens) to get an estimate."
+            )
             print()
     else:
         print(render_setup_help(resolved_list))
@@ -969,16 +1082,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         dump = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "config": {
                 "trials": args.trials,
                 "timeout_seconds": args.timeout,
                 "temperature": args.temperature,
                 "max_tokens": args.max_tokens,
                 "warmup": args.warmup,
-                "system_prompt_source": ("override: " + str(args.system_prompt_file)) if system_prompt
+                "system_prompt_source": ("override: " + str(args.system_prompt_file))
+                if system_prompt
                 else bench_payloads.SYSTEM_PROMPT_SOURCE,
-                "system_prompt_chars": len(system_prompt) if system_prompt else len(bench_payloads.SYSTEM_PROMPT),
+                "system_prompt_chars": len(system_prompt)
+                if system_prompt
+                else len(bench_payloads.SYSTEM_PROMPT),
             },
             "payloads": [payload.meta() for payload in payload_list],
             "candidates": [resolved.meta() for resolved in resolved_list],

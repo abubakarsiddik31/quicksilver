@@ -23,7 +23,9 @@ DASHBOARD_URL = "https://platform.altruagent-game.com/tournament/dashboard"
 TOURNAMENT_COMMAND = "python -m agent --tournament"
 MATCH_COMMAND = "python -m agent --match"
 
-CLAIM_CODES_RETIRED = "Testing claim codes were retired; run with --match and your Official Agent Key"
+CLAIM_CODES_RETIRED = (
+    "Testing claim codes were retired; run with --match and your Official Agent Key"
+)
 PLATFORM_KEY_RETIRED = (
     "The platform API-key mode (ALTRUAGENT_API_KEY) was retired; run with --tournament "
     "and your Official Agent Key"

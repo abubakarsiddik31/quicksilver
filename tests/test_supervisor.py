@@ -162,7 +162,9 @@ def test_run_once_concurrent_spawns_worker_for_one_active_match():
     assert len(factory.processes) == 1
     proc = factory.processes[0]
     assert proc.args == (
-        WorkerInput(session_id="s-1", tournament_id=None, game_type="tic_tac_toe", agent_id=AGENT_ID),
+        WorkerInput(
+            session_id="s-1", tournament_id=None, game_type="tic_tac_toe", agent_id=AGENT_ID
+        ),
     )
     assert proc.daemon is True
     assert registry.is_active("s-1")
@@ -188,7 +190,11 @@ def test_run_once_concurrent_ignores_waiting_and_completed_sessions():
     factory = FakeProcessFactory()
 
     run_once_concurrent(
-        client, registry=WorkerRegistry(), failed_until={}, agent_id=AGENT_ID, process_factory=factory
+        client,
+        registry=WorkerRegistry(),
+        failed_until={},
+        agent_id=AGENT_ID,
+        process_factory=factory,
     )
 
     assert factory.processes == []
@@ -200,8 +206,12 @@ def test_run_once_concurrent_never_starts_duplicate_worker_for_live_session():
     factory = FakeProcessFactory()
     registry = WorkerRegistry()
 
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
 
     assert len(factory.processes) == 1  # second tick: s-1 already has a live worker
 
@@ -213,8 +223,12 @@ def test_run_once_concurrent_starts_new_worker_while_another_still_runs():
     factory = FakeProcessFactory()
     registry = WorkerRegistry()
 
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
 
     assert len(factory.processes) == 2
     assert registry.is_active("s-1") and registry.is_active("s-2")
@@ -227,9 +241,13 @@ def test_run_once_concurrent_reaps_finished_worker():
     factory = FakeProcessFactory()
     registry = WorkerRegistry()
 
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
     factory.processes[0].finish(exitcode=EXIT_SUCCESS)
-    run_once_concurrent(client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory)
+    run_once_concurrent(
+        client, registry=registry, failed_until={}, agent_id=AGENT_ID, process_factory=factory
+    )
 
     assert len(registry) == 0
     assert len(factory.processes) == 1  # no new worker spawned; s-1 wasn't active anymore
@@ -247,13 +265,23 @@ def test_failed_worker_enters_cooldown_and_is_not_immediately_respawned():
     clock = make_clock(start=0.0, step=1.0)
 
     run_once_concurrent(
-        client, registry=registry, failed_until=failed_until, agent_id=AGENT_ID,
-        now=clock, cooldown_seconds=60.0, process_factory=factory,
+        client,
+        registry=registry,
+        failed_until=failed_until,
+        agent_id=AGENT_ID,
+        now=clock,
+        cooldown_seconds=60.0,
+        process_factory=factory,
     )
     factory.processes[0].finish(exitcode=EXIT_MATCH_FAILURE)
     run_once_concurrent(
-        client, registry=registry, failed_until=failed_until, agent_id=AGENT_ID,
-        now=clock, cooldown_seconds=60.0, process_factory=factory,
+        client,
+        registry=registry,
+        failed_until=failed_until,
+        agent_id=AGENT_ID,
+        now=clock,
+        cooldown_seconds=60.0,
+        process_factory=factory,
     )
 
     assert "s-1" in failed_until
@@ -268,8 +296,12 @@ def test_cooldown_expiry_permits_retry():
     failed_until = {"s-1": 5.0}  # cooldown already expired as of "now" below
 
     run_once_concurrent(
-        client, registry=registry, failed_until=failed_until, agent_id=AGENT_ID,
-        now=lambda: 10.0, process_factory=factory,
+        client,
+        registry=registry,
+        failed_until=failed_until,
+        agent_id=AGENT_ID,
+        now=lambda: 10.0,
+        process_factory=factory,
     )
 
     assert len(factory.processes) == 1
@@ -285,8 +317,12 @@ def test_run_forever_concurrent_sleeps_between_ticks_and_respects_max_iterations
     sleeps: list[float] = []
 
     run_forever_concurrent(
-        client, agent_id=AGENT_ID, sleep=sleeps.append, now=make_clock(),
-        process_factory=factory, max_iterations=3,
+        client,
+        agent_id=AGENT_ID,
+        sleep=sleeps.append,
+        now=make_clock(),
+        process_factory=factory,
+        max_iterations=3,
     )
 
     assert sleeps == [15.0, 15.0, 15.0]
@@ -299,8 +335,12 @@ def test_run_forever_concurrent_terminates_outstanding_workers_on_exit():
     factory = FakeProcessFactory()
 
     run_forever_concurrent(
-        client, agent_id=AGENT_ID, sleep=no_sleep, now=make_clock(),
-        process_factory=factory, max_iterations=1,
+        client,
+        agent_id=AGENT_ID,
+        sleep=no_sleep,
+        now=make_clock(),
+        process_factory=factory,
+        max_iterations=1,
     )
 
     assert factory.processes[0].terminated  # still "running" when the bounded loop ended
@@ -313,6 +353,9 @@ def test_run_forever_concurrent_propagates_discovery_failure_and_still_exits_cle
 
     with pytest.raises(RuntimeError):
         run_forever_concurrent(
-            FailingClient(), agent_id=AGENT_ID, sleep=no_sleep, now=make_clock(),
+            FailingClient(),
+            agent_id=AGENT_ID,
+            sleep=no_sleep,
+            now=make_clock(),
             process_factory=FakeProcessFactory(),
         )

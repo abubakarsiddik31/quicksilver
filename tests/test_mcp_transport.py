@@ -33,7 +33,7 @@ import httpx
 import pytest
 
 from altruagent import mcp_transport
-from altruagent.errors import AuthenticationError, is_transient_error
+from altruagent.errors import is_transient_error
 from altruagent.mcp_transport import MCPToolError, call_tool
 
 MCP_URL = "http://game.example.test/mcp"
@@ -75,7 +75,11 @@ def _tools_list_response(req_id) -> dict:
     return {
         "jsonrpc": "2.0",
         "id": req_id,
-        "result": {"tools": [{"name": "get_game_state", "inputSchema": {"type": "object"}, "outputSchema": None}]},
+        "result": {
+            "tools": [
+                {"name": "get_game_state", "inputSchema": {"type": "object"}, "outputSchema": None}
+            ]
+        },
     }
 
 
@@ -93,7 +97,9 @@ def _tool_call_response(req_id, payload: dict, *, is_error: bool = False) -> dic
 
 def make_factory(handler):
     def factory(headers=None, timeout=None, auth=None):
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), headers=headers, timeout=30.0)
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), headers=headers, timeout=30.0
+        )
 
     return factory
 
@@ -119,7 +125,11 @@ def test_call_tool_success_sends_correct_arguments_and_auth_header():
 
     client = FakeClient()
     result = call_tool(
-        client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler)
+        client,
+        MCP_URL,
+        "get_game_state",
+        {"session_id": "s-1"},
+        httpx_client_factory=make_factory(handler),
     )
 
     assert result == {"session_id": "s-1"}
@@ -138,12 +148,18 @@ def test_call_tool_unwraps_structured_content():
         if method == "tools/list":
             return httpx.Response(200, json=_tools_list_response(req_id))
         if method == "tools/call":
-            return httpx.Response(200, json=_tool_call_response(req_id, {"state_version": 3, "actions": []}))
+            return httpx.Response(
+                200, json=_tool_call_response(req_id, {"state_version": 3, "actions": []})
+            )
         return httpx.Response(404)
 
     client = FakeClient()
     result = call_tool(
-        client, MCP_URL, "get_legal_actions", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler)
+        client,
+        MCP_URL,
+        "get_legal_actions",
+        {"session_id": "s-1"},
+        httpx_client_factory=make_factory(handler),
     )
 
     assert result == {"state_version": 3, "actions": []}
@@ -217,7 +233,13 @@ def test_a_tool_error_answer_is_a_protocol_error_not_a_connection_problem():
         return _healthy_handler(request)
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(FakeClient(), MCP_URL, "play_action", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler))
+        call_tool(
+            FakeClient(),
+            MCP_URL,
+            "play_action",
+            {"session_id": "s-1"},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert exc_info.value.protocol_error is True
     assert (exc_info.value.error_code, exc_info.value.status_code) == (None, None)
@@ -241,8 +263,13 @@ def test_arguments_that_cant_be_sent_as_json_are_a_local_error_and_nothing_is_se
         return _healthy_handler(request)
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(FakeClient(), MCP_URL, "play_action", {"session_id": "s-1", "action": {"x": value}},
-                  httpx_client_factory=make_factory(handler))
+        call_tool(
+            FakeClient(),
+            MCP_URL,
+            "play_action",
+            {"session_id": "s-1", "action": {"x": value}},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert exc_info.value.local_error is True and exc_info.value.protocol_error is False
     assert "can't send its arguments as JSON" in str(exc_info.value)
@@ -257,17 +284,26 @@ def test_a_serialization_error_inside_the_sdk_is_still_a_local_error(monkeypatch
     monkeypatch.setattr(mcp_transport, "_check_arguments", lambda name, arguments: None)
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(FakeClient(), MCP_URL, "play_action", {"session_id": "s-1", "action": {"x": _AgentsOwnType()}},
-                  httpx_client_factory=make_factory(_healthy_handler))
+        call_tool(
+            FakeClient(),
+            MCP_URL,
+            "play_action",
+            {"session_id": "s-1", "action": {"x": _AgentsOwnType()}},
+            httpx_client_factory=make_factory(_healthy_handler),
+        )
 
     assert exc_info.value.local_error is True
     assert not is_transient_error(exc_info.value)
 
 
 def test_plain_arguments_pass_the_up_front_check():
-    result = call_tool(FakeClient(), MCP_URL, "play_action",
-                       {"session_id": "s-1", "action": {"type": "move", "x": 3, "ids": [1, 2], "ok": None}},
-                       httpx_client_factory=make_factory(_healthy_handler))
+    result = call_tool(
+        FakeClient(),
+        MCP_URL,
+        "play_action",
+        {"session_id": "s-1", "action": {"type": "move", "x": 3, "ids": [1, 2], "ok": None}},
+        httpx_client_factory=make_factory(_healthy_handler),
+    )
 
     assert result == {"session_id": "s-1"}
 
@@ -284,7 +320,13 @@ def test_invalid_host_header_421_surfaces_as_mcp_tool_error_with_status_code():
     client = FakeClient()
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler))
+        call_tool(
+            client,
+            MCP_URL,
+            "get_game_state",
+            {"session_id": "s-1"},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert exc_info.value.status_code == 421
     assert "Invalid Host header" in str(exc_info.value)
@@ -313,7 +355,11 @@ def test_401_triggers_exactly_one_relogin_and_retry_succeeds():
 
     client = FakeClient(tokens=["jwt-1", "jwt-2"])
     result = call_tool(
-        client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler)
+        client,
+        MCP_URL,
+        "get_game_state",
+        {"session_id": "s-1"},
+        httpx_client_factory=make_factory(handler),
     )
 
     assert result == {"ok": True}
@@ -332,7 +378,13 @@ def test_second_401_after_retry_still_fails_clearly():
     client = FakeClient(tokens=["jwt-1", "jwt-2"])
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler))
+        call_tool(
+            client,
+            MCP_URL,
+            "get_game_state",
+            {"session_id": "s-1"},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert exc_info.value.status_code == 401
     assert client._relogin_calls == 1  # retried exactly once, then gave up
@@ -375,7 +427,11 @@ def test_call_tool_reuses_client_login_state_not_a_second_auth_system():
         return httpx.Response(404)
 
     result = call_tool(
-        real_client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(mcp_handler)
+        real_client,
+        MCP_URL,
+        "get_game_state",
+        {"session_id": "s-1"},
+        httpx_client_factory=make_factory(mcp_handler),
     )
 
     assert result == {"ok": True}
@@ -415,7 +471,9 @@ def test_wrap_http_status_error_survives_unread_closed_response():
     from altruagent.mcp_transport import _wrap_http_status_error
 
     request = httpx.Request("POST", MCP_URL)
-    response = httpx.Response(421, stream=_ClosedWithoutReadStream(b"Invalid Host header"), request=request)
+    response = httpx.Response(
+        421, stream=_ClosedWithoutReadStream(b"Invalid Host header"), request=request
+    )
 
     async def _close_without_reading() -> None:
         await response.aclose()
@@ -425,7 +483,9 @@ def test_wrap_http_status_error_survives_unread_closed_response():
     with pytest.raises(httpx.ResponseNotRead):
         response.text  # sanity check: confirms this reproduces the real failure mode
 
-    exc = httpx.HTTPStatusError("Client error '421 Misdirected Request'", request=request, response=response)
+    exc = httpx.HTTPStatusError(
+        "Client error '421 Misdirected Request'", request=request, response=response
+    )
     wrapped = _wrap_http_status_error("get_game_state", exc)
 
     assert wrapped.status_code == 421
@@ -445,7 +505,13 @@ def test_call_tool_handles_unread_closed_error_response_end_to_end():
     client = FakeClient()
 
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(client, MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=make_factory(handler))
+        call_tool(
+            client,
+            MCP_URL,
+            "get_game_state",
+            {"session_id": "s-1"},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert exc_info.value.status_code == 421
 
@@ -472,12 +538,18 @@ def test_the_http_client_gets_a_short_connect_and_a_40s_read_timeout_not_the_sdk
 
     def factory(headers=None, timeout=None, auth=None):
         seen.append(timeout)
-        return httpx.AsyncClient(transport=httpx.MockTransport(_healthy_handler), headers=headers, timeout=timeout)
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(_healthy_handler), headers=headers, timeout=timeout
+        )
 
-    call_tool(FakeClient(), MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=factory)
+    call_tool(
+        FakeClient(), MCP_URL, "get_game_state", {"session_id": "s-1"}, httpx_client_factory=factory
+    )
 
     (timeout,) = seen
-    assert timeout == httpx.Timeout(mcp_transport.MCP_CONNECT_TIMEOUT_SECONDS, read=mcp_transport.MCP_READ_TIMEOUT_SECONDS)
+    assert timeout == httpx.Timeout(
+        mcp_transport.MCP_CONNECT_TIMEOUT_SECONDS, read=mcp_transport.MCP_READ_TIMEOUT_SECONDS
+    )
     assert (timeout.connect, timeout.read) == (10.0, 40.0)
     # Above the server's longest healthy call: wait_for_update holds at most 25 s.
     assert mcp_transport.MCP_READ_TIMEOUT_SECONDS >= 25.0 + 10.0
@@ -498,8 +570,13 @@ def test_a_server_that_never_answers_fails_the_call_after_the_session_timeout(mo
 
     started = time.monotonic()
     with pytest.raises(MCPToolError) as exc_info:
-        call_tool(FakeClient(), MCP_URL, "wait_for_update", {"session_id": "s-1"},
-                  httpx_client_factory=make_factory(handler))
+        call_tool(
+            FakeClient(),
+            MCP_URL,
+            "wait_for_update",
+            {"session_id": "s-1"},
+            httpx_client_factory=make_factory(handler),
+        )
 
     assert time.monotonic() - started < 10
     assert exc_info.value.error_code is None and exc_info.value.status_code is None

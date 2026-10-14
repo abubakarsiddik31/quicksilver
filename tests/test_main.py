@@ -9,11 +9,11 @@ pointing to the Official Agent Key and never touch the network, and
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import agent.__main__ as agent_main
-from pathlib import Path
-
 from altruagent.notices import (
     AGENT_GUIDE_URL,
     CLAIM_CODES_RETIRED,
@@ -71,13 +71,17 @@ def test_main_without_argv_parses_no_arguments(capsys):
     assert capsys.readouterr().out.startswith(PLATFORM_KEY_RETIRED)
 
 
-@pytest.mark.parametrize("argv", [["--claim", CLAIM_TOKEN], ["--claim", "-"], ["--claim"], [f"--claim={CLAIM_TOKEN}"]])
+@pytest.mark.parametrize(
+    "argv", [["--claim", CLAIM_TOKEN], ["--claim", "-"], ["--claim"], [f"--claim={CLAIM_TOKEN}"]]
+)
 def test_claim_prints_the_claim_codes_retirement_notice(argv, capsys):
     assert agent_main.main(argv) == 1
 
     out = capsys.readouterr().out
     assert out.splitlines()[0] == f"{CLAIM_CODES_RETIRED}."
-    assert out.startswith("Testing claim codes were retired; run with --match and your Official Agent Key")
+    assert out.startswith(
+        "Testing claim codes were retired; run with --match and your Official Agent Key"
+    )
     _assert_points_to_the_official_key(out)
     assert CLAIM_TOKEN not in out
 
@@ -110,7 +114,12 @@ def test_help_describes_the_two_flags(capsys):
 
     assert exc_info.value.code == 0
     out = capsys.readouterr().out
-    assert "--tournament" in out and "--match" in out and "--check-tournament" in out and "--agent" in out
+    assert (
+        "--tournament" in out
+        and "--match" in out
+        and "--check-tournament" in out
+        and "--agent" in out
+    )
     assert "ALTRUAGENT_OFFICIAL_AGENT_KEY" in out
     assert "--tournament (your tournament games), --match (your test\n     matches) or both" in out
     assert "python -m agent --tournament --match" in out
@@ -159,7 +168,7 @@ def test_games_md_says_a_werewolf_resign_takes_only_that_player_out():
     # The platform rule since 2026-10-07: one agent's resign does not end the
     # 7-player game; the resigner scores a loss whichever side wins.
     text = (REPO / "GAMES.md").read_text(encoding="utf-8")
-    werewolf = text[text.index("## Werewolf"):]
+    werewolf = text[text.index("## Werewolf") :]
 
     assert "takes only you out; the game goes on" in werewolf
     assert "whichever\n  side wins" in werewolf

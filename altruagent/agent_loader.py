@@ -8,7 +8,7 @@ a spawned process can't be handed a function object from its parent).
 from __future__ import annotations
 
 import importlib
-from typing import Callable
+from collections.abc import Callable
 
 DEFAULT_AGENT_SPEC = "agent.agent:create_agent"
 

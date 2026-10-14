@@ -25,7 +25,18 @@ from __future__ import annotations
 
 from altruagent import DecisionContext, GameState
 from common.jev import JevClient
-from pokemon import actions, battle, budget, draft, lineup, observation, pool, tactician
+from pokemon import (
+    actions,
+    battle,
+    budget,
+    draft,
+    learn,
+    lineup,
+    observation,
+    pool,
+    tactician,
+    threat,
+)
 
 
 class PokemonAgent:
@@ -42,6 +53,12 @@ class PokemonAgent:
             jev_client if jev_client is not None else JevClient.from_env(flag="POKEMON_JEV")
         )
         self._jev_turns = 0
+        # What the observation doesn't say: Fake Out freshness, Protect last turn.
+        self._memory = threat.Memory()
+        # Every card this match has shown: new cards turn up between matches, so the
+        # banked file is only the fallback for what this match never showed.
+        self._match_cards = pool.MatchCards()
+        self._agent_id: str | None = None
 
     def choose_action(self, state: GameState, context: DecisionContext):
         legal = state.legal_actions
@@ -54,6 +71,8 @@ class PokemonAgent:
         # see a draft. The pool is fixed, so one capture makes every later
         # matchup computation offline work.
         self._capture_pool(state)
+        self._agent_id = getattr(context, "agent_id", None) or self._agent_id
+        self._learn(state)
 
         first = legal[0]
         kind = actions.template_type(first)
@@ -86,10 +105,17 @@ class PokemonAgent:
                     if isinstance(action_id, str) and action_id == f"draft_pick:{card_id}":
                         return action
 
-        chosen = draft.choose_from_actions(
-            obs, agent_id=context.agent_id, legal_actions=legal
-        )
+        chosen = draft.choose_from_actions(obs, agent_id=context.agent_id, legal_actions=legal)
         return chosen if chosen is not None else legal[0]
+
+    def _learn(self, state: GameState, template: dict | None = None) -> None:
+        """Take in this state's cards and any species or moves the dex lacks."""
+        obs = observation.observation_of(state)
+        self._match_cards.observe(obs, self._agent_id)
+        learn.from_observation(obs, template)
+
+    def _cards(self) -> list[dict] | None:
+        return self._match_cards.with_fallback(pool.load_pool(self._pool_path))
 
     def _capture_pool(self, state: GameState) -> None:
         """Merge this state's cards into ``pokemon/pool.json``.
@@ -112,7 +138,7 @@ class PokemonAgent:
         the two best equipped to open — with Jev reading both full sixes and
         the top lineups' matchup math during the 90-second preview window."""
         obs = observation.observation_of(state)
-        loaded_pool = pool.load_pool(self._pool_path)
+        loaded_pool = self._cards()
 
         candidates = lineup.generate_candidate_lineups(
             template, obs, pool_cards=loaded_pool, max_candidates=3
@@ -125,15 +151,15 @@ class PokemonAgent:
             ):
                 request = tactician.preview_request(obs, candidates)
                 label = self._jev.choose(
-                    state=request.state, instructions=request.instructions, criteria=request.criteria
+                    state=request.state,
+                    instructions=request.instructions,
+                    criteria=request.criteria,
                 )
                 if label is not None:
                     return candidates[tactician.INDEX[label]][0]
             return candidates[0][0]
 
-        chosen = lineup.choose_lineup(
-            template, obs, pool_cards=loaded_pool
-        )
+        chosen = lineup.choose_lineup(template, obs, pool_cards=loaded_pool)
         if chosen is not None:
             return chosen
 
@@ -157,10 +183,22 @@ class PokemonAgent:
         taken by slot 0 is skipped when choosing slot 1.
         """
         obs = observation.observation_of(state)
-        loaded_pool = pool.load_pool(self._pool_path)
+        self._learn(state, template)
+        loaded_pool = self._cards()
+        self._memory.observe(observation.active_pokemon(obs), observation.turn(obs))
 
+        plan = self._plan_turn(template, obs, loaded_pool)
+        self._memory.record(observation.active_pokemon(obs), plan)
+        return plan
+
+    def _plan_turn(self, template: dict, obs: dict, loaded_pool) -> dict:
         candidates = battle.generate_candidate_plans(
-            template, obs, pool_cards=loaded_pool, max_candidates=3
+            template,
+            obs,
+            pool_cards=loaded_pool,
+            max_candidates=3,
+            memory=self._memory,
+            diverse=True,
         )
 
         if candidates:
@@ -169,12 +207,18 @@ class PokemonAgent:
                 and self._jev.enabled
                 and self._jev_turns < tactician.MAX_CALLS_PER_MATCH
                 and budget.affords(obs, tactician.JEV_TIMEOUT)
-                and battle.is_tactical_dilemma(candidates, obs)
+                and battle.is_tactical_dilemma(
+                    candidates,
+                    obs,
+                    danger=battle.make_ctx(obs, pool_cards=loaded_pool, memory=self._memory).danger,
+                )
             ):
-                ours, theirs = battle.board(obs, pool_cards=loaded_pool)
-                request = tactician.battle_request(obs, candidates, ours, theirs)
+                ctx = battle.make_ctx(obs, pool_cards=loaded_pool, memory=self._memory)
+                request = tactician.battle_request(obs, candidates, ctx.ours, ctx.theirs, ctx=ctx)
                 label = self._jev.choose(
-                    state=request.state, instructions=request.instructions, criteria=request.criteria
+                    state=request.state,
+                    instructions=request.instructions,
+                    criteria=request.criteria,
                 )
                 if label is not None:
                     self._jev_turns += 1
@@ -183,9 +227,7 @@ class PokemonAgent:
             # Overwhelming math or no Jev: execute the top evaluated plan.
             return candidates[0][0]
 
-        chosen = battle.choose_turn(
-            template, obs, pool_cards=loaded_pool
-        )
+        chosen = battle.choose_turn(template, obs, pool_cards=loaded_pool, memory=self._memory)
         if chosen is not None:
             return chosen
 

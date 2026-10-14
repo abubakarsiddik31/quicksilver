@@ -382,6 +382,26 @@
     },
     {
       "ability": "Quark Drive",
+      "card_id": "vgc-iron-bundle",
+      "evs": {
+        "hp": 4,
+        "spa": 252,
+        "spe": 252
+      },
+      "item": "Booster Energy",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Freeze-Dry",
+        "Hydro Pump",
+        "Encore",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Iron Bundle"
+    },
+    {
+      "ability": "Quark Drive",
       "card_id": "vgc-iron-hands",
       "evs": {
         "atk": 252,
@@ -399,6 +419,26 @@
       ],
       "nature": "Adamant",
       "species": "Iron Hands"
+    },
+    {
+      "ability": "Quark Drive",
+      "card_id": "vgc-iron-treads",
+      "evs": {
+        "atk": 252,
+        "hp": 4,
+        "spe": 252
+      },
+      "item": "Booster Energy",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Earthquake",
+        "Iron Head",
+        "High Horsepower",
+        "Protect"
+      ],
+      "nature": "Jolly",
+      "species": "Iron Treads"
     },
     {
       "ability": "Quark Drive",
@@ -843,6 +883,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 42,
+  "count": 44,
   "expected_size": 18
 }

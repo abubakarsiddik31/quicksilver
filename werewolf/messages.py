@@ -212,9 +212,7 @@ def is_credential_request(content: Any) -> bool:
     return "credential-request" in injection_signals(content)
 
 
-def flag_messages(
-    messages: Any, *, our_position: int | None = None
-) -> list[dict[str, Any]]:
+def flag_messages(messages: Any, *, our_position: int | None = None) -> list[dict[str, Any]]:
     """Every incoming message that looks like an injection attempt.
 
     Returned as evidence rather than acted on directly: an opponent trying to

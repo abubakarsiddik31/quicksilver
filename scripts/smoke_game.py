@@ -109,20 +109,19 @@ import getpass
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 # Allow running this script directly without having pip-installed the project.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx  # noqa: E402
+from _agent_file_swap import AgentFileSwapError, temporary_agent  # noqa: E402
 
 from altruagent.client import AltruAgentClient  # noqa: E402
 from altruagent.errors import AltruAgentError, ConfigurationError  # noqa: E402
 from altruagent.runner import RESIGN  # noqa: E402
 from altruagent.runtime import run_once  # noqa: E402
-
-from _agent_file_swap import AgentFileSwapError, temporary_agent  # noqa: E402
 
 COMPETITION_GAME_TYPE = "tic_tac_toe"
 DEFAULT_POLL_TIMEOUT_SECONDS = 60.0
@@ -168,7 +167,10 @@ def signup_temporary_agent(http: httpx.Client, control_url: str) -> tuple[str, s
     name = f"smoke-test-{uuid.uuid4().hex[:10]}"
     response = http.post(
         f"{control_url}/auth/agent/signup",
-        json={"name": name, "description": "Milestone 2 smoke-test opponent (safe to ignore/delete)"},
+        json={
+            "name": name,
+            "description": "Milestone 2 smoke-test opponent (safe to ignore/delete)",
+        },
     )
     body = _json_or_fail(response, "temporary agent signup")
     api_key = body.get("api_key")
@@ -412,8 +414,7 @@ def run_concurrent_check(primary: AltruAgentClient, http: httpx.Client, control_
 
         opp_name, opp_api_key, opp_claim_token = signup_temporary_agent(http, control_url)
         human_token = getpass.getpass(
-            "Human/admin bearer token (used only for this run — never stored, "
-            "logged, or echoed): "
+            "Human/admin bearer token (used only for this run — never stored, logged, or echoed): "
         )
         if not human_token:
             _fail("A human/admin bearer token is required to claim the temporary agent.")
@@ -604,8 +605,7 @@ def main() -> int:
         name, opp_api_key, claim_token = signup_temporary_agent(http, control_url)
 
         human_token = getpass.getpass(
-            "Human/admin bearer token (used only for this run — never stored, "
-            "logged, or echoed): "
+            "Human/admin bearer token (used only for this run — never stored, logged, or echoed): "
         )
         if not human_token:
             _fail("A human/admin bearer token is required to claim the temporary agent.")
@@ -643,9 +643,7 @@ def main() -> int:
                     f"tournament_id={tournament_id!r}."
                 )
             session_id = discovered_match.session_id
-            _checkpoint(
-                f"active match discovered via client.sessions() (session_id={session_id})"
-            )
+            _checkpoint(f"active match discovered via client.sessions() (session_id={session_id})")
 
             # rest_game(), deliberately — see the concurrent-mode comment
             # above: this check's own state reads go over REST directly;
@@ -684,7 +682,10 @@ def main() -> int:
                     f"client.sessions() did not list session_id={session_id!r} in "
                     "active_sessions after the competition started."
                 )
-            if discovered_match.status != "in_progress" or discovered_match.game_type != COMPETITION_GAME_TYPE:
+            if (
+                discovered_match.status != "in_progress"
+                or discovered_match.game_type != COMPETITION_GAME_TYPE
+            ):
                 _fail(
                     "Discovered match has unexpected fields (status="
                     f"{discovered_match.status!r}, game_type={discovered_match.game_type!r})."

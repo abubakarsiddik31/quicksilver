@@ -17,7 +17,6 @@ Safety & Robustness Guarantees:
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from common.llm import GeminiClient
 
@@ -51,7 +50,7 @@ def format_board_summary(obs: dict) -> str:
         sp = mon.get("species", "Unknown")
         hp = mon.get("hp", 0)
         max_hp = mon.get("max_hp", 100)
-        pct = int((hp / max_hp * 100)) if max_hp else 0
+        pct = int(hp / max_hp * 100) if max_hp else 0
         status = mon.get("status") or "healthy"
         lines.append(f"  - Slot {idx}: {sp} (HP: {pct}%, Status: {status})")
 
@@ -63,7 +62,7 @@ def format_board_summary(obs: dict) -> str:
         sp = mon.get("species", "Unknown")
         hp = mon.get("hp", 0)
         max_hp = mon.get("max_hp", 100)
-        pct = int((hp / max_hp * 100)) if max_hp else 0
+        pct = int(hp / max_hp * 100) if max_hp else 0
         status = mon.get("status") or "healthy"
         lines.append(f"  - Opponent {idx}: {sp} (HP: {pct}%, Status: {status})")
 
@@ -100,7 +99,7 @@ def format_plan_description(plan: dict) -> str:
 
 def parse_advisor_choice(reply: str | None, plan_labels: list[str]) -> str | None:
     """Extract chosen plan label (e.g. 'PLAN_A') from advisor response.
-    
+
     Guarantees that the returned label is in ``plan_labels``, else None.
     """
     if not reply or not isinstance(reply, str):
@@ -131,7 +130,7 @@ def advise(
     timeout: float = ADVISOR_TIMEOUT,
 ) -> dict | None:
     """Ask Gemini 3.8 Flash to pick from candidate plans.
-    
+
     ``candidate_plans`` is a list of tuples: ``(action_dict, score, explanation)``.
     Returns the selected action dict, or ``None`` if consultation fails or times out.
     """

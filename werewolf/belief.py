@@ -95,7 +95,9 @@ def allies_from_text(text: str) -> tuple[int, ...]:
     if not match:
         return ()
     return tuple(
-        seat for seat in (label_to_seat(part) for part in match.group(1).split(",")) if seat is not None
+        seat
+        for seat in (label_to_seat(part) for part in match.group(1).split(","))
+        if seat is not None
     )
 
 
@@ -189,7 +191,7 @@ class Belief:
 
     # -- ingest ---------------------------------------------------------
 
-    def update(self, state: Any) -> "Belief":
+    def update(self, state: Any) -> Belief:
         raw = raw_of(state)
         text = observation_text(state)
 
@@ -205,7 +207,8 @@ class Belief:
         alive_names = game_state(raw).get("alive")
         if isinstance(alive_names, list):
             self.alive = tuple(
-                seat for seat in (by_name.get(n) for n in alive_names if isinstance(n, str))
+                seat
+                for seat in (by_name.get(n) for n in alive_names if isinstance(n, str))
                 if seat is not None
             )
 
@@ -222,7 +225,7 @@ class Belief:
         self.vote_history = vote_history(raw)
         return self
 
-    def note_messages(self, window: Any, *, our_position: int | None = None) -> "Belief":
+    def note_messages(self, window: Any, *, our_position: int | None = None) -> Belief:
         """Fold a discussion window into beliefs.
 
         Two things come out of chat: who *claimed* to be the seer (a claim the
@@ -329,11 +332,7 @@ class Belief:
             eliminated = by_name.get(eliminated_name) if isinstance(eliminated_name, str) else None
             # Find this seat's own vote.
             own = next(
-                (
-                    target
-                    for voter, target in votes.items()
-                    if by_name.get(voter) == seat
-                ),
+                (target for voter, target in votes.items() if by_name.get(voter) == seat),
                 None,
             )
             if own is None:
@@ -363,9 +362,7 @@ class Belief:
         """Living seats, most suspicious first. Excludes ourselves, anyone
         already dead, and anyone we know to be a villager."""
         candidates = [
-            seat
-            for seat in self.alive
-            if seat != self.seat and seat not in self.known_villagers
+            seat for seat in self.alive if seat != self.seat and seat not in self.known_villagers
         ]
         return sorted(
             ((seat, self.suspicion(seat)) for seat in candidates),
@@ -400,7 +397,7 @@ class Belief:
     def best_kill(self) -> int | None:
         """The seat a wolf should kill: never an ally, and preferably the seer
         or whoever is driving the table.
-        
+
         Priority:
         1. If someone claimed Seer and is still alive, kill them immediately
            to silence their investigations.
@@ -409,9 +406,7 @@ class Belief:
         candidates = [
             seat
             for seat in self.alive
-            if seat != self.seat
-            and seat not in self.allies
-            and seat not in self.known_wolves
+            if seat != self.seat and seat not in self.allies and seat not in self.known_wolves
         ]
         if not candidates:
             return None

@@ -40,7 +40,7 @@ class MCPGameSession:
     ``Match.game()`` rather than directly.
     """
 
-    def __init__(self, client: "AltruAgentClient", *, session_id: str, game_server_url: str) -> None:
+    def __init__(self, client: AltruAgentClient, *, session_id: str, game_server_url: str) -> None:
         if not session_id:
             raise ConfigurationError("session_id must not be empty.")
         self._client = client
@@ -147,7 +147,9 @@ class MCPGameSession:
             arguments["reasoning_summary"] = reasoning_summary
         return self._call("play_action", arguments)
 
-    def send_message(self, *, message_type: str, content: str | None = None, recipients: list[int] | None = None) -> dict:
+    def send_message(
+        self, *, message_type: str, content: str | None = None, recipients: list[int] | None = None
+    ) -> dict:
         """``send_message`` — send a chat message (``message_type="chat"``)
         or vote to end the messaging round (``message_type="terminate"``).
 

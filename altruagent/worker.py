@@ -26,8 +26,9 @@ from __future__ import annotations
 import os
 import random
 import time
+from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Callable, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from .client import AltruAgentClient
 from .console import print_line
@@ -103,7 +104,7 @@ def run_worker(
     client_factory: Callable[[], AltruAgentClient] = AltruAgentClient,
     match_factory: Callable[..., Match] = Match.from_dict,
     agent_module: object | None = None,
-    run_match_fn: Callable[..., "GameState"] = _default_run_match,
+    run_match_fn: Callable[..., GameState] = _default_run_match,
 ) -> int:
     """Play exactly one match: build a client, reconstruct its ``Match``,
     call ``agent.agent.create_agent()`` exactly once, and hand the result to
@@ -161,9 +162,7 @@ def run_worker(
         print_line(f"[worker pid={pid}] interrupted, stopping")
         return EXIT_SUCCESS
     except _MATCH_SCOPED_ERRORS as exc:
-        print_line(
-            f"[worker pid={pid}] match failed session_id={worker_input.session_id}: {exc}"
-        )
+        print_line(f"[worker pid={pid}] match failed session_id={worker_input.session_id}: {exc}")
         return EXIT_MATCH_FAILURE
     except Exception as exc:  # noqa: BLE001 - deliberately broad, see EXIT_UNEXPECTED
         print_line(f"[worker pid={pid}] unexpected error: {exc!r}")
@@ -177,7 +176,13 @@ def run_worker(
 # this player comes first (Werewolf), then the winner (Pokémon, Red Alert),
 # then the score, read the way the platform reads it: above 0.5 a win, below
 # a loss, exactly 0.5 a draw.
-_OUTCOME_WORDS = {"win": "won", "loss": "lost", "draw": "drew", "resigned": "resigned", "timed_out": "timed out"}
+_OUTCOME_WORDS = {
+    "win": "won",
+    "loss": "lost",
+    "draw": "drew",
+    "resigned": "resigned",
+    "timed_out": "timed out",
+}
 
 
 def _number(value) -> float | None:
@@ -219,7 +224,8 @@ def finished_line(final_state, agent_id: str, seat_position: int | None = None) 
     ``finished: your agent (player 2) won (termination_reason=completed, score=1.0)``."""
     score = _score(final_state, agent_id)
     detail = f"termination_reason={getattr(final_state, 'termination_reason', None)}" + (
-        f", score={score}" if score is not None else "")
+        f", score={score}" if score is not None else ""
+    )
     outcome = game_outcome(final_state, agent_id)
     if outcome is None:
         return f"finished ({detail})"
@@ -263,8 +269,8 @@ class TournamentWorkerInput(NamedTuple):
 def run_tournament_worker(
     worker_input: TournamentWorkerInput,
     *,
-    official_factory: Callable[[], "OfficialAgentClient"] | None = None,
-    run_game_fn: Callable[..., "GameState"] | None = None,
+    official_factory: Callable[[], OfficialAgentClient] | None = None,
+    run_game_fn: Callable[..., GameState] | None = None,
     lease_renew_seconds: float | None = None,
     lease_retry_seconds: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -309,7 +315,9 @@ def run_tournament_worker(
     pid = os.getpid()
     label = f"[match {worker_input.game_type or 'unknown'} seat={worker_input.seat_id}]"
     official_factory = official_factory or OfficialAgentClient
-    run_game_fn = run_game_fn or partial(run_game, log=lambda message: print_line(f"{label} {message}"))
+    run_game_fn = run_game_fn or partial(
+        run_game, log=lambda message: print_line(f"{label} {message}")
+    )
     print_line(f"{label} starting (pid={pid})")
 
     official = None
@@ -325,7 +333,9 @@ def run_tournament_worker(
         if worker_input.agent_session and callable(adopt):
             adopt(worker_input.agent_session)  # no second sign-in for this game
         seat_auth = OfficialSeatAuth(official, worker_input.seat_id, worker_input.execution_id)
-        game_client = AltruAgentClient(control_url=official.control_url, auth=seat_auth, load_env_file=False)
+        game_client = AltruAgentClient(
+            control_url=official.control_url, auth=seat_auth, load_env_file=False
+        )
         give_up_at = now() + FIRST_GRANT_RETRY_SECONDS
         attempt = 0
         while True:
@@ -344,9 +354,11 @@ def run_tournament_worker(
                     raise
                 error = exc
             if attempt == 0:
-                print_line(f"{label} couldn't get into the game yet ({error}); trying again for up to "
-                      f"{FIRST_GRANT_RETRY_SECONDS:.0f}s")
-            delay = min(FIRST_GRANT_RETRY_MAX_SECONDS, FIRST_GRANT_RETRY_FIRST_SECONDS * 2 ** attempt)
+                print_line(
+                    f"{label} couldn't get into the game yet ({error}); trying again for up to "
+                    f"{FIRST_GRANT_RETRY_SECONDS:.0f}s"
+                )
+            delay = min(FIRST_GRANT_RETRY_MAX_SECONDS, FIRST_GRANT_RETRY_FIRST_SECONDS * 2**attempt)
             attempt += 1
             sleep(delay * random.uniform(0.75, 1.25))
         grant = seat_auth.grant
@@ -361,7 +373,10 @@ def run_tournament_worker(
         )
         keeper.start()
         game = _LeaseGuardedGameSession(
-            game_client, lost=keeper.lost, session_id=grant.game_session_id, game_server_url=grant.gameapi_server_url
+            game_client,
+            lost=keeper.lost,
+            session_id=grant.game_session_id,
+            game_server_url=grant.gameapi_server_url,
         )
         context = DecisionContext(
             session_id=grant.game_session_id,
@@ -381,7 +396,9 @@ def run_tournament_worker(
         return EXIT_SEAT_BUSY
     except Exception as exc:  # noqa: BLE001 - includes contestant factory errors and auth failures
         code = exc.error_code if isinstance(exc, (PlatformError, AuthenticationError)) else None
-        if (keeper is not None and keeper.lost.is_set()) or (isinstance(exc, OfficialAgentError) and code == "seat_busy"):
+        if (keeper is not None and keeper.lost.is_set()) or (
+            isinstance(exc, OfficialAgentError) and code == "seat_busy"
+        ):
             # Also when a GameAPI re-grant during play answered seat_busy.
             print_line(f"{label} stopped: another runtime now holds this seat")
             return EXIT_SEAT_BUSY
@@ -397,7 +414,9 @@ def run_tournament_worker(
             return EXIT_KEY_REFUSED
         if _is_transient(exc):
             if not getattr(game, "contacted", False):
-                print_line(f"{label} couldn't reach the game because of a temporary problem ({exc}); trying again shortly")
+                print_line(
+                    f"{label} couldn't reach the game because of a temporary problem ({exc}); trying again shortly"
+                )
                 return EXIT_NOT_CONNECTED
             print_line(f"{label} lost the connection to the game ({exc}); reconnecting shortly")
             return EXIT_CONNECTION_LOST

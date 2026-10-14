@@ -118,9 +118,7 @@ def test_game_state_legal_actions_parsing():
 
 
 def test_game_state_current_player_none_when_not_your_turn():
-    state = GameState.from_dict(
-        _base_game_state_payload(current_player=None, legal_actions=[])
-    )
+    state = GameState.from_dict(_base_game_state_payload(current_player=None, legal_actions=[]))
 
     assert state.current_player is None
     assert state.legal_actions == []
@@ -134,8 +132,16 @@ def test_game_state_next_actions_can_have_multiple_entries():
             messaging_enabled=True,
             phase="messaging",
             next_actions=[
-                {"action": "send_message", "hint": "chat or terminate", "required_fields": ["type"]},
-                {"action": "terminate_messaging", "hint": "end the round", "required_fields": ["type"]},
+                {
+                    "action": "send_message",
+                    "hint": "chat or terminate",
+                    "required_fields": ["type"],
+                },
+                {
+                    "action": "terminate_messaging",
+                    "hint": "end the round",
+                    "required_fields": ["type"],
+                },
             ],
         )
     )
@@ -407,7 +413,9 @@ def test_game_state_from_mcp_state_merges_legal_actions_and_its_state_version():
             {"action_id": "1", "label": "b", "input": {}},
         ],
     }
-    state = GameState.from_mcp_state(_mcp_state_payload(state_version=3), legal_actions=legal_actions)
+    state = GameState.from_mcp_state(
+        _mcp_state_payload(state_version=3), legal_actions=legal_actions
+    )
 
     assert state.state_version == 4
     assert [a.action_id for a in state.legal_actions] == ["0", "1"]
@@ -526,7 +534,11 @@ def test_tournament_from_dict_detail_shape_with_viewer():
             "should_join_tournament": False,
             "should_wait_for_child_match": False,
             "next_actions": [
-                {"action": "play_child_session", "endpoint": "GET .../games/session-1", "hint": "Play it."}
+                {
+                    "action": "play_child_session",
+                    "endpoint": "GET .../games/session-1",
+                    "hint": "Play it.",
+                }
             ],
         },
     )
@@ -557,7 +569,12 @@ def test_tournament_tolerates_missing_optional_fields():
 
 def test_tournament_preserves_unknown_fields_in_raw():
     tournament = Tournament.from_dict(
-        {"tournament_id": "t-1", "status": "waiting", "leaderboard": [], "messaging_config": {"messaging_enabled": True}}
+        {
+            "tournament_id": "t-1",
+            "status": "waiting",
+            "leaderboard": [],
+            "messaging_config": {"messaging_enabled": True},
+        }
     )
 
     assert tournament.raw["leaderboard"] == []
@@ -567,7 +584,9 @@ def test_tournament_preserves_unknown_fields_in_raw():
 def test_tournament_has_no_name_attribute():
     # There is no `name` field anywhere on the backend's tournaments table —
     # guard against ever accidentally assuming one exists.
-    tournament = Tournament.from_dict({"tournament_id": "t-1", "status": "waiting", "name": "Ignored"})
+    tournament = Tournament.from_dict(
+        {"tournament_id": "t-1", "status": "waiting", "name": "Ignored"}
+    )
 
     assert not hasattr(tournament, "name")
     # If a "name" key is ever present in a payload (it shouldn't be), it's
@@ -593,25 +612,55 @@ def test_message_from_dict_prefers_platform_seq_over_legacy_index():
 
 
 def test_official_assignment_parses_the_base_fields_only_from_an_older_backend():
-    assignment = OfficialAssignment.from_dict({
-        "match_id": "m-1", "seat_id": "s-1", "game_type": "werewolf", "seat_position": 2,
-        "seat_count": 7, "match_status": "starting", "seat_status": "pending",
-    })
+    assignment = OfficialAssignment.from_dict(
+        {
+            "match_id": "m-1",
+            "seat_id": "s-1",
+            "game_type": "werewolf",
+            "seat_position": 2,
+            "seat_count": 7,
+            "match_status": "starting",
+            "seat_status": "pending",
+        }
+    )
 
-    assert (assignment.match_id, assignment.seat_id, assignment.game_type) == ("m-1", "s-1", "werewolf")
-    assert (assignment.context, assignment.tournament_id, assignment.tournament_name) == (None, None, None)
-    assert (assignment.round_label, assignment.opponents, assignment.connect_deadline_at) == (None, (), None)
+    assert (assignment.match_id, assignment.seat_id, assignment.game_type) == (
+        "m-1",
+        "s-1",
+        "werewolf",
+    )
+    assert (assignment.context, assignment.tournament_id, assignment.tournament_name) == (
+        None,
+        None,
+        None,
+    )
+    assert (assignment.round_label, assignment.opponents, assignment.connect_deadline_at) == (
+        None,
+        (),
+        None,
+    )
 
 
 def test_official_assignment_parses_the_tournament_fields():
-    assignment = OfficialAssignment.from_dict({
-        "match_id": "m-1", "seat_id": "s-1", "context": "tournament", "tournament_id": "t-1",
-        "tournament_name": "Fall Cup", "round_label": "Final", "opponents": [{"name": "Alpha"}],
-        "connect_deadline_at": "2026-10-16T15:04:00Z",
-    })
+    assignment = OfficialAssignment.from_dict(
+        {
+            "match_id": "m-1",
+            "seat_id": "s-1",
+            "context": "tournament",
+            "tournament_id": "t-1",
+            "tournament_name": "Fall Cup",
+            "round_label": "Final",
+            "opponents": [{"name": "Alpha"}],
+            "connect_deadline_at": "2026-10-16T15:04:00Z",
+        }
+    )
 
     assert assignment.context == "tournament"
-    assert (assignment.tournament_id, assignment.tournament_name, assignment.round_label) == ("t-1", "Fall Cup", "Final")
+    assert (assignment.tournament_id, assignment.tournament_name, assignment.round_label) == (
+        "t-1",
+        "Fall Cup",
+        "Final",
+    )
     assert assignment.opponents == ("Alpha",)
     assert assignment.connect_deadline_at == "2026-10-16T15:04:00Z"
 
@@ -619,29 +668,58 @@ def test_official_assignment_parses_the_tournament_fields():
 @pytest.mark.parametrize(
     "opponents, expected",
     [
-        ([{"name": "A"}, "B", {"name": ""}, {"name": None}, {}, 7, None, {"name": "C", "id": "x"}], ("A", "B", "C")),
+        (
+            [
+                {"name": "A"},
+                "B",
+                {"name": ""},
+                {"name": None},
+                {},
+                7,
+                None,
+                {"name": "C", "id": "x"},
+            ],
+            ("A", "B", "C"),
+        ),
         ({"name": "A"}, ()),
         ("Alpha", ()),
         (None, ()),
     ],
 )
 def test_official_assignment_tolerates_odd_opponent_lists(opponents, expected):
-    assignment = OfficialAssignment.from_dict({"match_id": "m", "seat_id": "s", "opponents": opponents})
+    assignment = OfficialAssignment.from_dict(
+        {"match_id": "m", "seat_id": "s", "opponents": opponents}
+    )
 
     assert assignment.opponents == expected
 
 
 def test_official_assignment_ignores_non_text_optional_fields():
-    assignment = OfficialAssignment.from_dict({
-        "match_id": "m", "seat_id": "s", "context": 3, "tournament_id": None, "tournament_name": "  ",
-        "round_label": ["x"], "connect_deadline_at": 1760000000,
-    })
+    assignment = OfficialAssignment.from_dict(
+        {
+            "match_id": "m",
+            "seat_id": "s",
+            "context": 3,
+            "tournament_id": None,
+            "tournament_name": "  ",
+            "round_label": ["x"],
+            "connect_deadline_at": 1760000000,
+        }
+    )
 
-    assert (assignment.context, assignment.tournament_id, assignment.tournament_name) == (None, None, None)
+    assert (assignment.context, assignment.tournament_id, assignment.tournament_name) == (
+        None,
+        None,
+        None,
+    )
     assert (assignment.round_label, assignment.connect_deadline_at) == (None, None)
 
 
 def test_official_assignment_is_hashable_with_opponents():
-    assignment = OfficialAssignment.from_dict({"match_id": "m", "seat_id": "s", "opponents": [{"name": "A"}]})
+    assignment = OfficialAssignment.from_dict(
+        {"match_id": "m", "seat_id": "s", "opponents": [{"name": "A"}]}
+    )
 
-    assert hash(assignment) == hash(OfficialAssignment.from_dict({"match_id": "m", "seat_id": "s", "opponents": ["A"]}))
+    assert hash(assignment) == hash(
+        OfficialAssignment.from_dict({"match_id": "m", "seat_id": "s", "opponents": ["A"]})
+    )

@@ -15,27 +15,47 @@ from pokemon import damage, stats
 
 # Straight from the documented example card.
 URSHIFU = {
-    "card_id": "u", "species": "Urshifu-Rapid-Strike", "item": "Mystic Water",
-    "ability": "Unseen Fist", "nature": "Adamant", "level": 50,
-    "evs": {"hp": 4, "atk": 252, "spe": 252}, "ivs": {},
+    "card_id": "u",
+    "species": "Urshifu-Rapid-Strike",
+    "item": "Mystic Water",
+    "ability": "Unseen Fist",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {"hp": 4, "atk": 252, "spe": 252},
+    "ivs": {},
     "moves": ["Surging Strikes", "Close Combat", "Aqua Jet", "Protect"],
 }
 INCINEROAR = {
-    "card_id": "i", "species": "Incineroar", "item": "Sitrus Berry",
-    "ability": "Intimidate", "nature": "Careful", "level": 50,
-    "evs": {"hp": 252, "def": 4, "spd": 252}, "ivs": {},
+    "card_id": "i",
+    "species": "Incineroar",
+    "item": "Sitrus Berry",
+    "ability": "Intimidate",
+    "nature": "Careful",
+    "level": 50,
+    "evs": {"hp": 252, "def": 4, "spd": 252},
+    "ivs": {},
     "moves": ["Flare Blitz", "Knock Off", "Fake Out", "Parting Shot"],
 }
 FLUTTER = {
-    "card_id": "f", "species": "Flutter Mane", "item": "Booster Energy",
-    "ability": "Protosynthesis", "nature": "Timid", "level": 50,
-    "evs": {"hp": 4, "spa": 252, "spe": 252}, "ivs": {},
+    "card_id": "f",
+    "species": "Flutter Mane",
+    "item": "Booster Energy",
+    "ability": "Protosynthesis",
+    "nature": "Timid",
+    "level": 50,
+    "evs": {"hp": 4, "spa": 252, "spe": 252},
+    "ivs": {},
     "moves": ["Moonblast", "Shadow Ball", "Icy Wind", "Protect"],
 }
 GARCHOMP = {
-    "card_id": "g", "species": "Garchomp", "item": "Life Orb",
-    "ability": "Rough Skin", "nature": "Jolly", "level": 50,
-    "evs": {"atk": 252, "spe": 252}, "ivs": {},
+    "card_id": "g",
+    "species": "Garchomp",
+    "item": "Life Orb",
+    "ability": "Rough Skin",
+    "nature": "Jolly",
+    "level": 50,
+    "evs": {"atk": 252, "spe": 252},
+    "ivs": {},
     "moves": ["Earthquake", "Dragon Claw", "Rock Slide", "Protect"],
 }
 
@@ -50,9 +70,7 @@ def card(raw):
 def test_the_level_50_stat_formula_by_hand():
     """Urshifu, base 130 Atk, 252 EV, 31 IV, Adamant at level 50:
     floor((2*130 + 31 + 63) * 50/100) + 5 = 182, and 182 * 1.1 = 200.2 -> 200."""
-    computed = stats.compute_stats(
-        "Urshifu-Rapid-Strike", {"atk": 252}, {}, "Adamant", 50
-    )
+    computed = stats.compute_stats("Urshifu-Rapid-Strike", {"atk": 252}, {}, "Adamant", 50)
     assert computed["atk"] == 200
 
 
@@ -78,9 +96,9 @@ def test_a_missing_iv_defaults_to_31_not_zero():
 def test_nature_applies_after_the_plus_five_and_never_to_hp():
     neutral = stats.compute_stats("Urshifu-Rapid-Strike", {"hp": 252}, {}, None, 50)
     adamant = stats.compute_stats("Urshifu-Rapid-Strike", {"hp": 252}, {}, "Adamant", 50)
-    assert adamant["hp"] == neutral["hp"]          # HP is never nature-modified
+    assert adamant["hp"] == neutral["hp"]  # HP is never nature-modified
     assert adamant["atk"] > neutral["atk"]
-    assert adamant["spa"] < neutral["spa"]         # Adamant lowers Sp. Atk
+    assert adamant["spa"] < neutral["spa"]  # Adamant lowers Sp. Atk
 
 
 def test_evs_are_capped_and_unknown_species_are_empty():
@@ -95,7 +113,7 @@ def test_stage_multipliers():
     assert stats.stage_multiplier(2) == 2.0
     assert stats.stage_multiplier(-2) == 0.5
     assert stats.stage_multiplier(6) == 4.0
-    assert stats.stage_multiplier(99) == stats.stage_multiplier(6)   # clamped
+    assert stats.stage_multiplier(99) == stats.stage_multiplier(6)  # clamped
 
 
 # -- parse_card -------------------------------------------------------------
@@ -107,9 +125,7 @@ def test_parse_card_reads_the_published_set():
     assert parsed.item == "Mystic Water"
     assert parsed.types == ("Fighting", "Water")
     assert parsed.moves == ("Surging Strikes", "Close Combat", "Aqua Jet", "Protect")
-    assert parsed.stats == {
-        "hp": 176, "atk": 200, "def": 120, "spa": 74, "spd": 80, "spe": 149
-    }
+    assert parsed.stats == {"hp": 176, "atk": 200, "def": 120, "spa": 74, "spd": 80, "spe": 149}
     assert parsed.max_hp == 176
 
 
@@ -125,10 +141,10 @@ def test_parse_card_is_total():
 
 def test_close_combat_damage_is_exactly_right():
     """Hand-computed:
-        base = floor(floor(floor(2*50/5 + 2) * 120 * 200 / 111) / 50) + 2
-             = floor(floor(22 * 120 * 200 / 111) / 50) + 2 = floor(4756/50) + 2 = 97
-        modifiers = STAB 1.5 * Fighting-into-Fire/Dark 2.0 = 3.0
-        raw = 291  ->  min floor(291*0.85) = 247,  max 291
+    base = floor(floor(floor(2*50/5 + 2) * 120 * 200 / 111) / 50) + 2
+         = floor(floor(22 * 120 * 200 / 111) / 50) + 2 = floor(4756/50) + 2 = 97
+    modifiers = STAB 1.5 * Fighting-into-Fire/Dark 2.0 = 3.0
+    raw = 291  ->  min floor(291*0.85) = 247,  max 291
     """
     result = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat")
     assert result.effectiveness == 4.0 or result.effectiveness == 2.0
@@ -181,7 +197,7 @@ def test_stab_is_worth_one_point_five():
     attacker's typing: same move, same stats, one gets the same-type bonus."""
     import dataclasses
 
-    urshifu = card(URSHIFU)                                   # Fighting/Water: STAB on Water
+    urshifu = card(URSHIFU)  # Fighting/Water: STAB on Water
     no_stab = dataclasses.replace(urshifu, species="Incineroar")  # same stats, Fire/Dark
     defender = card(INCINEROAR)
 
@@ -197,8 +213,11 @@ def test_critical_hits_ignore_the_defenders_positive_boosts():
         card(URSHIFU), card(INCINEROAR), "Close Combat", defender_boosts={"def": 2}
     )
     crit = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Close Combat",
-        defender_boosts={"def": 2}, crit=True,
+        card(URSHIFU),
+        card(INCINEROAR),
+        "Close Combat",
+        defender_boosts={"def": 2},
+        crit=True,
     )
     assert boosted.max_damage < plain.max_damage
     # The boost is ignored, and the 1.5x critical multiplier then applies.
@@ -207,9 +226,7 @@ def test_critical_hits_ignore_the_defenders_positive_boosts():
 
 def test_boosts_move_damage_in_the_right_direction():
     plain = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat")
-    up = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Close Combat", attacker_boosts={"atk": 2}
-    )
+    up = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat", attacker_boosts={"atk": 2})
     down = damage.damage(
         card(URSHIFU), card(INCINEROAR), "Close Combat", attacker_boosts={"atk": -2}
     )
@@ -218,9 +235,7 @@ def test_boosts_move_damage_in_the_right_direction():
 
 def test_screens_halve_the_matching_category_only():
     plain = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat")
-    reflected = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Close Combat", reflect=True
-    )
+    reflected = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat", reflect=True)
     # Reflect is the physical screen; a physical move must be reduced.
     assert reflected.max_damage < plain.max_damage
 
@@ -231,20 +246,14 @@ def test_burn_halves_physical_damage():
     assert burned.max_damage < plain.max_damage
     # A special move is unaffected by burn.
     special_plain = damage.damage(card(FLUTTER), card(GARCHOMP), "Moonblast")
-    special_burned = damage.damage(
-        card(FLUTTER), card(GARCHOMP), "Moonblast", burned=True
-    )
+    special_burned = damage.damage(card(FLUTTER), card(GARCHOMP), "Moonblast", burned=True)
     assert special_burned.max_damage == special_plain.max_damage
 
 
 def test_weather_boosts_and_damps_the_matching_types():
     plain = damage.damage(card(URSHIFU), card(INCINEROAR), "Surging Strikes")
-    rain = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Surging Strikes", weather="Rain"
-    )
-    sun = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Surging Strikes", weather="Sun"
-    )
+    rain = damage.damage(card(URSHIFU), card(INCINEROAR), "Surging Strikes", weather="Rain")
+    sun = damage.damage(card(URSHIFU), card(INCINEROAR), "Surging Strikes", weather="Sun")
     assert rain.max_damage > plain.max_damage
     assert sun.max_damage < plain.max_damage
 
@@ -267,10 +276,8 @@ def test_weather_names_are_folded():
 
 def test_multiscale_halves_only_at_full_health():
     plain = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat")
-    full = damage.damage(
-        card(URSHIFU), card(INCINEROAR), "Close Combat", defender_full_hp=True
-    )
-    assert full.max_damage == plain.max_damage      # Incineroar has Intimidate, not Multiscale
+    full = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat", defender_full_hp=True)
+    assert full.max_damage == plain.max_damage  # Incineroar has Intimidate, not Multiscale
 
 
 def test_levitate_grants_a_ground_immunity():
@@ -283,12 +290,10 @@ def test_levitate_grants_a_ground_immunity():
 def test_unmodelled_items_and_abilities_are_reported_not_guessed():
     """A number the policy trusts must declare what it left out."""
     result = damage.damage(card(URSHIFU), card(INCINEROAR), "Close Combat")
-    assert "ability:Intimidate" in result.unmodelled      # a field state we cannot see
+    assert "ability:Intimidate" in result.unmodelled  # a field state we cannot see
 
     # A handled item and ability are not reported as gaps.
-    assert not any(
-        entry.startswith("item:") for entry in result.unmodelled
-    )
+    assert not any(entry.startswith("item:") for entry in result.unmodelled)
 
 
 def test_damage_is_total_on_junk():

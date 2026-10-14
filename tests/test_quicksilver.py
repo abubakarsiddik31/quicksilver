@@ -41,9 +41,7 @@ def make_state(*legal: LegalAction, game_name: str = DOUBLES) -> GameState:
 
 
 def make_context(game_type: str | None) -> DecisionContext:
-    return DecisionContext(
-        session_id="s1", tournament_id=None, game_type=game_type, agent_id="a1"
-    )
+    return DecisionContext(session_id="s1", tournament_id=None, game_type=game_type, agent_id="a1")
 
 
 def enumerated(action_id: str = "0") -> LegalAction:

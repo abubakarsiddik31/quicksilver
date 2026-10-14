@@ -10,15 +10,25 @@ from __future__ import annotations
 from pokemon import battle
 
 URSHIFU = {
-    "card_id": "u", "species": "Urshifu-Rapid-Strike", "item": "Mystic Water",
-    "ability": "Unseen Fist", "nature": "Adamant", "level": 50,
-    "evs": {"hp": 4, "atk": 252, "spe": 252}, "ivs": {},
+    "card_id": "u",
+    "species": "Urshifu-Rapid-Strike",
+    "item": "Mystic Water",
+    "ability": "Unseen Fist",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {"hp": 4, "atk": 252, "spe": 252},
+    "ivs": {},
     "moves": ["Surging Strikes", "Close Combat", "Aqua Jet", "Protect"],
 }
 INCINEROAR = {
-    "card_id": "i", "species": "Incineroar", "item": "Sitrus Berry",
-    "ability": "Intimidate", "nature": "Careful", "level": 50,
-    "evs": {"hp": 252, "def": 4, "spd": 252}, "ivs": {},
+    "card_id": "i",
+    "species": "Incineroar",
+    "item": "Sitrus Berry",
+    "ability": "Intimidate",
+    "nature": "Careful",
+    "level": 50,
+    "evs": {"hp": 252, "def": 4, "spd": 252},
+    "ivs": {},
     "moves": ["Flare Blitz", "Knock Off", "Fake Out", "Parting Shot"],
 }
 
@@ -72,7 +82,11 @@ def test_it_picks_the_hardest_hitting_move():
     )
     turn = battle.choose_turn(
         template(
-            [move("Close Combat", [1, 2]), move("Aqua Jet", [1, 2]), move("Surging Strikes", [1, 2])],
+            [
+                move("Close Combat", [1, 2]),
+                move("Aqua Jet", [1, 2]),
+                move("Surging Strikes", [1, 2]),
+            ],
             [move("Aqua Jet", [1, 2])],
         ),
         board,
@@ -132,7 +146,7 @@ def test_fake_out_is_worth_more_on_the_first_turn():
 
 def test_protect_is_preferred_when_the_slot_is_about_to_faint():
     board = obs(
-        ours=[mon("Urshifu-Rapid-Strike", hp=30, max_hp=176)],   # 17% left
+        ours=[mon("Urshifu-Rapid-Strike", hp=30, max_hp=176)],  # 17% left
         theirs=[mon("Flutter Mane", hp=131, max_hp=131)],
     )
     turn = battle.choose_turn(
@@ -209,9 +223,7 @@ def test_it_declines_when_the_opponent_side_is_empty():
 
 
 def test_it_declines_on_an_unreadable_template():
-    board = obs(
-        ours=[mon("Urshifu-Rapid-Strike")], theirs=[mon("Garchomp")]
-    )
+    board = obs(ours=[mon("Urshifu-Rapid-Strike")], theirs=[mon("Garchomp")])
     for bad in (None, {}, {"slots": []}, {"slots": "nope"}, []):
         assert battle.choose_turn(bad, board) is None
 
@@ -245,8 +257,8 @@ def test_the_same_board_always_yields_the_same_turn():
 
 
 def test_spread_moves_are_recognised():
-    assert battle.is_spread("Earthquake") is True       # allAdjacent
-    assert battle.is_spread("Rock Slide") is True       # allAdjacentFoes
+    assert battle.is_spread("Earthquake") is True  # allAdjacent
+    assert battle.is_spread("Rock Slide") is True  # allAdjacentFoes
     assert battle.is_spread("Icy Wind") is True
     assert battle.is_spread("Close Combat") is False
     assert battle.is_spread(None) is False
@@ -280,16 +292,16 @@ def test_damaging_our_own_partner_counts_against_the_move():
         )
         return score
 
-    immune_partner = score_with("Corviknight")   # Steel/Flying: Ground is 0x
-    weak_partner = score_with("Incineroar")      # Fire/Dark: Ground is 2x
+    immune_partner = score_with("Corviknight")  # Steel/Flying: Ground is 0x
+    weak_partner = score_with("Incineroar")  # Fire/Dark: Ground is 2x
     assert weak_partner < immune_partner
 
 
 def test_target_indices_map_onto_opposing_slots():
     assert battle.target_index(1) == 0
     assert battle.target_index(2) == 1
-    assert battle.target_index(0) is None      # self / field / spread
-    assert battle.target_index(-1) is None     # our own side
+    assert battle.target_index(0) is None  # self / field / spread
+    assert battle.target_index(-1) is None  # our own side
     assert battle.target_index(None) is None
     assert battle.target_index(True) is None
 

@@ -57,9 +57,7 @@ def _print_state(state: GameState) -> None:
 def _read_required_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        raise ConfigurationError(
-            f"{name} is not set. Set it in your environment or .env file."
-        )
+        raise ConfigurationError(f"{name} is not set. Set it in your environment or .env file.")
     return value
 
 

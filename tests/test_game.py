@@ -48,7 +48,12 @@ def state_payload(**overrides) -> dict:
         "messaging_enabled": False,
         "phase": "moving",
         "next_actions": [
-            {"action": "make_move", "endpoint": "POST /step", "hint": "Go.", "required_fields": ["action"]}
+            {
+                "action": "make_move",
+                "endpoint": "POST /step",
+                "hint": "Go.",
+                "required_fields": ["action"],
+            }
         ],
     }
     payload.update(overrides)
@@ -355,7 +360,9 @@ def test_terminate_messaging_sends_terminate_type():
             200,
             json=messaging_state_payload(
                 phase="moving",
-                next_actions=[{"action": "wait_for_opponent", "endpoint": "GET /x", "hint": "Wait."}],
+                next_actions=[
+                    {"action": "wait_for_opponent", "endpoint": "GET /x", "hint": "Wait."}
+                ],
             ),
         )
 

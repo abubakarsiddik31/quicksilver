@@ -27,24 +27,48 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from pokemon import dex, stats as stats_mod
+from pokemon import dex
+from pokemon import stats as stats_mod
 
 # Type-boosting items: 1.2x to moves of one type. Showdown's item data records
 # the hook (``onBasePowerPriority``) but not which type it applies to, so the
 # mapping has to live here. Plates are 1.2x as well.
 TYPE_BOOST_ITEMS: dict[str, str] = {
-    "Mystic Water": "Water", "Charcoal": "Fire", "Miracle Seed": "Grass",
-    "Magnet": "Electric", "Never-Melt Ice": "Ice", "Black Belt": "Fighting",
-    "Black Glasses": "Dark", "Sharp Beak": "Flying", "Poison Barb": "Poison",
-    "Soft Sand": "Ground", "Hard Stone": "Rock", "Silver Powder": "Bug",
-    "Spell Tag": "Ghost", "Metal Coat": "Steel", "Twisted Spoon": "Psychic",
-    "Dragon Fang": "Dragon", "Silk Scarf": "Normal", "Fairy Feather": "Fairy",
-    "Draco Plate": "Dragon", "Dread Plate": "Dark", "Earth Plate": "Ground",
-    "Fist Plate": "Fighting", "Flame Plate": "Fire", "Icicle Plate": "Ice",
-    "Insect Plate": "Bug", "Iron Plate": "Steel", "Meadow Plate": "Grass",
-    "Mind Plate": "Psychic", "Pixie Plate": "Fairy", "Sky Plate": "Flying",
-    "Splash Plate": "Water", "Spooky Plate": "Ghost", "Stone Plate": "Rock",
-    "Toxic Plate": "Poison", "Zap Plate": "Electric",
+    "Mystic Water": "Water",
+    "Charcoal": "Fire",
+    "Miracle Seed": "Grass",
+    "Magnet": "Electric",
+    "Never-Melt Ice": "Ice",
+    "Black Belt": "Fighting",
+    "Black Glasses": "Dark",
+    "Sharp Beak": "Flying",
+    "Poison Barb": "Poison",
+    "Soft Sand": "Ground",
+    "Hard Stone": "Rock",
+    "Silver Powder": "Bug",
+    "Spell Tag": "Ghost",
+    "Metal Coat": "Steel",
+    "Twisted Spoon": "Psychic",
+    "Dragon Fang": "Dragon",
+    "Silk Scarf": "Normal",
+    "Fairy Feather": "Fairy",
+    "Draco Plate": "Dragon",
+    "Dread Plate": "Dark",
+    "Earth Plate": "Ground",
+    "Fist Plate": "Fighting",
+    "Flame Plate": "Fire",
+    "Icicle Plate": "Ice",
+    "Insect Plate": "Bug",
+    "Iron Plate": "Steel",
+    "Meadow Plate": "Grass",
+    "Mind Plate": "Psychic",
+    "Pixie Plate": "Fairy",
+    "Sky Plate": "Flying",
+    "Splash Plate": "Water",
+    "Spooky Plate": "Ghost",
+    "Stone Plate": "Rock",
+    "Toxic Plate": "Poison",
+    "Zap Plate": "Electric",
 }
 
 # Abilities that double the attacking stat outright.
@@ -70,11 +94,20 @@ _TYPE_IMMUNITY_ABILITIES: dict[str, str] = {
 # Weather names as the sim reports them. Keys are lowercased with spaces and
 # hyphens removed, so "Harsh Sunshine" and "Desolate Land" both fold to Sun.
 _WEATHER_ALIASES = {
-    "rain": "Rain", "primordialsea": "Rain", "heavyrain": "Rain",
-    "sun": "Sun", "sunny": "Sun", "sunnyday": "Sun",
-    "desolateland": "Sun", "harshsunshine": "Sun", "extremelyharshsunlight": "Sun",
-    "sand": "Sand", "sandstorm": "Sand",
-    "snow": "Snow", "hail": "Snow", "snowscape": "Snow",
+    "rain": "Rain",
+    "primordialsea": "Rain",
+    "heavyrain": "Rain",
+    "sun": "Sun",
+    "sunny": "Sun",
+    "sunnyday": "Sun",
+    "desolateland": "Sun",
+    "harshsunshine": "Sun",
+    "extremelyharshsunlight": "Sun",
+    "sand": "Sand",
+    "sandstorm": "Sand",
+    "snow": "Snow",
+    "hail": "Snow",
+    "snowscape": "Snow",
 }
 
 _SCREEN_BREAKING_ABILITIES = {"Infiltrator"}
@@ -227,9 +260,7 @@ def _attack_stat(
     return value
 
 
-def _defense_stat(
-    card: Card, category: str, boosts: dict, crit: bool
-) -> float:
+def _defense_stat(card: Card, category: str, boosts: dict, crit: bool) -> float:
     key = "def" if category == "Physical" else "spd"
     stage = boosts.get(key, 0)
     if crit:
@@ -277,8 +308,13 @@ def damage(
     power = dex.move_power(move)
 
     result = DamageResult(
-        move=move, move_type=move_type, category=category, power=power,
-        effectiveness=1.0, min_damage=0, max_damage=0,
+        move=move,
+        move_type=move_type,
+        category=category,
+        power=power,
+        effectiveness=1.0,
+        min_damage=0,
+        max_damage=0,
         defender_max_hp=defender.max_hp,
     )
 
@@ -291,19 +327,26 @@ def damage(
         effectiveness = 0.0
     if effectiveness == 0.0:
         return DamageResult(
-            move=move, move_type=move_type, category=category, power=power,
-            effectiveness=0.0, min_damage=0, max_damage=0,
-            defender_max_hp=defender.max_hp, unmodelled=tuple(unmodelled),
+            move=move,
+            move_type=move_type,
+            category=category,
+            power=power,
+            effectiveness=0.0,
+            min_damage=0,
+            max_damage=0,
+            defender_max_hp=defender.max_hp,
+            unmodelled=tuple(unmodelled),
         )
 
     attack = _attack_stat(attacker, category, attacker_boosts, crit, burned)
     defence = _defense_stat(defender, category, defender_boosts, crit)
 
-    base = math.floor(
+    base = (
         math.floor(
-            math.floor(2 * attacker.level / 5 + 2) * power * attack / defence
-        ) / 50
-    ) + 2
+            math.floor(math.floor(2 * attacker.level / 5 + 2) * power * attack / defence) / 50
+        )
+        + 2
+    )
 
     modifiers = 1.0
 
@@ -363,14 +406,30 @@ def damage(
         modifiers *= 1.5
 
     # Report the gaps honestly rather than guessing at them.
-    if item and item not in TYPE_BOOST_ITEMS and item not in {
-        "Life Orb", "Choice Band", "Choice Specs", "Assault Vest",
-    }:
+    if (
+        item
+        and item not in TYPE_BOOST_ITEMS
+        and item
+        not in {
+            "Life Orb",
+            "Choice Band",
+            "Choice Specs",
+            "Assault Vest",
+        }
+    ):
         unmodelled.append(f"item:{item}")
-    if ability and ability not in (
-        _HUGE_POWER | _FILTER | _MULTISCALE | _SCREEN_BREAKING_ABILITIES
-        | set(_TYPE_IMMUNITY_ABILITIES)
-    ) and ability not in ("Thick Fat", "Adaptability", "Fluffy"):
+    if (
+        ability
+        and ability
+        not in (
+            _HUGE_POWER
+            | _FILTER
+            | _MULTISCALE
+            | _SCREEN_BREAKING_ABILITIES
+            | set(_TYPE_IMMUNITY_ABILITIES)
+        )
+        and ability not in ("Thick Fat", "Adaptability", "Fluffy")
+    ):
         unmodelled.append(f"ability:{ability}")
 
     raw = base * modifiers
@@ -378,9 +437,15 @@ def damage(
     max_damage = max(1, math.floor(raw))
 
     return DamageResult(
-        move=move, move_type=move_type, category=category, power=power,
-        effectiveness=effectiveness, min_damage=min_damage, max_damage=max_damage,
-        defender_max_hp=defender.max_hp, unmodelled=tuple(unmodelled),
+        move=move,
+        move_type=move_type,
+        category=category,
+        power=power,
+        effectiveness=effectiveness,
+        min_damage=min_damage,
+        max_damage=max_damage,
+        defender_max_hp=defender.max_hp,
+        unmodelled=tuple(unmodelled),
     )
 
 

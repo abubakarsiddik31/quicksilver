@@ -18,6 +18,8 @@ import types
 
 import httpx
 import pytest
+from test_official import CONTROL, KEY, grant
+from test_tournament import Harness, _grant, a
 
 import altruagent.mcp_game as mcp_game_module
 from altruagent.errors import PlatformError
@@ -32,9 +34,12 @@ from altruagent.official import (
     new_execution_id,
 )
 from altruagent.supervisor import SEAT_BUSY_RETRY_SECONDS
-from altruagent.worker import EXIT_SEAT_BUSY, EXIT_SUCCESS, TournamentWorkerInput, run_tournament_worker
-from test_official import CONTROL, KEY, grant
-from test_tournament import Harness, _grant, a
+from altruagent.worker import (
+    EXIT_SEAT_BUSY,
+    EXIT_SUCCESS,
+    TournamentWorkerInput,
+    run_tournament_worker,
+)
 
 LEASE_TTL = 30.0
 EXEC_A = "exec-a-" + "1" * 30
@@ -64,7 +69,9 @@ class ScriptedOfficial:
 
     def grant(self, seat_id, execution_id):
         self.grant_calls.append((seat_id, execution_id))
-        return self._next(self.grant_results, self.grant_calls) or _grant(access_token=f"minted-{len(self.grant_calls)}")
+        return self._next(self.grant_results, self.grant_calls) or _grant(
+            access_token=f"minted-{len(self.grant_calls)}"
+        )
 
     def close(self):
         pass
@@ -94,10 +101,16 @@ def test_renewal_schedule_stays_inside_the_lease_ttl_even_with_failures():
 
 
 def test_transient_failure_retries_sooner_logs_once_and_recovers():
-    official = ScriptedOfficial(renewals=(PlatformError("503", status_code=503), httpx.ConnectError("down"), None))
+    official = ScriptedOfficial(
+        renewals=(PlatformError("503", status_code=503), httpx.ConnectError("down"), None)
+    )
     k, log = keeper(official)
 
-    assert [k.renew_once() for _ in range(3)] == [LEASE_RETRY_SECONDS, LEASE_RETRY_SECONDS, LEASE_RENEW_SECONDS]
+    assert [k.renew_once() for _ in range(3)] == [
+        LEASE_RETRY_SECONDS,
+        LEASE_RETRY_SECONDS,
+        LEASE_RENEW_SECONDS,
+    ]
     assert not k.lost.is_set() and official.grant_calls == []
     assert len([line for line in log if "renewal failed" in line]) == 1
     assert log[-1] == "Seat lease renewal recovered."
@@ -127,14 +140,18 @@ def test_seat_busy_from_renew_is_lost():
 
 
 def test_failed_reacquire_is_transient():
-    k, _ = keeper(ScriptedOfficial(renewals=(NOT_HELD,), grants=(PlatformError("500", status_code=500),)))
+    k, _ = keeper(
+        ScriptedOfficial(renewals=(NOT_HELD,), grants=(PlatformError("500", status_code=500),))
+    )
 
     assert k.renew_once() == LEASE_RETRY_SECONDS and not k.lost.is_set()
 
 
 @pytest.mark.parametrize("code", ["assignment_not_grantable", "assignment_not_found"])
 def test_ended_assignment_stops_renewing_without_losing(code):
-    k, _ = keeper(ScriptedOfficial(renewals=(OfficialAgentError("ended", status_code=409, error_code=code),)))
+    k, _ = keeper(
+        ScriptedOfficial(renewals=(OfficialAgentError("ended", status_code=409, error_code=code),))
+    )
 
     assert k.renew_once() is None and not k.lost.is_set()
 
@@ -184,7 +201,9 @@ class LeaseBackend:
                 token = f"sess-{self.sessions}"
                 self.valid.add(token)
                 return httpx.Response(200, json={"access_token": token, "expires_at": "x"})
-            if (request.headers.get("authorization") or "").removeprefix("Bearer ") not in self.valid:
+            if (request.headers.get("authorization") or "").removeprefix(
+                "Bearer "
+            ) not in self.valid:
                 return httpx.Response(401, json={"error": "invalid_agent_session"})
             execution_id = (json.loads(request.content) or {}).get("execution_id")
             active = self.now < self.expires
@@ -193,7 +212,9 @@ class LeaseBackend:
                 if not active or self.owner != execution_id:
                     return httpx.Response(409, json={"error": "lease_not_held"})
                 self.expires = self.now + LEASE_TTL
-                return httpx.Response(200, json={"seat_id": "seat-1", "execution_lease_expires_at": "x"})
+                return httpx.Response(
+                    200, json={"seat_id": "seat-1", "execution_lease_expires_at": "x"}
+                )
             self.calls.append(("grant", execution_id))
             if active and self.owner != execution_id:
                 return httpx.Response(409, json={"error": "seat_busy"})
@@ -203,7 +224,9 @@ class LeaseBackend:
 
 
 def client(backend):
-    return OfficialAgentClient(CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend))
+    return OfficialAgentClient(
+        CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend)
+    )
 
 
 def test_renewal_keeps_the_lease_without_minting_and_blocks_other_runtimes():
@@ -287,8 +310,10 @@ def test_concurrent_renewal_and_regrant_share_one_session():
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
-    threads = [threading.Thread(target=call, args=(lambda: runtime.renew_lease("seat-1", EXEC_A),)),
-               threading.Thread(target=call, args=(lambda: runtime.grant("seat-1", EXEC_A),))]
+    threads = [
+        threading.Thread(target=call, args=(lambda: runtime.renew_lease("seat-1", EXEC_A),)),
+        threading.Thread(target=call, args=(lambda: runtime.grant("seat-1", EXEC_A),)),
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -302,8 +327,12 @@ def test_concurrent_renewal_and_regrant_share_one_session():
 
 def _run_worker(official, run_game_fn, **kwargs):
     return run_tournament_worker(
-        TournamentWorkerInput("seat-1", "match-1", "pokemon_vgc_doubles_draft", "agent.agent:create_agent", EXEC_A),
-        official_factory=lambda: official, run_game_fn=run_game_fn, **kwargs,
+        TournamentWorkerInput(
+            "seat-1", "match-1", "pokemon_vgc_doubles_draft", "agent.agent:create_agent", EXEC_A
+        ),
+        official_factory=lambda: official,
+        run_game_fn=run_game_fn,
+        **kwargs,
     )
 
 
@@ -336,7 +365,9 @@ def test_worker_grants_once_renews_periodically_and_keeps_its_gameapi_token():
 def test_worker_that_loses_its_seat_stops_without_further_gameplay_calls(monkeypatch):
     official = ScriptedOfficial(renewals=(NOT_HELD,), grants=(None, BUSY))
     gameplay_calls = []
-    monkeypatch.setattr(mcp_game_module, "call_tool", lambda *args: gameplay_calls.append(args) or {})
+    monkeypatch.setattr(
+        mcp_game_module, "call_tool", lambda *args: gameplay_calls.append(args) or {}
+    )
 
     def playing(game, context, contestant):
         deadline = time.monotonic() + 2
@@ -367,7 +398,10 @@ def test_guarded_session_raises_seat_lease_lost():
 def test_worker_whose_seat_is_already_held_does_not_play():
     runs = []
 
-    assert _run_worker(ScriptedOfficial(grants=(BUSY,)), lambda *args: runs.append(args)) == EXIT_SEAT_BUSY
+    assert (
+        _run_worker(ScriptedOfficial(grants=(BUSY,)), lambda *args: runs.append(args))
+        == EXIT_SEAT_BUSY
+    )
     assert runs == []
 
 

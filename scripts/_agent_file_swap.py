@@ -33,9 +33,9 @@ there is no separate flag to get out of sync with reality.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 AGENT_FILE = Path(__file__).resolve().parent.parent / "agent" / "agent.py"
 AGENT_FILE_BACKUP = AGENT_FILE.with_suffix(".py.smoke_test_backup")

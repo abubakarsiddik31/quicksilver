@@ -13,10 +13,9 @@ The cards themselves come from two sources, in order of quality:
 2. The Team Preview roster block, which publishes species, types and base stats
    but no set. Used as a fallback so this still works before a pool is banked.
 
-Opposing *moves* are not published, so their threat is estimated from their
-species' own types — the moves a Pokémon actually carries are almost always
-drawn from its typing. That is an approximation, and it is the only one
-available.
+The opposing six come from the same fixed pool, so their real moves are known
+whenever the pool has been captured and their threat is read from those moves.
+Only for a species missing from the pool is it estimated from its own types.
 
 The returned species ids are taken from the template's own ``roster`` list,
 because that is the vocabulary the server accepts: case and punctuation matter
@@ -58,11 +57,7 @@ LEAD_FAKE_OUT_BONUS = 6.0
 def _attack_types(card: Card | None) -> set[str]:
     if card is None:
         return set()
-    return {
-        t
-        for t in (dex.move_type(m) for m in card.moves if dex.is_damaging(m))
-        if t
-    }
+    return {t for t in (dex.move_type(m) for m in card.moves if dex.is_damaging(m)) if t}
 
 
 def _stab_types(card: Card | None) -> set[str]:
@@ -81,8 +76,12 @@ def offensive_pressure(card: Card | None, opponent: Card | None) -> float:
 
 
 def defensive_risk(card: Card | None, opponent: Card | None) -> float:
-    """How hard that opponent can hit this card, estimated from its own types."""
-    return _best_effectiveness(_stab_types(opponent), card.types if card else ())
+    """How hard that opponent can hit this card: the types of its real moves
+    when its set is known (the draft pool publishes every card's set), else
+    its own types."""
+    return _best_effectiveness(
+        _attack_types(opponent) or _stab_types(opponent), card.types if card else ()
+    )
 
 
 def matchup(card: Card | None, opponents: list[Card | None]) -> float:
@@ -148,10 +147,10 @@ def _cards_for_roster(
     out: list[tuple[str, Card]] = []
     for roster_id in roster_ids:
         summary = summaries_by_id.get(dex.to_id(roster_id))
-        card = card_for_summary(summary, pool_cards) if summary else None
+        card = card_for_summary(summary, pool_cards, "ours") if summary else None
         if card is None and pool_cards:
             # No summary: fall back to the pool entry for this species.
-            card = card_for_summary({"species": roster_id}, pool_cards)
+            card = card_for_summary({"species": roster_id}, pool_cards, "ours")
         if card is None:
             card = card_for_summary({"species": roster_id}, None)
         if card is not None and card.species:
@@ -174,9 +173,7 @@ def _summaries(entries: Any) -> dict[str, dict]:
 # -- choosing ---------------------------------------------------------------
 
 
-def choose_lineup(
-    template: Any, obs: dict, *, pool_cards: Any = None
-) -> dict | None:
+def choose_lineup(template: Any, obs: dict, *, pool_cards: Any = None) -> dict | None:
     """A filled-in ``select_lineup`` action, or ``None`` if it can't be read.
 
     Returns ids copied from the template's roster, which is what the server
@@ -194,7 +191,7 @@ def choose_lineup(
 
     theirs: list[Card] = []
     for summary in _summaries(observation.opponent_roster(obs)).values():
-        card = card_for_summary(summary, pool_cards)
+        card = card_for_summary(summary, pool_cards, "theirs")
         if card is not None:
             theirs.append(card)
 
@@ -213,9 +210,7 @@ def choose_lineup(
         return None
 
     chosen = list(best_combo)
-    leads = sorted(
-        chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0])
-    )[:LEADS]
+    leads = sorted(chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0]))[:LEADS]
 
     return {
         "type": "select_lineup",
@@ -250,7 +245,7 @@ def generate_candidate_lineups(
 
     theirs: list[Card] = []
     for summary in _summaries(observation.opponent_roster(obs)).values():
-        card = card_for_summary(summary, pool_cards)
+        card = card_for_summary(summary, pool_cards, "theirs")
         if card is not None:
             theirs.append(card)
 
@@ -266,9 +261,7 @@ def generate_candidate_lineups(
 
     for score, combo in scored_combos:
         chosen = list(combo)
-        leads = sorted(
-            chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0])
-        )[:LEADS]
+        leads = sorted(chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0]))[:LEADS]
 
         bring_ids = [roster_id for roster_id, _ in chosen]
         lead_ids = [roster_id for roster_id, _ in leads]

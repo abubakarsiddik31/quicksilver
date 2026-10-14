@@ -133,9 +133,7 @@ def available_card_ids(observation: dict) -> list[str]:
     if isinstance(ids, list):
         return [cid for cid in ids if isinstance(cid, str)]
     return [
-        card["card_id"]
-        for card in pool_of(observation)
-        if isinstance(card.get("card_id"), str)
+        card["card_id"] for card in pool_of(observation) if isinstance(card.get("card_id"), str)
     ]
 
 

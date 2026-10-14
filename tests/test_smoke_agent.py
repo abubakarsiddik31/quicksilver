@@ -15,7 +15,9 @@ from altruagent.runner import _validate_decision
 from examples import smoke_agent
 from examples.smoke_agent import SmokeAgentError, choose_action, create_agent
 
-CONTEXT = DecisionContext(session_id="s", tournament_id=None, game_type="pokemon_vgc_doubles_draft", agent_id="a")
+CONTEXT = DecisionContext(
+    session_id="s", tournament_id=None, game_type="pokemon_vgc_doubles_draft", agent_id="a"
+)
 ROSTER = ["Incineroar", "Rillaboom", "Urshifu", "Amoonguss", "Tornadus", "Flutter Mane"]
 
 
@@ -36,21 +38,38 @@ def _templated(action_id: str, template) -> dict:
     return {
         "action_id": action_id,
         "label": action_id,
-        "input": {"session_id": "s", "action_id": action_id, "state_version": 3, "action": template},
+        "input": {
+            "session_id": "s",
+            "action_id": action_id,
+            "state_version": 3,
+            "action": template,
+        },
     }
 
 
 def _lineup(roster=ROSTER) -> dict:
     return _templated(
         "select_lineup",
-        {"type": "select_lineup", "roster": roster, "bring_count": 4, "lead_count": 2, "instructions": "..."},
+        {
+            "type": "select_lineup",
+            "roster": roster,
+            "bring_count": 4,
+            "lead_count": 2,
+            "instructions": "...",
+        },
     )
 
 
 def _move(move_id: str, targets: list[int]) -> dict:
     return {
-        "type": "move", "move_id": move_id, "base_power": 80, "category": "physical",
-        "move_type": "normal", "current_pp": 10, "accuracy": 100, "targets": targets,
+        "type": "move",
+        "move_id": move_id,
+        "base_power": 80,
+        "category": "physical",
+        "move_type": "normal",
+        "current_pp": 10,
+        "accuracy": 100,
+        "targets": targets,
     }
 
 
@@ -61,10 +80,24 @@ def _switch(species: str) -> dict:
 PASS = {"type": "pass"}
 
 
-def _doubles(slot_0_options: list[dict], slot_1_options: list[dict], *, forced=(False, False)) -> dict:
+def _doubles(
+    slot_0_options: list[dict], slot_1_options: list[dict], *, forced=(False, False)
+) -> dict:
     slots = [
-        {"slot": 0, "board_position": -1, "active": None, "force_switch": forced[0], "options": slot_0_options},
-        {"slot": 1, "board_position": -2, "active": None, "force_switch": forced[1], "options": slot_1_options},
+        {
+            "slot": 0,
+            "board_position": -1,
+            "active": None,
+            "force_switch": forced[0],
+            "options": slot_0_options,
+        },
+        {
+            "slot": 1,
+            "board_position": -2,
+            "active": None,
+            "force_switch": forced[1],
+            "options": slot_1_options,
+        },
     ]
     return _templated(
         "doubles_turn",
@@ -94,10 +127,14 @@ def test_draft_pick_returns_first_legal_action():
 
 
 def test_werewolf_action_returns_first_legal_action():
-    decision = _decide({"action_id": "3", "label": "Vote to lynch Player3"}, {"action_id": "7", "label": "Abstain"})
+    decision = _decide(
+        {"action_id": "3", "label": "Vote to lynch Player3"}, {"action_id": "7", "label": "Abstain"}
+    )
 
     assert decision.action_id == "3"
-    assert _validate_decision(decision, _state({"action_id": "3"}, {"action_id": "7"}).legal_actions)
+    assert _validate_decision(
+        decision, _state({"action_id": "3"}, {"action_id": "7"}).legal_actions
+    )
 
 
 def test_no_legal_actions_is_a_clear_error():
@@ -191,7 +228,9 @@ def test_forced_switch_picks_first_switch():
 
 
 def test_one_pass_only_slot_and_one_forced_switch_slot():
-    decision = _decide(_doubles([PASS], [_switch("Tornadus"), _switch("Flutter Mane")], forced=(False, True)))
+    decision = _decide(
+        _doubles([PASS], [_switch("Tornadus"), _switch("Flutter Mane")], forced=(False, True))
+    )
 
     assert decision == {
         "type": "doubles_turn",
@@ -242,13 +281,34 @@ def test_slot_with_no_distinct_switch_and_no_pass_raises():
         {"type": "select_lineup", "slots": []},
         {"type": "doubles_turn"},
         {"type": "doubles_turn", "slots": [{"slot": 0, "options": [PASS]}]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [PASS]}, {"slot": 0, "options": [PASS]}]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [PASS]}, {"slot": 1, "options": []}]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [PASS]}, {"slot": 1, "options": [{"type": "mega"}]}]},
+        {
+            "type": "doubles_turn",
+            "slots": [{"slot": 0, "options": [PASS]}, {"slot": 0, "options": [PASS]}],
+        },
+        {
+            "type": "doubles_turn",
+            "slots": [{"slot": 0, "options": [PASS]}, {"slot": 1, "options": []}],
+        },
+        {
+            "type": "doubles_turn",
+            "slots": [{"slot": 0, "options": [PASS]}, {"slot": 1, "options": [{"type": "mega"}]}],
+        },
         {"type": "doubles_turn", "slots": [{"slot": 0, "options": [PASS]}, "not-a-slot"]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [_move("", [1])]}, {"slot": 1, "options": [PASS]}]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [_move("tackle", ["1"])]}, {"slot": 1, "options": [PASS]}]},
-        {"type": "doubles_turn", "slots": [{"slot": 0, "options": [{"type": "switch"}]}, {"slot": 1, "options": [PASS]}]},
+        {
+            "type": "doubles_turn",
+            "slots": [{"slot": 0, "options": [_move("", [1])]}, {"slot": 1, "options": [PASS]}],
+        },
+        {
+            "type": "doubles_turn",
+            "slots": [
+                {"slot": 0, "options": [_move("tackle", ["1"])]},
+                {"slot": 1, "options": [PASS]},
+            ],
+        },
+        {
+            "type": "doubles_turn",
+            "slots": [{"slot": 0, "options": [{"type": "switch"}]}, {"slot": 1, "options": [PASS]}],
+        },
     ],
 )
 def test_malformed_doubles_turn_template_raises(template):

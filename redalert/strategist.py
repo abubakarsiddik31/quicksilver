@@ -27,8 +27,8 @@ from collections.abc import Callable
 from typing import Any
 
 from common.llm import GeminiClient
-from redalert.plan import DEFAULT_PLAN, Plan, parse_plan
 from redalert import trace
+from redalert.plan import DEFAULT_PLAN, Plan, parse_plan
 from redalert.prompt import build_system, build_user
 
 MIN_GAP_S = 1.5
@@ -112,7 +112,9 @@ class Strategist:
         if reason not in self._pending and len(self._pending) < 8:
             self._pending.append(reason)
 
-    def _detect(self, raw: dict[str, Any], diagnostics: list[str], refusals: list[str], now: float) -> None:
+    def _detect(
+        self, raw: dict[str, Any], diagnostics: list[str], refusals: list[str], now: float
+    ) -> None:
         obs = raw.get("observation") or {}
         if not self._started:
             self._started = True
@@ -152,7 +154,11 @@ class Strategist:
             self._kind_at["refusal"] = now
             self._add("refusals")
         remaining = (raw.get("time") or {}).get("remaining_seconds")
-        if isinstance(remaining, (int, float)) and remaining <= ENDGAME_S and not self._endgame_sent:
+        if (
+            isinstance(remaining, (int, float))
+            and remaining <= ENDGAME_S
+            and not self._endgame_sent
+        ):
             self._endgame_sent = True
             self._add(f"endgame:{int(remaining)}s_left")
         if not self._busy and now >= self._plan_at + self._plan.review_in_s:
@@ -180,10 +186,15 @@ class Strategist:
             self._detect(raw, diagnostics, refusals, now)
             if self._calls >= self._max_calls and not self._cap_logged:
                 self._cap_logged = True
-                self._log(f"[strategist] call cap {self._max_calls} reached; the last plan stays in force")
+                self._log(
+                    f"[strategist] call cap {self._max_calls} reached; the last plan stays in force"
+                )
             if (
-                not self._pending or self._busy or self._calls >= self._max_calls
-                or now < self._backoff_until or now - self._last_start < self._min_gap
+                not self._pending
+                or self._busy
+                or self._calls >= self._max_calls
+                or now < self._backoff_until
+                or now - self._last_start < self._min_gap
             ):
                 return
             self._busy = True
@@ -198,9 +209,16 @@ class Strategist:
             if self._system is None:
                 self._system = build_system(config, (raw.get("map") or {}).get("id"))
             user = build_user(
-                raw, triggers=triggers, diagnostics=diagnostics, refusals=refusals,
-                plan=previous.as_json(), plan_age_s=age, history=history, last_latency_s=latency,
-                jev_advice=jev, extra=extra,
+                raw,
+                triggers=triggers,
+                diagnostics=diagnostics,
+                refusals=refusals,
+                plan=previous.as_json(),
+                plan_age_s=age,
+                history=history,
+                last_latency_s=latency,
+                jev_advice=jev,
+                extra=extra,
             )
         except Exception as exc:  # noqa: BLE001 - never break the loop
             with self._lock:
@@ -217,8 +235,12 @@ class Strategist:
         parsed: Plan | None = None
         try:
             text = self.client.generate(  # type: ignore[union-attr]
-                user, system=self._system, temperature=0.5, max_output_tokens=2200,
-                timeout=MODEL_TIMEOUT_S, json_output=True,
+                user,
+                system=self._system,
+                temperature=0.5,
+                max_output_tokens=2200,
+                timeout=MODEL_TIMEOUT_S,
+                json_output=True,
             )
             parsed = parse_plan(text, previous)
         except Exception as exc:  # noqa: BLE001 - the strategist must never break the loop
@@ -234,14 +256,20 @@ class Strategist:
                 self._history = [*self._history, parsed.assessment][-HISTORY:]
             else:
                 self._errors += 1
-                self._backoff_until = done + min(BACKOFF_MAX_S, BACKOFF_FIRST_S * 2 ** min(self._errors - 1, 4))
+                self._backoff_until = done + min(
+                    BACKOFF_MAX_S, BACKOFF_FIRST_S * 2 ** min(self._errors - 1, 4)
+                )
                 # a failed consult must not lose the reasons it was for
                 for t in triggers[:4]:
                     self._add(t)
             self._busy = False
         trace.write(
-            "plan", ok=parsed is not None, triggers=triggers, latency_s=self._latency,
-            version=self.version, plan=parsed.as_json() if parsed else None,
+            "plan",
+            ok=parsed is not None,
+            triggers=triggers,
+            latency_s=self._latency,
+            version=self.version,
+            plan=parsed.as_json() if parsed else None,
         )
         if parsed is not None:
             self._log(
@@ -249,4 +277,6 @@ class Strategist:
                 f"{parsed.assessment[:200]}"
             )
         else:
-            self._log(f"[strategist] no usable plan ({self._errors} in a row); keeping the previous one")
+            self._log(
+                f"[strategist] no usable plan ({self._errors} in a row); keeping the previous one"
+            )

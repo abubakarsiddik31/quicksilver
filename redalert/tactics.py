@@ -50,7 +50,9 @@ MAX_CALLS = 4000
 BACKOFF_FIRST_S, BACKOFF_MAX_S = 2.0, 20.0
 UNCERTAIN_COOLDOWN_S = 20.0
 THREAT_COOLDOWN_S = 8.0
-STYLE_COOLDOWN_S = 60.0  # re-reading the enemy's style may change the whole plan: tell the general once
+STYLE_COOLDOWN_S = (
+    60.0  # re-reading the enemy's style may change the whole plan: tell the general once
+)
 THREAT_LEVELS = (
     "none: nothing hostile seen near my base or harvesters",
     "scouting: a few enemy units seen, no real attack",
@@ -90,8 +92,12 @@ class Candidates:
     income: float = 0.0
     scout_alive: bool = False
     describe: dict[str, str] = field(default_factory=dict)
-    costs: dict[str, float] = field(default_factory=dict)  # item -> credit cost, for army composition values
-    formation: dict[str, int] = field(default_factory=dict)  # my battalions: scout/guard/flanker/striker counts
+    costs: dict[str, float] = field(
+        default_factory=dict
+    )  # item -> credit cost, for army composition values
+    formation: dict[str, int] = field(
+        default_factory=dict
+    )  # my battalions: scout/guard/flanker/striker counts
     battle: dict[str, Any] = field(default_factory=dict)  # both sides, from redalert.intel
     doctrine: str = ""  # the battle plan in force
     doctrine_for_s: float = 0.0
@@ -109,7 +115,9 @@ class Advice:
     latency: float
     values: dict[str, Any]  # slot -> chosen key / level / probability
     confidence: dict[str, float]  # slot -> confidence (choice and score only)
-    probs: dict[str, dict[str, float]] = field(default_factory=dict)  # slot -> per-option probabilities
+    probs: dict[str, dict[str, float]] = field(
+        default_factory=dict
+    )  # slot -> per-option probabilities
 
     def get(self, slot: str, plan: Plan, *, now: float) -> Any:
         """The value for ``slot`` if fresh, allowed by the plan and confident enough, else ``None``."""
@@ -184,7 +192,9 @@ class TacticalAdvisor:
         return out
 
     @staticmethod
-    def _detail(items: Any, idle_ids: set[int], costs: dict[str, float]) -> dict[str, dict[str, float]]:
+    def _detail(
+        items: Any, idle_ids: set[int], costs: dict[str, float]
+    ) -> dict[str, dict[str, float]]:
         """Per-type combat composition: how many, how many idle, what the group is worth in credits."""
         out: dict[str, dict[str, float]] = {}
         for it in items if isinstance(items, list) else []:
@@ -199,7 +209,9 @@ class TacticalAdvisor:
             d["value"] += costs.get(name, 0)
         return out
 
-    def build_request(self, raw: dict[str, Any], plan: Plan, cands: Candidates) -> tuple[dict[str, Any], dict[str, Any]]:
+    def build_request(
+        self, raw: dict[str, Any], plan: Plan, cands: Candidates
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         obs = raw.get("observation") or {}
         events = [e for e in (obs.get("events") or []) if isinstance(e, dict)]
         kinds: dict[str, int] = {}
@@ -211,12 +223,17 @@ class TacticalAdvisor:
         provided, drained = econ.get("power_provided"), econ.get("power_drained")
         production = [p for p in (obs.get("production") or []) if isinstance(p, dict)][:10]
         state = {
-            "clock": {"game_s": time_info.get("game_seconds"), "remaining_s": time_info.get("remaining_seconds")},
+            "clock": {
+                "game_s": time_info.get("game_seconds"),
+                "remaining_s": time_info.get("remaining_seconds"),
+            },
             "my_faction": obs.get("faction"),
             "enemy_faction": obs.get("enemy_faction"),
             "economy": econ,
             "power_headroom": (
-                provided - drained if isinstance(provided, (int, float)) and isinstance(drained, (int, float)) else None
+                provided - drained
+                if isinstance(provided, (int, float)) and isinstance(drained, (int, float))
+                else None
             ),
             "explored_pct": obs.get("explored_percent"),
             # The executor's own money ledger: what income remains against what is already committed.
@@ -227,10 +244,12 @@ class TacticalAdvisor:
                 "draw_budget_per_s": round(cands.budget, 1),
             },
             "production_detail": [
-                {k: p.get(k) for k in ("item", "queue", "progress", "remaining_s", "ready")} for p in production
+                {k: p.get(k) for k in ("item", "queue", "progress", "remaining_s", "ready")}
+                for p in production
             ],
             "ready_to_place": [
-                str(p.get("item")).lower() for p in production
+                str(p.get("item")).lower()
+                for p in production
                 if p.get("ready") and str(p.get("queue") or "").lower() in ("building", "defense")
             ],
             "my_units": self._counts(obs.get("units")),
@@ -242,7 +261,11 @@ class TacticalAdvisor:
             # The armies in detail: per type, how many, how many idle, what the group is worth in credits.
             "my_army_detail": self._detail(
                 obs.get("units"),
-                {i for i in ((raw.get("legal_actions") or {}).get("combat_units") or []) if isinstance(i, int)},
+                {
+                    i
+                    for i in ((raw.get("legal_actions") or {}).get("combat_units") or [])
+                    if isinstance(i, int)
+                },
                 cands.costs,
             ),
             "enemy_army_detail": self._detail(obs.get("visible_enemies"), set(), cands.costs),
@@ -250,10 +273,20 @@ class TacticalAdvisor:
             "enemy_buildings_seen": self._counts(obs.get("visible_enemy_buildings")),
             "recent_event_counts": kinds,
             "recent_events": [
-                {"kind": e.get("kind"), "type": e.get("type") or e.get("actor_type")} for e in events[-6:]
+                {"kind": e.get("kind"), "type": e.get("type") or e.get("actor_type")}
+                for e in events[-6:]
             ],
-            "military": {k: military.get(k) for k in (
-                "kills_cost", "deaths_cost", "army_value", "assets_value", "units_lost", "units_killed")},
+            "military": {
+                k: military.get(k)
+                for k in (
+                    "kills_cost",
+                    "deaths_cost",
+                    "army_value",
+                    "assets_value",
+                    "units_lost",
+                    "units_killed",
+                )
+            },
             "scout_alive": cands.scout_alive,
             # Both sides in numbers. Fog of war: the enemy is what we have seen (units for 90 s, buildings until
             # destroyed). No plan text or army mode goes in: Jev echoed "hold" from it for ten minutes.
@@ -264,16 +297,16 @@ class TacticalAdvisor:
             "rules": {
                 "win": "Destroy every enemy building and the MCV before the time limit.",
                 "time_limit": "At the limit the higher (kills value - losses value) wins; if tied, the higher "
-                              "assets value wins. Check clock.remaining_s. A big army sitting at home earns "
-                              "nothing: it must either win trades or destroy buildings.",
+                "assets value wins. Check clock.remaining_s. A big army sitting at home earns "
+                "nothing: it must either win trades or destroy buildings.",
                 "trades": "Every fight should cost the enemy more than it costs us: feeding units piecemeal into "
-                          "a stronger army or into defences loses the match even with more units and more assets. "
-                          "A wave should leave only when it can beat what defends the target.",
+                "a stronger army or into defences loses the match even with more units and more assets. "
+                "A wave should leave only when it can beat what defends the target.",
                 "closing": "With under five minutes left and negative trades the executor attacks with "
-                           "everything; when ahead on trades it protects the lead instead.",
+                "everything; when ahead on trades it protects the lead instead.",
                 "economy": "Income is only harvesters on ore. At cash 0 the engine draws credits across ALL "
-                           "production queues at once, so overcommitting crawls everything; low power halves "
-                           "production speed.",
+                "production queues at once, so overcommitting crawls everything; low power halves "
+                "production speed.",
             },
         }
         if plan.tactics_hint:
@@ -286,22 +319,34 @@ class TacticalAdvisor:
                 questions[name] = {"type": "choice", "instructions": text, "criteria": options}
                 meta[name] = slot
 
-        choice("next_structure", "structure",
-               "Which structure should I build next to win this match given the economy, power, tech and what the enemy has?",
-               {i: cands.describe.get(i) for i in cands.structures})
-        choice("next_unit", "unit",
-               "Which unit should I train next to counter what the enemy fields and keep my economy and army balanced?",
-               {i: cands.describe.get(i) for i in cands.units})
-        choice("battle_plan", "doctrine",
-               "You command my side in this real-time Red Alert 1v1. Compare both armies: `battle` has the "
-               "values, the trade score and where my army sits (home or in the field), `my_army_detail` and "
-               "`enemy_army_detail` have the per-type compositions. Which battle plan should my side follow for "
-               "the next ten seconds? If the enemy army has not been seen, assume it is at least as strong as "
-               "mine.",
-               {name: d.when for name, d in DOCTRINES.items()})
-        choice("army_stage", "stage",
-               "Given my economy, army, the threat in `battle` and the clock: where should my money go right now?",
-               dict(STAGES))
+        choice(
+            "next_structure",
+            "structure",
+            "Which structure should I build next to win this match given the economy, power, tech and what the enemy has?",
+            {i: cands.describe.get(i) for i in cands.structures},
+        )
+        choice(
+            "next_unit",
+            "unit",
+            "Which unit should I train next to counter what the enemy fields and keep my economy and army balanced?",
+            {i: cands.describe.get(i) for i in cands.units},
+        )
+        choice(
+            "battle_plan",
+            "doctrine",
+            "You command my side in this real-time Red Alert 1v1. Compare both armies: `battle` has the "
+            "values, the trade score and where my army sits (home or in the field), `my_army_detail` and "
+            "`enemy_army_detail` have the per-type compositions. Which battle plan should my side follow for "
+            "the next ten seconds? If the enemy army has not been seen, assume it is at least as strong as "
+            "mine.",
+            {name: d.when for name, d in DOCTRINES.items()},
+        )
+        choice(
+            "army_stage",
+            "stage",
+            "Given my economy, army, the threat in `battle` and the clock: where should my money go right now?",
+            dict(STAGES),
+        )
         if "threat" in plan.jev_slots:
             questions["threat"] = {
                 "type": "score",
@@ -309,42 +354,55 @@ class TacticalAdvisor:
                 "criteria": list(THREAT_LEVELS),
             }
             meta["threat"] = "threat"
-        seen_any = bool(self._counts(obs.get("visible_enemies"))) or bool(self._counts(obs.get("visible_enemy_buildings"))) \
-            or (isinstance((cands.battle or {}).get("enemy_army_value_seen_last_90s"), (int, float))
-                and (cands.battle or {}).get("enemy_army_value_seen_last_90s", 0) > 0)
+        seen_any = (
+            bool(self._counts(obs.get("visible_enemies")))
+            or bool(self._counts(obs.get("visible_enemy_buildings")))
+            or (
+                isinstance((cands.battle or {}).get("enemy_army_value_seen_last_90s"), (int, float))
+                and (cands.battle or {}).get("enemy_army_value_seen_last_90s", 0) > 0
+            )
+        )
         if seen_any and "style" in plan.jev_slots:
             # Reading the opponent: the answer paces the flank runs and sizes the home guard in the executor.
-            choice("enemy_style", "style",
-                   "What is the enemy doing with their army, judging by enemy_army_detail, enemy_buildings_seen "
-                   "and recent_events? This decides how I defend and where I harass.",
-                   {
-                       "mass_infantry": "many riflemen/rocketeers, few vehicles: slow, strong in numbers, weak "
-                                        "against vehicles and shrugs off nothing",
-                       "mass_armor": "mostly tanks: a strong frontal force that leaves its economy exposed",
-                       "mixed": "a balanced combined force",
-                       "turtle": "holding ground near their base or a chokepoint behind defences, not pushing",
-                       "harass": "small packs raiding my harvesters and expansions from different sides",
-                       "unknown": "not enough seen yet to tell",
-                   })
+            choice(
+                "enemy_style",
+                "style",
+                "What is the enemy doing with their army, judging by enemy_army_detail, enemy_buildings_seen "
+                "and recent_events? This decides how I defend and where I harass.",
+                {
+                    "mass_infantry": "many riflemen/rocketeers, few vehicles: slow, strong in numbers, weak "
+                    "against vehicles and shrugs off nothing",
+                    "mass_armor": "mostly tanks: a strong frontal force that leaves its economy exposed",
+                    "mixed": "a balanced combined force",
+                    "turtle": "holding ground near their base or a chokepoint behind defences, not pushing",
+                    "harass": "small packs raiding my harvesters and expansions from different sides",
+                    "unknown": "not enough seen yet to tell",
+                },
+            )
         if cands.idle_combat >= 3:
-            choice("attack_target", "target", "Where should the next attack wave go?", dict(TARGETS))
+            choice(
+                "attack_target", "target", "Where should the next attack wave go?", dict(TARGETS)
+            )
             if "wave" in plan.jev_slots:
                 questions["wave_now"] = {
                     "type": "noul",
                     "instructions": "Should I send my idle fighters as an attack wave right now?",
                     "criteria": {
                         "true": "The idle force is big enough to beat what defends the target, and the clock "
-                                "(clock.remaining_s) makes attacking now worth more than saving the force",
+                        "(clock.remaining_s) makes attacking now worth more than saving the force",
                         "false": "Wait: the force is too small or still assembling, the target too strong or "
-                                 "defended, or the army is needed at home",
+                        "defended, or the army is needed at home",
                     },
                 }
                 meta["wave_now"] = "wave"
         if cands.combat_roster and "focus" in plan.jev_slots:
-            choice("army_focus", "focus",
-                   "Which of my buildable unit types should dominate my army, given what the enemy fields and the "
-                   "clock? Composition beats count.",
-                   {i: cands.describe.get(i) for i in cands.combat_roster})
+            choice(
+                "army_focus",
+                "focus",
+                "Which of my buildable unit types should dominate my army, given what the enemy fields and the "
+                "clock? Composition beats count.",
+                {i: cands.describe.get(i) for i in cands.combat_roster},
+            )
         if cands.has_harvester_item and "harvester" in plan.jev_slots:
             questions["need_harvester"] = {
                 "type": "noul",
@@ -372,7 +430,9 @@ class TacticalAdvisor:
 
     # -- refresh -------------------------------------------------------------------
 
-    def maybe_refresh(self, raw: dict[str, Any], plan: Plan, cands: Candidates, *, sync: bool = False) -> None:
+    def maybe_refresh(
+        self, raw: dict[str, Any], plan: Plan, cands: Candidates, *, sync: bool = False
+    ) -> None:
         """Start a background Jev request if one is due. Never blocks the 5 Hz loop."""
         if self.client is None or not isinstance(raw.get("observation"), dict):
             return
@@ -381,16 +441,24 @@ class TacticalAdvisor:
         with self._lock:
             if not self._announced:
                 self._announced = True
-                self._log("[jev] tactical advisor on: Jev decides fast tactics, the LLM sets the strategy")
+                self._log(
+                    "[jev] tactical advisor on: Jev decides fast tactics, the LLM sets the strategy"
+                )
             seqs = [e["seq"] for e in events if isinstance(e.get("seq"), int)]
             if seqs:
-                fresh = [e for e in events if isinstance(e.get("seq"), int) and e["seq"] > self._last_seq]
+                fresh = [
+                    e for e in events if isinstance(e.get("seq"), int) and e["seq"] > self._last_seq
+                ]
                 if self._last_seq >= 0 and any(str(e.get("kind")) in URGENT_EVENTS for e in fresh):
                     self._urgent = True
                 self._last_seq = max(self._last_seq, max(seqs))
             gap = REFRESH_URGENT_S if self._urgent else REFRESH_S
-            if self._busy or self._calls >= self._max_calls or now < self._backoff_until \
-                    or now - self._last_start < gap:
+            if (
+                self._busy
+                or self._calls >= self._max_calls
+                or now < self._backoff_until
+                or now - self._last_start < gap
+            ):
                 return
             request, meta = self.build_request(raw, plan, cands)
             if not request["questions"]:
@@ -402,7 +470,9 @@ class TacticalAdvisor:
         if sync:
             self._run(request, meta, tick, plan)
         else:
-            threading.Thread(target=self._run, args=(request, meta, tick, plan), daemon=True).start()
+            threading.Thread(
+                target=self._run, args=(request, meta, tick, plan), daemon=True
+            ).start()
 
     def _run(self, request: dict[str, Any], meta: dict[str, Any], tick: Any, plan: Plan) -> None:
         started = self._clock()
@@ -417,16 +487,22 @@ class TacticalAdvisor:
             self._busy = False
             if advice is None:
                 self._errors += 1
-                self._backoff_until = done + min(BACKOFF_MAX_S, BACKOFF_FIRST_S * 2 ** min(self._errors - 1, 4))
+                self._backoff_until = done + min(
+                    BACKOFF_MAX_S, BACKOFF_FIRST_S * 2 ** min(self._errors - 1, 4)
+                )
                 if self._errors in (1, 5):
-                    self._log(f"[jev] no answer ({getattr(self.client, 'last_error', None)}); using the rules")
+                    self._log(
+                        f"[jev] no answer ({getattr(self.client, 'last_error', None)}); using the rules"
+                    )
                 return
             self._errors = 0
             self._advice = advice
             self._escalate(advice, plan, done)
         self._record(request, advice)
 
-    def _to_advice(self, answers: dict[str, Answer], meta: dict[str, Any], tick: Any, at: float, latency: float) -> Advice | None:
+    def _to_advice(
+        self, answers: dict[str, Answer], meta: dict[str, Any], tick: Any, at: float, latency: float
+    ) -> Advice | None:
         values: dict[str, Any] = {}
         conf: dict[str, float] = {}
         probs: dict[str, dict[str, float]] = {}
@@ -449,38 +525,66 @@ class TacticalAdvisor:
                 conf[slot] = a.confidence
             if a.probabilities:
                 probs[slot] = a.probabilities
-        return Advice(at, tick if isinstance(tick, int) else None, round(latency, 2), values, conf, probs) if values else None
+        return (
+            Advice(
+                at, tick if isinstance(tick, int) else None, round(latency, 2), values, conf, probs
+            )
+            if values
+            else None
+        )
 
     def _escalate(self, advice: Advice, plan: Plan, now: float) -> None:
         """Wake the LLM strategist when Jev is unsure on a big call or sees a serious threat."""
+
         def push(kind: str, cooldown: float) -> None:
             if now - self._esc_at.get(kind, -1e9) >= cooldown:
                 self._esc_at[kind] = now
                 self._escalations.append(kind)
 
         threat = advice.values.get("threat")
-        if isinstance(threat, int) and threat >= ESCALATE_LEVEL and advice.confidence.get("threat", 1.0) >= plan.min_confidence:
+        if (
+            isinstance(threat, int)
+            and threat >= ESCALATE_LEVEL
+            and advice.confidence.get("threat", 1.0) >= plan.min_confidence
+        ):
             push(f"jev_threat:{threat}", THREAT_COOLDOWN_S)
         style = advice.values.get("style")
         if isinstance(style, str) and style not in ("", "unknown") and style != self._style_last:
             self._style_last = style
-            push(f"enemy_style:{style}", STYLE_COOLDOWN_S)  # the enemy switched posture: re-plan for it
+            push(
+                f"enemy_style:{style}", STYLE_COOLDOWN_S
+            )  # the enemy switched posture: re-plan for it
         for slot in ("doctrine",):
             c = advice.confidence.get(slot)
             if slot in plan.jev_slots and c is not None and c < plan.min_confidence:
                 push(f"jev_uncertain:{slot}", UNCERTAIN_COOLDOWN_S)
 
     def _record(self, request: dict[str, Any], advice: Advice) -> None:
-        trace.write("jev", tick=advice.tick, latency_s=advice.latency, values=advice.values,
-                    confidence=advice.confidence, asked=list(request["questions"]))
+        trace.write(
+            "jev",
+            tick=advice.tick,
+            latency_s=advice.latency,
+            values=advice.values,
+            confidence=advice.confidence,
+            asked=list(request["questions"]),
+        )
         if not self._telemetry:
             return
         try:
             with open(self._telemetry, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "t": round(time.time(), 2), "tick": advice.tick, "latency_s": advice.latency,
-                    "values": advice.values, "confidence": advice.confidence,
-                    "questions": list(request["questions"]),
-                }, default=str) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "t": round(time.time(), 2),
+                            "tick": advice.tick,
+                            "latency_s": advice.latency,
+                            "values": advice.values,
+                            "confidence": advice.confidence,
+                            "questions": list(request["questions"]),
+                        },
+                        default=str,
+                    )
+                    + "\n"
+                )
         except OSError:
             pass

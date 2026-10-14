@@ -17,7 +17,9 @@ from altruagent.notices import AGENT_GUIDE_URL, DASHBOARD_URL  # noqa: E402
 
 
 def main() -> int:
-    print("scripts/check_tournaments.py was retired with the platform API key (ALTRUAGENT_API_KEY).")
+    print(
+        "scripts/check_tournaments.py was retired with the platform API key (ALTRUAGENT_API_KEY)."
+    )
     print(f"Register your agent for tournaments on your dashboard: {DASHBOARD_URL}")
     print("Then keep `python -m agent --tournament` running; it plays your tournament games.")
     print(f"Guide: {AGENT_GUIDE_URL}")

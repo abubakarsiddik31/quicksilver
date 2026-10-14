@@ -45,11 +45,25 @@ import sys
 from altruagent.agent_loader import DEFAULT_AGENT_SPEC
 from altruagent.agent_loader import load_agent_factory as _load_agent_factory
 from altruagent.errors import AltruAgentError, AuthenticationError, ConfigurationError
-from altruagent.notices import AGENT_GUIDE_URL, CLAIM_CODES_RETIRED_NOTICE, PLATFORM_KEY_RETIRED_NOTICE
-from altruagent.official import OfficialAgentClient, OfficialAgentError, is_fatal_auth_error, is_registration_incomplete
+from altruagent.notices import (
+    AGENT_GUIDE_URL,
+    CLAIM_CODES_RETIRED_NOTICE,
+    PLATFORM_KEY_RETIRED_NOTICE,
+)
+from altruagent.official import (
+    OfficialAgentClient,
+    OfficialAgentError,
+    is_fatal_auth_error,
+    is_registration_incomplete,
+)
 from altruagent.runner import _resolve_decision_fn
-from altruagent.supervisor import ALL_KINDS, TESTING, TOURNAMENT, WAITING_MESSAGE, run_tournament_forever
-
+from altruagent.supervisor import (
+    ALL_KINDS,
+    TESTING,
+    TOURNAMENT,
+    WAITING_MESSAGE,
+    run_tournament_forever,
+)
 
 CLAIM_TOKEN_ENV = "ALTRUAGENT_CLAIM_TOKEN"
 
@@ -63,8 +77,12 @@ def _retired(notice: str) -> int:
 # What the runtime says it plays, by the kinds the flags chose.
 PLAYING_MESSAGES = {
     ALL_KINDS: "Playing your test matches and tournament games.",
-    frozenset({TOURNAMENT}): "Playing your tournament games only. Add --match to also play your test matches.",
-    frozenset({TESTING}): "Playing your test matches only. Add --tournament to also play your tournament games.",
+    frozenset(
+        {TOURNAMENT}
+    ): "Playing your tournament games only. Add --match to also play your test matches.",
+    frozenset(
+        {TESTING}
+    ): "Playing your test matches only. Add --tournament to also play your tournament games.",
 }
 
 
@@ -256,13 +274,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_tournament:
         return _check_tournament(args.agent or DEFAULT_AGENT_SPEC)
     if args.tournament or args.match:
-        kinds = frozenset(kind for kind, chosen in ((TOURNAMENT, args.tournament), (TESTING, args.match)) if chosen)
+        kinds = frozenset(
+            kind
+            for kind, chosen in ((TOURNAMENT, args.tournament), (TESTING, args.match))
+            if chosen
+        )
         return _run_tournament(args.agent or DEFAULT_AGENT_SPEC, kinds)
 
     if args.claim is not None:
         return _retired(CLAIM_CODES_RETIRED_NOTICE)
     if args.agent is not None:
-        parser.error("--agent is only supported together with --tournament, --match or --check-tournament")
+        parser.error(
+            "--agent is only supported together with --tournament, --match or --check-tournament"
+        )
     if os.environ.get(CLAIM_TOKEN_ENV):
         return _retired(CLAIM_CODES_RETIRED_NOTICE)
     return _retired(PLATFORM_KEY_RETIRED_NOTICE)

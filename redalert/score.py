@@ -18,9 +18,37 @@ import os
 import sys
 from typing import Any
 
-VEHICLES = {"1tnk", "2tnk", "3tnk", "4tnk", "apc", "ftrk", "jeep", "harv", "v2rl", "arty", "mgg", "mrj", "ttnk", "mcv"}
+VEHICLES = {
+    "1tnk",
+    "2tnk",
+    "3tnk",
+    "4tnk",
+    "apc",
+    "ftrk",
+    "jeep",
+    "harv",
+    "v2rl",
+    "arty",
+    "mgg",
+    "mrj",
+    "ttnk",
+    "mcv",
+}
 TANKS = {"1tnk", "2tnk", "3tnk", "4tnk"}
-UNIT_TYPES = VEHICLES | {"e1", "e2", "e3", "e4", "e6", "e7", "dog", "medi", "mech", "spy", "thf", "shok"}
+UNIT_TYPES = VEHICLES | {
+    "e1",
+    "e2",
+    "e3",
+    "e4",
+    "e6",
+    "e7",
+    "dog",
+    "medi",
+    "mech",
+    "spy",
+    "thf",
+    "shok",
+}
 DEFENSES = {"gun", "pbox", "hbox", "ftur", "tsla", "sam", "agun"}
 
 # metric -> (target, True if lower is better)
@@ -72,7 +100,11 @@ def score(rows: list[dict[str, Any]]) -> dict[str, Any]:
             m["first_defence_s"] = round(s)
         if prev is not None:
             dt = max(0.0, s - prev[0])
-            if prev[1].get("weap") and not any(q in VEHICLES for q in prev[2]) and (prev[3] or 0) >= 300:
+            if (
+                prev[1].get("weap")
+                and not any(q in VEHICLES for q in prev[2])
+                and (prev[3] or 0) >= 300
+            ):
                 idle += dt
             if (prev[3] or 0) < 50:
                 zero += dt
@@ -94,11 +126,15 @@ def score(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for r in rows:
         if r["kind"] != "orders" or any(abs(r["t"] - d) < 0.5 for d in defends):
             continue
-        if any(o.get("cmd") == "attack_move" and (o.get("n") or 0) >= 3 for o in r.get("orders") or []):
+        if any(
+            o.get("cmd") == "attack_move" and (o.get("n") or 0) >= 3 for o in r.get("orders") or []
+        ):
             near = min(state_clock, key=lambda x: abs(x[0] - r["t"]), default=(r["t"], r["t"] - t0))
             m["first_attack_s"] = round(near[1] + (r["t"] - near[0]))
             break
-    rates = [r["decisions_per_s"] for r in states if isinstance(r.get("decisions_per_s"), (int, float))]
+    rates = [
+        r["decisions_per_s"] for r in states if isinstance(r.get("decisions_per_s"), (int, float))
+    ]
     m["decisions_per_s"] = round(sum(rates) / len(rates), 1) if rates else None
 
     def at(sec: float) -> dict[str, int]:
@@ -112,12 +148,19 @@ def score(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if scouts:
         m["first_scout_s"] = round(scouts[0].get("game_s") or scouts[0]["t"] - t0)
     lat = [p["latency_s"] for p in plans if isinstance(p.get("latency_s"), (int, float))]
-    narration = [p for p in plans if all(t.startswith(("scheduled_review", "harness:", "jev_uncertain")) for t in p.get("triggers", []))]
+    narration = [
+        p
+        for p in plans
+        if all(
+            t.startswith(("scheduled_review", "harness:", "jev_uncertain"))
+            for t in p.get("triggers", [])
+        )
+    ]
     m["consults"] = len(plans)
     m["consult_latency_mean_s"] = round(sum(lat) / len(lat), 1) if lat else None
     m["narration_consults"] = len(narration)
     m["duration_s"] = round(_clock(states[-1], t0)) if states else None
-    m["final_buildings_units"] = (states[-1].get("units") if states else None)
+    m["final_buildings_units"] = states[-1].get("units") if states else None
     return m
 
 
@@ -126,16 +169,28 @@ def report(m: dict[str, Any]) -> str:
     for k, (target, lower) in TARGETS.items():
         v = m.get(k)
         ok = "?" if v is None else ("ok" if (v <= target if lower else v >= target) else "MISS")
-        lines.append(f"{k:<24}{'-' if v is None else v:>10}  {'<=' if lower else '>='} {target:g}   {ok}")
+        lines.append(
+            f"{k:<24}{'-' if v is None else v:>10}  {'<=' if lower else '>='} {target:g}   {ok}"
+        )
     lines.append("")
-    for k in ("decisions_per_s", "consults", "consult_latency_mean_s", "narration_consults", "duration_s"):
+    for k in (
+        "decisions_per_s",
+        "consults",
+        "consult_latency_mean_s",
+        "narration_consults",
+        "duration_s",
+    ):
         lines.append(f"{k:<24}{m.get(k)!s:>10}")
     return "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:
     paths = [a for a in argv if not a.startswith("--")]
-    path = paths[0] if paths else max(glob.glob("traces/ra-*.jsonl"), key=os.path.getmtime, default=None)
+    path = (
+        paths[0]
+        if paths
+        else max(glob.glob("traces/ra-*.jsonl"), key=os.path.getmtime, default=None)
+    )
     if not path:
         print("no trace found (play a match first; traces are written to traces/)")
         return 1

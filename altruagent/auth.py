@@ -206,12 +206,20 @@ class SeatGrantAuth:
 
         body = _parse_json_body(response)
         grant = SeatGrant.from_dict(body if isinstance(body, dict) else {})
-        if not (grant.access_token and grant.game_session_id and grant.gameapi_server_url and grant.agent_id):
+        if not (
+            grant.access_token
+            and grant.game_session_id
+            and grant.gameapi_server_url
+            and grant.agent_id
+        ):
             raise SeatClaimError(
                 "The seat claim response was missing required fields.",
                 status_code=response.status_code,
             )
-        if renewing and (grant.seat_id, grant.game_session_id) != (self._grant.seat_id, self._grant.game_session_id):
+        if renewing and (grant.seat_id, grant.game_session_id) != (
+            self._grant.seat_id,
+            self._grant.game_session_id,
+        ):
             raise SeatClaimError(
                 "Seat renewal returned a different seat than the one originally claimed.",
                 status_code=response.status_code,
@@ -224,9 +232,7 @@ class SeatGrantAuth:
         parsed = _parse_error_body(response)
         code = parsed["error"]
         message = _CLAIM_ERROR_MESSAGES.get(code) or (
-            f"Seat claim failed (HTTP {response.status_code}"
-            + (f", {code}" if code else "")
-            + ")."
+            f"Seat claim failed (HTTP {response.status_code}" + (f", {code}" if code else "") + ")."
         )
         if renewing:
             message = f"Could not renew this seat's GameAPI authorization: {message}"

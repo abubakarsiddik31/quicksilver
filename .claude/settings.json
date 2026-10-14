@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.py) \"$CLAUDE_PROJECT_DIR/.venv/bin/ruff\" check --fix -q \"$f\"; \"$CLAUDE_PROJECT_DIR/.venv/bin/ruff\" format -q \"$f\";; esac; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

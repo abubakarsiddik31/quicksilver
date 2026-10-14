@@ -16,7 +16,9 @@ from werewolf import messages as msg
 NAMES = ["alice", "bob", "carl", "dave", "erin", "fran", "gus"]
 
 
-def ww_state(*, observation, your_position=3, dead=(), alive=None, vote_history=(), eliminated=False):
+def ww_state(
+    *, observation, your_position=3, dead=(), alive=None, vote_history=(), eliminated=False
+):
     raw = {
         "your_position": your_position,
         "players": [{"position": i, "name": n} for i, n in enumerate(NAMES)],
@@ -35,13 +37,20 @@ def ww_state(*, observation, your_position=3, dead=(), alive=None, vote_history=
 
 VILLAGER = "=== Werewolf ===\nYour role: VILLAGER\nYou do not know anyone else's role."
 WOLF = "=== Werewolf ===\nYour role: WOLF\nYour fellow wolves: Player6"
-SEER = "=== Werewolf ===\nYour role: SEER\nYour investigations: Player0 is wolf, Player5 is villager"
+SEER = (
+    "=== Werewolf ===\nYour role: SEER\nYour investigations: Player0 is wolf, Player5 is villager"
+)
 
 
 def note(sender, content, kind="chat"):
     return Message(
-        index=0, sender=sender, recipients=[], content=content, type=kind,
-        sent_at="", move_index=0,
+        index=0,
+        sender=sender,
+        recipients=[],
+        content=content,
+        type=kind,
+        sent_at="",
+        move_index=0,
     )
 
 
@@ -157,9 +166,7 @@ def test_a_dead_seer_makes_every_later_seer_claim_a_provable_lie():
 
 def test_a_living_seer_means_claims_are_not_yet_disprovable():
     state = ww_state(observation=VILLAGER)
-    b = belief.Belief().update(state).note_messages(
-        [note(1, "I am the seer")], our_position=3
-    )
+    b = belief.Belief().update(state).note_messages([note(1, "I am the seer")], our_position=3)
     assert b.seer_is_dead is False
     assert b.false_seer_claimants == set()
     assert b.seer_claims == {1}
@@ -195,7 +202,11 @@ def test_voting_out_a_known_villager_is_suspicious():
         alive=["alice", "bob", "dave", "erin", "gus"],
         dead=[{"day": 1, "player": "carl", "role": "villager", "cause": "vote"}],
         vote_history=[
-            {"day": 1, "votes": {"alice": "carl", "bob": "carl", "dave": "abstain"}, "eliminated": "carl"}
+            {
+                "day": 1,
+                "votes": {"alice": "carl", "bob": "carl", "dave": "abstain"},
+                "eliminated": "carl",
+            }
         ],
     )
     b = belief.Belief().update(state)
@@ -226,9 +237,9 @@ def test_helping_a_known_wolf_survive_is_suspicious():
     b = belief.Belief().update(state)
     assert b.known_wolves == {5}
     assert b.known_villagers == {2}
-    assert b.suspicion(0) == 0.0                                        # voted the wolf out
-    assert b.suspicion(1) == belief.W_VOTED_AGAINST_CONFIRMED_WOLF      # shielded it
-    assert b.suspicion(6) == belief.W_ABSTAINED_WHILE_WOLF_ELIMINATED   # sat it out
+    assert b.suspicion(0) == 0.0  # voted the wolf out
+    assert b.suspicion(1) == belief.W_VOTED_AGAINST_CONFIRMED_WOLF  # shielded it
+    assert b.suspicion(6) == belief.W_ABSTAINED_WHILE_WOLF_ELIMINATED  # sat it out
 
 
 def test_voting_a_known_villager_while_a_wolf_was_eliminated_is_the_sharpest_tell():
@@ -263,9 +274,7 @@ def test_an_injection_attempt_raises_suspicion():
 
 def test_ordinary_chat_does_not_raise_suspicion():
     b = belief.Belief().update(ww_state(observation=VILLAGER))
-    b.note_messages(
-        [note(1, "I think seat 5 is a wolf, let us vote there")], our_position=3
-    )
+    b.note_messages([note(1, "I think seat 5 is a wolf, let us vote there")], our_position=3)
     assert b.injection_seats == set()
     assert b.suspicion(1) == 0.0
 
@@ -344,8 +353,8 @@ def test_note_messages_ignores_our_own_and_terminates():
     b = belief.Belief().update(ww_state(observation=VILLAGER, your_position=3))
     b.note_messages(
         [
-            note(3, "I am the seer"),                    # ours
-            note(1, "I am the seer"),                    # theirs
+            note(3, "I am the seer"),  # ours
+            note(1, "I am the seer"),  # theirs
             note(2, "I am the seer", kind="terminate"),  # terminate
         ],
         our_position=3,

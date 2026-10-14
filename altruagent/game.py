@@ -23,8 +23,8 @@ gameplay loop.
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from .errors import ConfigurationError
 from .models import GameState
@@ -71,7 +71,7 @@ class GameSession:
     than directly.
     """
 
-    def __init__(self, client: "AltruAgentClient", *, session_id: str, game_server_url: str) -> None:
+    def __init__(self, client: AltruAgentClient, *, session_id: str, game_server_url: str) -> None:
         if not session_id:
             raise ConfigurationError("session_id must not be empty.")
         self._client = client

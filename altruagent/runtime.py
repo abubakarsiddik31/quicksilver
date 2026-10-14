@@ -17,7 +17,8 @@ concurrent process-per-match runtime instead.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .errors import PlatformError
 from .runner import DecisionError, UnsupportedGameFlowError
@@ -49,14 +50,14 @@ def _log(message: str) -> None:
 
 
 def run_once(
-    client: "AltruAgentClient",
+    client: AltruAgentClient,
     choose_action,
     *,
     agent_id: str,
     failed_until: dict,
     now: Callable[[], float] = time.monotonic,
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
-    run_match_fn: Callable[..., "GameState"] = _default_run_match,
+    run_match_fn: Callable[..., GameState] = _default_run_match,
 ) -> bool:
     """One discovery tick: fetch this agent's sessions, pick at most one
     eligible active match, and play it to completion via ``run_match_fn``.
@@ -119,7 +120,7 @@ def run_once(
 
 
 def run_forever(
-    client: "AltruAgentClient",
+    client: AltruAgentClient,
     choose_action,
     *,
     agent_id: str,
@@ -127,7 +128,7 @@ def run_forever(
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
-    run_match_fn: Callable[..., "GameState"] = _default_run_match,
+    run_match_fn: Callable[..., GameState] = _default_run_match,
     max_iterations: int | None = None,
 ) -> None:
     """Repeatedly discover and play matches, one at a time, until

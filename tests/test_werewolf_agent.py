@@ -7,8 +7,9 @@ raised decision kills that match's worker process.
 
 from __future__ import annotations
 
-from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, LegalAction, SendMessage
-from werewolf import messages as msg, speech
+from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, SendMessage
+from werewolf import messages as msg
+from werewolf import speech
 from werewolf.agent import WerewolfAgent
 
 NAMES = ["alice", "bob", "carl", "dave", "erin", "fran", "gus"]
@@ -97,9 +98,7 @@ def test_a_villager_follows_the_evidence_when_it_points_elsewhere():
         observation=VILLAGER,
         your_position=3,
         dead=[{"day": 1, "player": "carl", "role": "villager", "cause": "vote"}],
-        vote_history=[
-            {"day": 1, "votes": {"gus": "carl", "bob": "abstain"}, "eliminated": "carl"}
-        ],
+        vote_history=[{"day": 1, "votes": {"gus": "carl", "bob": "abstain"}, "eliminated": "carl"}],
     )
     chosen = WerewolfAgent().choose_action(state, context())
     assert chosen.action_id == "6"  # gus voted the villager out
@@ -127,9 +126,7 @@ def test_a_known_wolf_is_voted_out_first():
 
 
 def test_a_wolf_targets_a_non_ally_at_night():
-    state = werewolf_state(
-        observation=WOLF, your_position=3, engine_phase="night_wolf"
-    )
+    state = werewolf_state(observation=WOLF, your_position=3, engine_phase="night_wolf")
     chosen = WerewolfAgent().choose_action(state, context())
     assert chosen.action_id not in ("3", "6")
 

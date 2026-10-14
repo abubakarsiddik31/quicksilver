@@ -12,8 +12,12 @@ from pokemon import dex, lineup
 
 # Our six, as the template lists them.
 OURS = [
-    "gyarados", "urshifurapidstrike", "barraskewda",
-    "rillaboom", "amoonguss", "fluttermane",
+    "gyarados",
+    "urshifurapidstrike",
+    "barraskewda",
+    "rillaboom",
+    "amoonguss",
+    "fluttermane",
 ]
 # Their six: Fire-heavy, which Water punishes and Grass cannot touch.
 THEIRS = ["charizard", "talonflame", "incineroar", "armarouge"]
@@ -159,13 +163,17 @@ def test_the_brought_four_track_the_opposing_team():
     # Grass and Electric answers should now survive the cut; Water walls should
     # not monopolise it.
     assert len(chosen["bring"]) == 4
-    assert not set(chosen["bring"]) == {"gyarados", "urshifurapidstrike", "barraskewda", "fluttermane"}
+    assert not set(chosen["bring"]) == {
+        "gyarados",
+        "urshifurapidstrike",
+        "barraskewda",
+        "fluttermane",
+    }
 
 
 def test_the_choice_is_deterministic():
     picks = {
-        tuple(lineup.choose_lineup(template(), obs(our_moves=MOVE_SETS))["bring"])
-        for _ in range(5)
+        tuple(lineup.choose_lineup(template(), obs(our_moves=MOVE_SETS))["bring"]) for _ in range(5)
     }
     assert len(picks) == 1
 
@@ -173,14 +181,19 @@ def test_the_choice_is_deterministic():
 def test_it_uses_the_pool_when_one_is_available():
     """The pool carries the real moves and EVs, which sharpens the matchup."""
     pool_cards = [
-        {"card_id": "a", "species": "Gyarados", "item": "Mystic Water",
-         "ability": "Intimidate", "nature": "Adamant", "level": 50,
-         "evs": {"atk": 252}, "ivs": {},
-         "moves": ["Waterfall", "Crunch", "Icy Wind", "Protect"]},
+        {
+            "card_id": "a",
+            "species": "Gyarados",
+            "item": "Mystic Water",
+            "ability": "Intimidate",
+            "nature": "Adamant",
+            "level": 50,
+            "evs": {"atk": 252},
+            "ivs": {},
+            "moves": ["Waterfall", "Crunch", "Icy Wind", "Protect"],
+        },
     ]
-    chosen = lineup.choose_lineup(
-        template(), obs(our_moves={}), pool_cards=pool_cards
-    )
+    chosen = lineup.choose_lineup(template(), obs(our_moves={}), pool_cards=pool_cards)
     assert chosen is not None
     assert "gyarados" in chosen["bring"]
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+
 from altruagent import Message
 from werewolf import belief, speech
 
@@ -14,7 +15,11 @@ def make_state(*, observation, your_position=3, dead=(), vote_history=()):
         "game_state": {
             "day": 2,
             "phase": "day_vote",
-            "alive": [f"Player{i}" for i in range(7) if f"Player{i}" not in [d.get("player") for d in dead]],
+            "alive": [
+                f"Player{i}"
+                for i in range(7)
+                if f"Player{i}" not in [d.get("player") for d in dead]
+            ],
             "dead": list(dead),
             "vote_history": list(vote_history),
         },
@@ -26,8 +31,13 @@ def make_state(*, observation, your_position=3, dead=(), vote_history=()):
 
 def note(sender, content):
     return Message(
-        index=0, sender=sender, recipients=[], content=content, type="chat",
-        sent_at="", move_index=0,
+        index=0,
+        sender=sender,
+        recipients=[],
+        content=content,
+        type="chat",
+        sent_at="",
+        move_index=0,
     )
 
 

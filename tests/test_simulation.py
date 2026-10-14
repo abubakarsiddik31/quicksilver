@@ -8,7 +8,6 @@ Tests:
 
 from altruagent import DecisionContext, GameState
 from common.dispatch import QuicksilverAgent
-from pokemon import actions, battle, draft, lineup, observation
 from werewolf.belief import Belief
 
 
@@ -97,6 +96,7 @@ def test_pokemon_doubles_always_produces_valid_action():
 
 def test_werewolf_simulation_convergence():
     from types import SimpleNamespace
+
     from altruagent import Message
 
     raw_state = {
@@ -121,8 +121,13 @@ def test_werewolf_simulation_convergence():
 
     def note(sender, content):
         return Message(
-            index=0, sender=sender, recipients=[], content=content, type="chat",
-            sent_at="", move_index=0,
+            index=0,
+            sender=sender,
+            recipients=[],
+            content=content,
+            type="chat",
+            sent_at="",
+            move_index=0,
         )
 
     b = Belief()

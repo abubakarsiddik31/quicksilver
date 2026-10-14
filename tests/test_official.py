@@ -13,7 +13,12 @@ import httpx
 import pytest
 
 from altruagent.client import AltruAgentClient
-from altruagent.errors import AuthenticationError, ConfigurationError, PlatformError, is_transient_error
+from altruagent.errors import (
+    AuthenticationError,
+    ConfigurationError,
+    PlatformError,
+    is_transient_error,
+)
 from altruagent.official import (
     ASSIGNMENTS_PATH,
     AUTHENTICATE_PATH,
@@ -34,15 +39,35 @@ KEY = "eak_live_" + "ab" * 32
 EXEC = "exec-" + "z" * 40
 
 
-def assignment(seat_id="seat-1", match_id="match-1", game_type="pokemon_vgc_doubles_draft", **extra):
-    return {"match_id": match_id, "seat_id": seat_id, "game_type": game_type, "seat_position": 0,
-            "seat_count": 2, "match_status": "starting", "seat_status": "pending", **extra}
+def assignment(
+    seat_id="seat-1", match_id="match-1", game_type="pokemon_vgc_doubles_draft", **extra
+):
+    return {
+        "match_id": match_id,
+        "seat_id": seat_id,
+        "game_type": game_type,
+        "seat_position": 0,
+        "seat_count": 2,
+        "match_status": "starting",
+        "seat_status": "pending",
+        **extra,
+    }
 
 
 def grant(access_token="seat-jwt-1", seat_id="seat-1"):
-    return {"access_token": access_token, "expires_at": "2026-09-28T12:00:00Z", "agent_id": "synthetic-1",
-            "gameapi_server_url": GAMEAPI, "game_session_id": "game-1", "match_id": "match-1", "seat_id": seat_id,
-            "seat_position": 0, "seat_count": 2, "game_type": "pokemon_vgc_doubles_draft", "match_status": "in_progress"}
+    return {
+        "access_token": access_token,
+        "expires_at": "2026-09-28T12:00:00Z",
+        "agent_id": "synthetic-1",
+        "gameapi_server_url": GAMEAPI,
+        "game_session_id": "game-1",
+        "match_id": "match-1",
+        "seat_id": seat_id,
+        "seat_position": 0,
+        "seat_count": 2,
+        "game_type": "pokemon_vgc_doubles_draft",
+        "match_status": "in_progress",
+    }
 
 
 class Backend:
@@ -65,28 +90,52 @@ class Backend:
         if request.url.path == AUTHENTICATE_PATH:
             self.auth_bodies.append(json.loads(request.content))
             if not self.key_valid:
-                return httpx.Response(401, json={"error": "invalid_official_agent_key", "detail": "Invalid official agent key"})
+                return httpx.Response(
+                    401,
+                    json={
+                        "error": "invalid_official_agent_key",
+                        "detail": "Invalid official agent key",
+                    },
+                )
             token = f"sess-{len(self.auth_bodies)}"
             self.valid.add(token)
-            return httpx.Response(200, json={"access_token": token, "expires_at": "2026-09-28T12:00:00Z"})
+            return httpx.Response(
+                200, json={"access_token": token, "expires_at": "2026-09-28T12:00:00Z"}
+            )
         if auth is None or auth.removeprefix("Bearer ") not in self.valid:
-            return httpx.Response(401, json={"error": "invalid_agent_session", "detail": "Invalid or expired agent session token"})
+            return httpx.Response(
+                401,
+                json={
+                    "error": "invalid_agent_session",
+                    "detail": "Invalid or expired agent session token",
+                },
+            )
         if request.method == "GET" and request.url.path == ASSIGNMENTS_PATH:
             return httpx.Response(200, json={"assignments": self.assignments})
         if request.method == "POST" and request.url.path.startswith(ASSIGNMENTS_PATH + "/"):
             self.bodies.append((request.url.path, json.loads(request.content or b"{}")))
             if request.url.path.endswith("/lease/renew"):
-                return httpx.Response(200, json={"seat_id": request.url.path.split("/")[-3], "execution_lease_expires_at": "x"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "seat_id": request.url.path.split("/")[-3],
+                        "execution_lease_expires_at": "x",
+                    },
+                )
             seat_id = request.url.path.split("/")[-2]
             queue = self.grant_responses.get(seat_id)
             if queue:
                 return queue.pop(0) if len(queue) > 1 else queue[0]
-            return httpx.Response(404, json={"error": "assignment_not_found", "detail": "Assignment not found"})
+            return httpx.Response(
+                404, json={"error": "assignment_not_found", "detail": "Assignment not found"}
+            )
         return httpx.Response(404)
 
 
 def official(backend, **kwargs) -> OfficialAgentClient:
-    return OfficialAgentClient(CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend), **kwargs)
+    return OfficialAgentClient(
+        CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend), **kwargs
+    )
 
 
 # -- configuration ---------------------------------------------------------------------
@@ -98,7 +147,9 @@ def test_key_from_environment(monkeypatch):
     assert load_official_agent_key() == KEY
 
 
-@pytest.mark.parametrize("value", ["", "sk_agent_abc", "seatclaim_abc", "eak_live_short", "eak_live_" + "G" * 64])
+@pytest.mark.parametrize(
+    "value", ["", "sk_agent_abc", "seatclaim_abc", "eak_live_short", "eak_live_" + "G" * 64]
+)
 def test_missing_or_malformed_key_is_a_configuration_error_that_hides_the_value(monkeypatch, value):
     monkeypatch.setenv(OFFICIAL_AGENT_KEY_ENV, value)
 
@@ -155,7 +206,11 @@ def test_expired_session_reauthenticates_once_and_retries():
 
     assert [a.seat_id for a in result] == ["seat-1"]
     assert len(backend.auth_bodies) == 2
-    assert [r[2] for r in backend.requests if r[1] == ASSIGNMENTS_PATH] == ["Bearer sess-1", "Bearer sess-1", "Bearer sess-2"]
+    assert [r[2] for r in backend.requests if r[1] == ASSIGNMENTS_PATH] == [
+        "Bearer sess-1",
+        "Bearer sess-1",
+        "Bearer sess-2",
+    ]
 
 
 def test_second_401_after_reauth_stops_without_looping():
@@ -206,34 +261,53 @@ def test_invalid_key_message_names_the_rotate_button_not_copying_again():
 
 def test_updated_rules_are_explained_and_the_runtime_keeps_trying():
     def backend(request):
-        return httpx.Response(403, json={"error": "registration_incomplete",
-                                         "detail": "Finish your tournament registration first.", "next_step": "rules"})
+        return httpx.Response(
+            403,
+            json={
+                "error": "registration_incomplete",
+                "detail": "Finish your tournament registration first.",
+                "next_step": "rules",
+            },
+        )
 
     with pytest.raises(OfficialAgentError) as exc_info:
         official(backend).authenticate()
 
     error = exc_info.value
-    assert (error.status_code, error.error_code, error.next_step) == (403, "registration_incomplete", "rules")
-    assert str(error) == ("Accept the updated Official Rules on your dashboard "
-                          "(https://platform.altruagent-game.com/tournament/dashboard).")
+    assert (error.status_code, error.error_code, error.next_step) == (
+        403,
+        "registration_incomplete",
+        "rules",
+    )
+    assert str(error) == (
+        "Accept the updated Official Rules on your dashboard "
+        "(https://platform.altruagent-game.com/tournament/dashboard)."
+    )
     assert is_registration_incomplete(error) and not is_fatal_auth_error(error)
     assert registration_wait_message(error) == (
         "Accept the updated Official Rules on your dashboard "
-        "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying.")
+        "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying."
+    )
 
 
 @pytest.mark.parametrize("next_step", ["questionnaire", "repository", None])
 def test_another_missing_registration_step_is_explained(next_step):
     def backend(request):
-        return httpx.Response(403, json={"error": "registration_incomplete", "detail": "x", "next_step": next_step})
+        return httpx.Response(
+            403, json={"error": "registration_incomplete", "detail": "x", "next_step": next_step}
+        )
 
     with pytest.raises(OfficialAgentError) as exc_info:
         official(backend).authenticate()
 
     error = exc_info.value
-    assert "registration isn't complete" in str(error) and "platform.altruagent-game.com" in str(error)
+    assert "registration isn't complete" in str(error) and "platform.altruagent-game.com" in str(
+        error
+    )
     assert "run this again" not in str(error)
-    assert registration_wait_message(error).startswith("Your event registration isn't complete. Finish it on your dashboard")
+    assert registration_wait_message(error).startswith(
+        "Your event registration isn't complete. Finish it on your dashboard"
+    )
     assert registration_wait_message(error).endswith("; I'll keep trying.")
     assert not is_fatal_auth_error(error)
 
@@ -266,8 +340,15 @@ def _authenticate_error(response: httpx.Response) -> OfficialAgentError:
 
 
 def test_a_failed_session_mint_is_reported_as_temporary_not_as_a_bad_key():
-    error = _authenticate_error(httpx.Response(401, json={
-        "error": "invalid_official_agent_key", "detail": "Failed to mint agent session: Request rate limit reached"}))
+    error = _authenticate_error(
+        httpx.Response(
+            401,
+            json={
+                "error": "invalid_official_agent_key",
+                "detail": "Failed to mint agent session: Request rate limit reached",
+            },
+        )
+    )
 
     assert error.error_code == "invalid_official_agent_key"  # the platform's code is kept as sent
     assert "temporary" in str(error) and "not your key" in str(error)
@@ -276,7 +357,9 @@ def test_a_failed_session_mint_is_reported_as_temporary_not_as_a_bad_key():
 
 
 def test_agent_session_unavailable_is_explained_as_temporary():
-    error = _authenticate_error(httpx.Response(503, json={"error": "agent_session_unavailable", "detail": "x"}))
+    error = _authenticate_error(
+        httpx.Response(503, json={"error": "agent_session_unavailable", "detail": "x"})
+    )
 
     assert "temporary" in str(error) and not is_fatal_auth_error(error)
 
@@ -284,16 +367,64 @@ def test_agent_session_unavailable_is_explained_as_temporary():
 @pytest.mark.parametrize(
     "response, fatal",
     [
-        (httpx.Response(401, json={"error": "invalid_official_agent_key", "detail": "Invalid official agent key"}), True),
-        (httpx.Response(401, json={"error": "invalid_official_agent_key",
-                                   "detail": "This agent is Oracle Hosted; its Official Agent Key works again..."}), True),
-        (httpx.Response(400, json={"error": "invalid_official_agent_key", "detail": "official_agent_key is required."}), True),
+        (
+            httpx.Response(
+                401,
+                json={
+                    "error": "invalid_official_agent_key",
+                    "detail": "Invalid official agent key",
+                },
+            ),
+            True,
+        ),
+        (
+            httpx.Response(
+                401,
+                json={
+                    "error": "invalid_official_agent_key",
+                    "detail": "This agent is Oracle Hosted; its Official Agent Key works again...",
+                },
+            ),
+            True,
+        ),
+        (
+            httpx.Response(
+                400,
+                json={
+                    "error": "invalid_official_agent_key",
+                    "detail": "official_agent_key is required.",
+                },
+            ),
+            True,
+        ),
         # Not fatal: the runtime says what to do and keeps trying (updated Official Rules).
-        (httpx.Response(403, json={"error": "registration_incomplete", "detail": "rules", "next_step": "rules"}), False),
-        (httpx.Response(401, json={"error": "invalid_official_agent_key",
-                                   "detail": "Failed to mint agent session: no session returned"}), False),
-        (httpx.Response(429, json={"error": "rate_limited", "detail": "Too many requests."}), False),
-        (httpx.Response(500, json={"error": "internal_error", "detail": "Failed to authenticate"}), False),
+        (
+            httpx.Response(
+                403,
+                json={"error": "registration_incomplete", "detail": "rules", "next_step": "rules"},
+            ),
+            False,
+        ),
+        (
+            httpx.Response(
+                401,
+                json={
+                    "error": "invalid_official_agent_key",
+                    "detail": "Failed to mint agent session: no session returned",
+                },
+            ),
+            False,
+        ),
+        (
+            httpx.Response(429, json={"error": "rate_limited", "detail": "Too many requests."}),
+            False,
+        ),
+        (
+            httpx.Response(
+                500, json={"error": "internal_error", "detail": "Failed to authenticate"}
+            ),
+            False,
+        ),
         (httpx.Response(502, text="Bad Gateway"), False),
         (httpx.Response(503, json={"message": "Service Unavailable"}), False),
         (httpx.Response(504, json={"message": "Endpoint request timed out"}), False),
@@ -305,8 +436,13 @@ def test_is_fatal_auth_error_only_for_a_refused_key(response, fatal):
 
 
 def test_is_fatal_auth_error_treats_other_errors_as_temporary():
-    assert not is_fatal_auth_error(AuthenticationError("Invalid or expired agent session token", status_code=401,
-                                                       error_code="invalid_agent_session"))
+    assert not is_fatal_auth_error(
+        AuthenticationError(
+            "Invalid or expired agent session token",
+            status_code=401,
+            error_code="invalid_agent_session",
+        )
+    )
     assert not is_fatal_auth_error(PlatformError("down", status_code=None))
     assert not is_fatal_auth_error(ValueError("x"))
     assert is_fatal_auth_error(OfficialAgentError("not accepted", status_code=401))
@@ -320,34 +456,63 @@ def test_no_assignments():
 
 
 def test_one_and_many_assignments_parse():
-    backend = Backend(assignments=[assignment("seat-1"), assignment("seat-2", match_id="match-2", game_type="werewolf",
-                                                                    seat_position=5, seat_count=7)])
+    backend = Backend(
+        assignments=[
+            assignment("seat-1"),
+            assignment(
+                "seat-2", match_id="match-2", game_type="werewolf", seat_position=5, seat_count=7
+            ),
+        ]
+    )
 
     result = official(backend).assignments()
 
     assert [(a.seat_id, a.match_id, a.game_type) for a in result] == [
-        ("seat-1", "match-1", "pokemon_vgc_doubles_draft"), ("seat-2", "match-2", "werewolf")]
-    assert (result[1].seat_position, result[1].seat_count, result[1].seat_status) == (5, 7, "pending")
+        ("seat-1", "match-1", "pokemon_vgc_doubles_draft"),
+        ("seat-2", "match-2", "werewolf"),
+    ]
+    assert (result[1].seat_position, result[1].seat_count, result[1].seat_status) == (
+        5,
+        7,
+        "pending",
+    )
 
 
 def test_assignments_parse_the_optional_tournament_and_testing_fields():
-    backend = Backend(assignments=[
-        assignment("seat-1", game_type="werewolf", context="tournament", tournament_id="t-1",
-                   tournament_name="Fall Cup", round_label="Swiss round 2 of 3",
-                   opponents=[{"name": "Alpha"}, {"name": "Beta"}],
-                   connect_deadline_at="2026-10-16T15:04:00.000Z"),
-        assignment("seat-2", match_id="match-2", context="testing"),
-    ])
+    backend = Backend(
+        assignments=[
+            assignment(
+                "seat-1",
+                game_type="werewolf",
+                context="tournament",
+                tournament_id="t-1",
+                tournament_name="Fall Cup",
+                round_label="Swiss round 2 of 3",
+                opponents=[{"name": "Alpha"}, {"name": "Beta"}],
+                connect_deadline_at="2026-10-16T15:04:00.000Z",
+            ),
+            assignment("seat-2", match_id="match-2", context="testing"),
+        ]
+    )
 
     tournament, testing = official(backend).assignments()
 
-    assert (tournament.context, tournament.tournament_id, tournament.tournament_name, tournament.round_label) == (
-        "tournament", "t-1", "Fall Cup", "Swiss round 2 of 3")
+    assert (
+        tournament.context,
+        tournament.tournament_id,
+        tournament.tournament_name,
+        tournament.round_label,
+    ) == ("tournament", "t-1", "Fall Cup", "Swiss round 2 of 3")
     assert tournament.opponents == ("Alpha", "Beta")
     assert tournament.connect_deadline_at == "2026-10-16T15:04:00.000Z"
     assert testing.context == "testing"
-    assert (testing.tournament_id, testing.tournament_name, testing.round_label, testing.opponents,
-            testing.connect_deadline_at) == (None, None, None, (), None)
+    assert (
+        testing.tournament_id,
+        testing.tournament_name,
+        testing.round_label,
+        testing.opponents,
+        testing.connect_deadline_at,
+    ) == (None, None, None, (), None)
 
 
 def test_grant_returns_seat_grant():
@@ -356,15 +521,25 @@ def test_grant_returns_seat_grant():
 
     seat_grant = official(backend).grant("seat-1", EXEC)
 
-    assert (seat_grant.game_session_id, seat_grant.agent_id, seat_grant.seat_id) == ("game-1", "synthetic-1", "seat-1")
+    assert (seat_grant.game_session_id, seat_grant.agent_id, seat_grant.seat_id) == (
+        "game-1",
+        "synthetic-1",
+        "seat-1",
+    )
     assert ("POST", f"{ASSIGNMENTS_PATH}/seat-1/grant", "Bearer sess-1") in backend.requests
 
 
 @pytest.mark.parametrize(
     "response, code",
     [
-        (httpx.Response(404, json={"error": "assignment_not_found", "detail": "x"}), "assignment_not_found"),
-        (httpx.Response(409, json={"error": "assignment_not_grantable", "detail": "x"}), "assignment_not_grantable"),
+        (
+            httpx.Response(404, json={"error": "assignment_not_found", "detail": "x"}),
+            "assignment_not_found",
+        ),
+        (
+            httpx.Response(409, json={"error": "assignment_not_grantable", "detail": "x"}),
+            "assignment_not_grantable",
+        ),
     ],
 )
 def test_grant_errors_are_official_agent_errors(response, code):
@@ -389,8 +564,10 @@ def test_grant_missing_fields_is_rejected():
 
 def test_seat_auth_uses_grant_token_for_gameapi_and_regrants_after_401():
     backend = Backend()
-    backend.grant_responses["seat-1"] = [httpx.Response(200, json=grant("seat-jwt-1")),
-                                         httpx.Response(200, json=grant("seat-jwt-2"))]
+    backend.grant_responses["seat-1"] = [
+        httpx.Response(200, json=grant("seat-jwt-1")),
+        httpx.Response(200, json=grant("seat-jwt-2")),
+    ]
     control = official(backend)
     game_requests = []
 
@@ -401,14 +578,23 @@ def test_seat_auth_uses_grant_token_for_gameapi_and_regrants_after_401():
         return httpx.Response(200, json={"ok": True})
 
     seat_auth = OfficialSeatAuth(control, "seat-1", EXEC)
-    game_client = AltruAgentClient(CONTROL, auth=seat_auth, load_env_file=False, transport=httpx.MockTransport(gameapi))
+    game_client = AltruAgentClient(
+        CONTROL, auth=seat_auth, load_env_file=False, transport=httpx.MockTransport(gameapi)
+    )
 
     assert game_client.request("GET", f"{GAMEAPI}/games/game-1") == {"ok": True}
-    assert game_requests == ["Bearer seat-jwt-1", "Bearer seat-jwt-2"]  # renewal = re-grant (reconnect)
+    assert game_requests == [
+        "Bearer seat-jwt-1",
+        "Bearer seat-jwt-2",
+    ]  # renewal = re-grant (reconnect)
     assert seat_auth.grant.access_token == "seat-jwt-2"
     # Neither the persistent key nor the agent session ever reaches GameAPI.
     assert all(KEY not in (h or "") and "sess-" not in (h or "") for h in game_requests)
-    assert KEY not in repr(seat_auth) and "seat-jwt" not in repr(seat_auth) and EXEC not in repr(seat_auth)
+    assert (
+        KEY not in repr(seat_auth)
+        and "seat-jwt" not in repr(seat_auth)
+        and EXEC not in repr(seat_auth)
+    )
     # Both the first grant and the GameAPI-401 re-grant carry the same execution_id.
     assert backend.bodies == [(f"{ASSIGNMENTS_PATH}/seat-1/grant", {"execution_id": EXEC})] * 2
 
@@ -441,14 +627,18 @@ def test_session_reauthentication_preserves_execution_id():
     client.renew_lease("seat-1", EXEC)
 
     assert len(backend.auth_bodies) == 2  # re-authenticated once...
-    assert [body for _, body in backend.bodies] == [{"execution_id": EXEC}] * 2  # ...same lease owner
+    assert [body for _, body in backend.bodies] == [
+        {"execution_id": EXEC}
+    ] * 2  # ...same lease owner
 
 
 def test_lease_not_held_is_an_official_agent_error():
     def handler(request):
         if request.url.path == AUTHENTICATE_PATH:
             return httpx.Response(200, json={"access_token": "sess-1", "expires_at": "x"})
-        return httpx.Response(409, json={"error": "lease_not_held", "detail": "request a new grant"})
+        return httpx.Response(
+            409, json={"error": "lease_not_held", "detail": "request a new grant"}
+        )
 
     with pytest.raises(OfficialAgentError) as exc_info:
         official(handler).renew_lease("seat-1", EXEC)
@@ -457,8 +647,10 @@ def test_lease_not_held_is_an_official_agent_error():
 
 def test_seat_auth_rejects_a_renewal_for_a_different_seat():
     backend = Backend()
-    backend.grant_responses["seat-1"] = [httpx.Response(200, json=grant("a")),
-                                         httpx.Response(200, json={**grant("b"), "game_session_id": "other"})]
+    backend.grant_responses["seat-1"] = [
+        httpx.Response(200, json=grant("a")),
+        httpx.Response(200, json={**grant("b"), "game_session_id": "other"}),
+    ]
     seat_auth = OfficialSeatAuth(official(backend), "seat-1", EXEC)
     seat_auth.login(None, CONTROL)
 
@@ -474,16 +666,25 @@ def test_seat_auth_rejects_a_renewal_for_a_different_seat():
     [
         PlatformError("Could not reach the control plane", status_code=None),
         PlatformError("Bad Gateway", status_code=502),
-        PlatformError("internal", status_code=500, error_code="internal_error"),  # e.g. a seat sign-in that failed
+        PlatformError(
+            "internal", status_code=500, error_code="internal_error"
+        ),  # e.g. a seat sign-in that failed
         PlatformError("slow down", status_code=429),
         PlatformError("timeout", status_code=408),
         OfficialAgentError("slow down", status_code=429, error_code="rate_limited"),
         OfficialAgentError("busy", status_code=503, error_code="agent_session_unavailable"),
         OfficialAgentError("gateway", status_code=504),
-        OfficialAgentError("temporary", status_code=401, error_code="invalid_official_agent_key",
-                           detail="Failed to mint agent session: Request rate limit reached"),
-        AuthenticationError("Invalid or expired agent session token", status_code=401,
-                            error_code="invalid_agent_session"),
+        OfficialAgentError(
+            "temporary",
+            status_code=401,
+            error_code="invalid_official_agent_key",
+            detail="Failed to mint agent session: Request rate limit reached",
+        ),
+        AuthenticationError(
+            "Invalid or expired agent session token",
+            status_code=401,
+            error_code="invalid_agent_session",
+        ),
     ],
     ids=lambda error: f"{type(error).__name__}-{error.status_code}-{error.error_code}",
 )
@@ -494,8 +695,12 @@ def test_temporary_failures(error):
 @pytest.mark.parametrize(
     "error",
     [
-        OfficialAgentError("not accepted", status_code=401, error_code="invalid_official_agent_key",
-                           detail="Invalid official agent key"),
+        OfficialAgentError(
+            "not accepted",
+            status_code=401,
+            error_code="invalid_official_agent_key",
+            detail="Invalid official agent key",
+        ),
         OfficialAgentError("rules", status_code=403, error_code="registration_incomplete"),
         OfficialAgentError("held", status_code=409, error_code="seat_busy"),
         OfficialAgentError("ended", status_code=409, error_code="assignment_not_grantable"),
@@ -506,7 +711,9 @@ def test_temporary_failures(error):
         PlatformError("retired", status_code=410, error_code="platform_agents_retired"),
         ValueError("not ours"),
     ],
-    ids=lambda error: f"{type(error).__name__}-{getattr(error, 'status_code', None)}-{getattr(error, 'error_code', None)}",
+    ids=lambda error: (
+        f"{type(error).__name__}-{getattr(error, 'status_code', None)}-{getattr(error, 'error_code', None)}"
+    ),
 )
 def test_definite_answers_are_not_temporary(error):
     assert not is_transient_error(error)

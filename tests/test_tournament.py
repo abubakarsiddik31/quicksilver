@@ -10,31 +10,35 @@ from __future__ import annotations
 import sys
 import textwrap
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from test_official import CONTROL, KEY
+from test_official import Backend as OfficialBackend
+from test_official import assignment as official_assignment
+from test_supervisor import FakeProcessFactory
 
 from altruagent.errors import AuthenticationError, PlatformError
 from altruagent.mcp_game import MCPGameSession
 from altruagent.mcp_transport import MCPToolError
 from altruagent.models import OfficialAssignment, SeatGrant
 from altruagent.official import AUTHENTICATE_PATH, OfficialAgentClient, OfficialAgentError
+from altruagent.runner import TRANSIENT_GIVE_UP_SECONDS, DecisionError
 from altruagent.supervisor import (
     ALL_KINDS,
     KEY_REFUSED_MESSAGE,
     MIN_CONNECT_WINDOW_SECONDS,
     MISSING_POLLS_BEFORE_STOP,
-    NOT_CONNECTED_RETRY_SECONDS,
     REGISTRATION_REMINDER_SECONDS,
     REGISTRATION_RETRY_SECONDS,
     RESTART_AFTER_PLAY_SECONDS,
     SEAT_FAILURE_BACKOFF_MAX_SECONDS,
-    WORKER_PLAYED_SECONDS,
-    TESTING,
     TEST_MATCH_WAITING_NOTE,
+    TESTING,
     TOURNAMENT,
     WAITING_MESSAGE,
+    WORKER_PLAYED_SECONDS,
     TournamentState,
     assignment_kind,
     describe_assignment,
@@ -42,7 +46,6 @@ from altruagent.supervisor import (
     run_tournament_once,
     tournament_waiting_warning,
 )
-from altruagent.runner import TRANSIENT_GIVE_UP_SECONDS, DecisionError
 from altruagent.worker import (
     EXIT_CONNECTION_LOST,
     EXIT_KEY_REFUSED,
@@ -57,26 +60,33 @@ from altruagent.worker import (
     _tournament_process_entry,
     run_tournament_worker,
 )
-from test_official import CONTROL, KEY
-from test_official import Backend as OfficialBackend
-from test_official import assignment as official_assignment
-from test_supervisor import FakeProcessFactory
 
 SPEC = "agent.agent:create_agent"
 EXEC = "exec-" + "q" * 40
-NOW = datetime(2026, 10, 16, 15, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 16, 15, 0, 0, tzinfo=UTC)
 
 
 def a(seat_id, match_id=None, game_type="pokemon_vgc_doubles_draft", **extra):
-    return OfficialAssignment(match_id=match_id or f"match-{seat_id}", seat_id=seat_id, game_type=game_type,
-                              seat_position=0, seat_count=2, match_status="in_progress", seat_status="running",
-                              **extra)
+    return OfficialAssignment(
+        match_id=match_id or f"match-{seat_id}",
+        seat_id=seat_id,
+        game_type=game_type,
+        seat_position=0,
+        seat_count=2,
+        match_status="in_progress",
+        seat_status="running",
+        **extra,
+    )
 
 
 def tournament_game(seat_id="seat-1", **overrides):
     fields = dict(
-        game_type="werewolf", context="tournament", tournament_id="t-1", tournament_name="Fall Cup",
-        round_label="Swiss round 1 of 3", opponents=("Alpha", "Beta"),
+        game_type="werewolf",
+        context="tournament",
+        tournament_id="t-1",
+        tournament_name="Fall Cup",
+        round_label="Swiss round 1 of 3",
+        opponents=("Alpha", "Beta"),
         connect_deadline_at="2026-10-16T15:03:40.000Z",
     )
     fields.update(overrides)
@@ -111,8 +121,14 @@ class Harness:
     def tick(self, advance=1.0):
         self.clock["t"] += advance
         run_tournament_once(
-            self.official, self.state, agent_spec=SPEC, kinds=self.kinds, now=lambda: self.clock["t"],
-            cooldown_seconds=self.cooldown, process_factory=self.factory, log=self.log.append,
+            self.official,
+            self.state,
+            agent_spec=SPEC,
+            kinds=self.kinds,
+            now=lambda: self.clock["t"],
+            cooldown_seconds=self.cooldown,
+            process_factory=self.factory,
+            log=self.log.append,
             wall_now=lambda: NOW,
         )
 
@@ -139,8 +155,11 @@ def test_one_assignment_starts_one_worker_with_primitive_input():
 
     (process,) = h.factory.processes
     assert process.target is _tournament_process_entry and process.daemon is True
-    assert process.args == (TournamentWorkerInput("seat-1", "match-seat-1", "pokemon_vgc_doubles_draft", SPEC,
-                                                  h.state.execution_id),)
+    assert process.args == (
+        TournamentWorkerInput(
+            "seat-1", "match-seat-1", "pokemon_vgc_doubles_draft", SPEC, h.state.execution_id
+        ),
+    )
     assert h.log == ["Match assigned: pokemon_vgc_doubles_draft", "Starting match..."]
 
 
@@ -176,7 +195,9 @@ def test_the_tournament_id_is_handed_to_the_worker():
 
 
 def test_describe_assignment_without_the_optional_fields_is_one_line():
-    assert describe_assignment(a("seat-1", game_type=None), now=NOW) == ["Match assigned: unknown game"]
+    assert describe_assignment(a("seat-1", game_type=None), now=NOW) == [
+        "Match assigned: unknown game"
+    ]
 
 
 def test_describe_assignment_round_without_tournament_name():
@@ -210,7 +231,7 @@ def test_describe_assignment_connect_deadline(deadline, expected):
 
 
 def test_describe_assignment_uses_the_wall_clock_by_default():
-    deadline = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    deadline = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
 
     (line,) = describe_assignment(a("seat-1", connect_deadline_at=deadline))[1:]
 
@@ -313,7 +334,7 @@ def test_failed_worker_is_retried_after_cooldown_reconnect_path():
     h.tick()
     h.factory.processes[0].finish(EXIT_UNEXPECTED)
 
-    h.tick(advance=1.0)   # reaped -> cooldown
+    h.tick(advance=1.0)  # reaped -> cooldown
     h.tick(advance=10.0)  # still cooling down
     assert h.started() == ["seat-1"]
     assert "Retrying in 30s" in h.log[2]
@@ -331,9 +352,18 @@ def test_a_seat_that_keeps_failing_is_retried_less_and_less_often():
         h.factory.processes[-1].finish(EXIT_MATCH_FAILURE)
         h.tick(advance=0.0)  # reaped
         waits.append(h.state.failed_until["seat-1"] - h.clock["t"])
-        h.clock["t"] = h.state.failed_until["seat-1"]  # wait it out; the next tick starts a new worker
+        h.clock["t"] = h.state.failed_until[
+            "seat-1"
+        ]  # wait it out; the next tick starts a new worker
 
-    assert waits == [60.0, 120.0, 240.0, 480.0, SEAT_FAILURE_BACKOFF_MAX_SECONDS, SEAT_FAILURE_BACKOFF_MAX_SECONDS]
+    assert waits == [
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        SEAT_FAILURE_BACKOFF_MAX_SECONDS,
+        SEAT_FAILURE_BACKOFF_MAX_SECONDS,
+    ]
     assert "Retrying in 120s" in "\n".join(h.log)
 
 
@@ -382,7 +412,11 @@ def test_reappearing_seat_resets_the_missing_count():
 
 
 def test_transient_discovery_failure_is_logged_once_and_recovers():
-    h = Harness(PlatformError("boom", status_code=503), PlatformError("boom", status_code=503), [a("seat-1")])
+    h = Harness(
+        PlatformError("boom", status_code=503),
+        PlatformError("boom", status_code=503),
+        [a("seat-1")],
+    )
 
     h.tick()
     h.tick()
@@ -402,16 +436,27 @@ def test_authentication_failure_propagates():
 
 # -- what the runtime says about a game's process --------------------------------------------
 
-STOPPED_WITH_ERROR = ("Your agent's process for this match stopped with an error (exit code 1); "
-                      "the match continues. Retrying in 60s if it is still assigned.")
+STOPPED_WITH_ERROR = (
+    "Your agent's process for this match stopped with an error (exit code 1); "
+    "the match continues. Retrying in 60s if it is still assigned."
+)
 
 
 def players(count, *, mine=None, game_type="werewolf", context="testing", match_id="m-1"):
     """``mine`` (default: all ``count``) assignments for one match of ``count`` players."""
-    return [OfficialAssignment(match_id=match_id, seat_id=f"{match_id}-p{i}", game_type=game_type,
-                               seat_position=i, seat_count=count, match_status="in_progress",
-                               seat_status="pending", context=context)
-            for i in range(count if mine is None else mine)]
+    return [
+        OfficialAssignment(
+            match_id=match_id,
+            seat_id=f"{match_id}-p{i}",
+            game_type=game_type,
+            seat_position=i,
+            seat_count=count,
+            match_status="in_progress",
+            seat_status="pending",
+            context=context,
+        )
+        for i in range(count if mine is None else mine)
+    ]
 
 
 def test_an_agent_error_says_the_process_stopped_and_the_match_continues():
@@ -438,8 +483,10 @@ def test_a_match_that_ends_while_its_process_is_stopped_is_said_once():
 
     h.tick()  # the match is over: no longer listed
 
-    assert h.log[-2:] == ["Your red_alert match (Testing) has ended while your agent's process for it was stopped.",
-                          WAITING_MESSAGE]
+    assert h.log[-2:] == [
+        "Your red_alert match (Testing) has ended while your agent's process for it was stopped.",
+        WAITING_MESSAGE,
+    ]
     h.tick()
     assert h.log.count(WAITING_MESSAGE) == 1
 
@@ -452,7 +499,10 @@ def test_a_game_never_reached_after_its_connect_window_is_not_called_an_error():
 
     h.tick()
 
-    assert h.log[-1] == "Couldn't reach that game (a temporary problem); retrying in 60s if it is still assigned."
+    assert (
+        h.log[-1]
+        == "Couldn't reach that game (a temporary problem); retrying in 60s if it is still assigned."
+    )
 
 
 def test_waiting_is_said_once_when_one_match_finishes_and_another_ended_without_its_process():
@@ -464,8 +514,11 @@ def test_waiting_is_said_once_when_one_match_finishes_and_another_ended_without_
 
     h.tick()  # seat-1's match finished; seat-2's match ended while its process was stopped
 
-    assert h.log[-3:] == ["Match finished.", WAITING_MESSAGE,
-                          "Your pokemon_vgc_doubles_draft match has ended while your agent's process for it was stopped."]
+    assert h.log[-3:] == [
+        "Match finished.",
+        WAITING_MESSAGE,
+        "Your pokemon_vgc_doubles_draft match has ended while your agent's process for it was stopped.",
+    ]
 
 
 def test_a_stopped_process_that_was_started_again_and_finished_says_nothing_more():
@@ -504,8 +557,10 @@ def test_a_self_play_pickup_is_one_line_not_one_per_player():
     h.tick()
 
     assert len(h.factory.processes) == 7
-    assert h.log == ["Match assigned: werewolf (Testing), self-play: your agent plays all 7 players",
-                     "Starting match..."]
+    assert h.log == [
+        "Match assigned: werewolf (Testing), self-play: your agent plays all 7 players",
+        "Starting match...",
+    ]
 
 
 def test_a_pickup_of_some_of_the_players_says_how_many():
@@ -513,7 +568,10 @@ def test_a_pickup_of_some_of_the_players_says_how_many():
 
     h.tick()
 
-    assert h.log == ["Match assigned: werewolf (Testing), your agent plays 2 of the 4 players", "Starting match..."]
+    assert h.log == [
+        "Match assigned: werewolf (Testing), your agent plays 2 of the 4 players",
+        "Starting match...",
+    ]
 
 
 def test_a_self_play_finish_is_one_line_not_one_per_player():
@@ -559,18 +617,33 @@ def test_a_self_play_match_no_longer_assigned_says_so_once():
 # -- signing in again during a run (the agent session lasts about an hour) ------------------
 
 MINT_FAILURE = OfficialAgentError(
-    "temporary", status_code=401, error_code="invalid_official_agent_key",
+    "temporary",
+    status_code=401,
+    error_code="invalid_official_agent_key",
     detail="Failed to mint agent session: Request rate limit reached",
 )
 TEMPORARY_SIGN_IN_FAILURES = [
-    pytest.param(OfficialAgentError("slow down", status_code=429, error_code="rate_limited"), id="429"),
-    pytest.param(OfficialAgentError("boom", status_code=500, error_code="internal_error"), id="500"),
+    pytest.param(
+        OfficialAgentError("slow down", status_code=429, error_code="rate_limited"), id="429"
+    ),
+    pytest.param(
+        OfficialAgentError("boom", status_code=500, error_code="internal_error"), id="500"
+    ),
     pytest.param(OfficialAgentError("gateway", status_code=503), id="503-non-json"),
     pytest.param(OfficialAgentError("gateway", status_code=504), id="504"),
-    pytest.param(OfficialAgentError("busy", status_code=503, error_code="agent_session_unavailable"), id="503-unavailable"),
+    pytest.param(
+        OfficialAgentError("busy", status_code=503, error_code="agent_session_unavailable"),
+        id="503-unavailable",
+    ),
     pytest.param(MINT_FAILURE, id="401-mint-failure"),
-    pytest.param(AuthenticationError("Invalid or expired agent session token", status_code=401,
-                                     error_code="invalid_agent_session"), id="fresh-session-still-401"),
+    pytest.param(
+        AuthenticationError(
+            "Invalid or expired agent session token",
+            status_code=401,
+            error_code="invalid_agent_session",
+        ),
+        id="fresh-session-still-401",
+    ),
     pytest.param(OfficialAgentError("no token", status_code=200), id="200-without-token"),
 ]
 
@@ -581,9 +654,9 @@ def test_a_temporary_sign_in_failure_keeps_running_games_and_the_runtime(error):
     h.tick()
     worker = h.factory.processes[0]
 
-    h.tick()                 # fails: no exception, the worker keeps playing
-    h.tick(advance=120.0)    # fails again after the pause
-    h.tick(advance=120.0)    # recovered
+    h.tick()  # fails: no exception, the worker keeps playing
+    h.tick(advance=120.0)  # fails again after the pause
+    h.tick(advance=120.0)  # recovered
 
     assert not worker.terminated and worker.is_alive()
     assert h.state.registry.pids().keys() == {"seat-1"}
@@ -608,12 +681,12 @@ def test_a_sign_in_failure_never_counts_toward_stopping_a_worker():
 def test_after_too_many_attempts_it_waits_a_full_minute_before_trying_again():
     h = Harness(OfficialAgentError("slow down", status_code=429, error_code="rate_limited"), [])
 
-    h.tick(advance=1.0)       # t=1: 429
+    h.tick(advance=1.0)  # t=1: 429
     for _ in range(5):
         h.tick(advance=10.0)  # t=11..51: still waiting
     assert h.official.calls == 1
 
-    h.tick(advance=10.0)      # t=61: a minute later
+    h.tick(advance=10.0)  # t=61: a minute later
     assert h.official.calls == 2
 
 
@@ -635,15 +708,17 @@ def test_the_backoff_starts_over_after_a_successful_listing():
     error = OfficialAgentError("boom", status_code=500)
     h = Harness(error, error, [], error, [])
 
-    h.tick(advance=1.0)    # fail (wait 10)
-    h.tick(advance=10.0)   # fail (wait 20)
-    h.tick(advance=20.0)   # ok
-    h.tick(advance=1.0)    # fail again: back to a 10 s wait
+    h.tick(advance=1.0)  # fail (wait 10)
+    h.tick(advance=10.0)  # fail (wait 20)
+    h.tick(advance=20.0)  # ok
+    h.tick(advance=1.0)  # fail again: back to a 10 s wait
     assert h.state.discovery_retry_at == h.clock["t"] + 10.0
 
 
 def test_finished_workers_are_still_reaped_while_sign_in_is_failing():
-    h = Harness([a("seat-1")], OfficialAgentError("slow down", status_code=429, error_code="rate_limited"))
+    h = Harness(
+        [a("seat-1")], OfficialAgentError("slow down", status_code=429, error_code="rate_limited")
+    )
     h.tick()
     h.tick()  # 429: waiting a minute
     h.factory.processes[0].finish(EXIT_SUCCESS)
@@ -657,10 +732,24 @@ def test_finished_workers_are_still_reaped_while_sign_in_is_failing():
 @pytest.mark.parametrize(
     "error",
     [
-        pytest.param(OfficialAgentError("not accepted", status_code=401, error_code="invalid_official_agent_key",
-                                        detail="Invalid official agent key"), id="wrong-or-revoked-key"),
-        pytest.param(OfficialAgentError("oracle", status_code=401, error_code="invalid_official_agent_key",
-                                        detail="This agent is Oracle Hosted; ..."), id="oracle-hosted"),
+        pytest.param(
+            OfficialAgentError(
+                "not accepted",
+                status_code=401,
+                error_code="invalid_official_agent_key",
+                detail="Invalid official agent key",
+            ),
+            id="wrong-or-revoked-key",
+        ),
+        pytest.param(
+            OfficialAgentError(
+                "oracle",
+                status_code=401,
+                error_code="invalid_official_agent_key",
+                detail="This agent is Oracle Hosted; ...",
+            ),
+            id="oracle-hosted",
+        ),
     ],
 )
 def test_a_refused_key_still_stops_the_runtime(error):
@@ -672,7 +761,9 @@ def test_a_refused_key_still_stops_the_runtime(error):
 
 
 def test_forever_survives_temporary_sign_in_failures_without_stopping_workers():
-    official = FakeOfficial([a("seat-1")], MINT_FAILURE, OfficialAgentError("x", status_code=503), [a("seat-1")])
+    official = FakeOfficial(
+        [a("seat-1")], MINT_FAILURE, OfficialAgentError("x", status_code=503), [a("seat-1")]
+    )
     factory = FakeProcessFactory()
     clock = {"t": 0.0}
     log: list[str] = []
@@ -680,8 +771,15 @@ def test_forever_survives_temporary_sign_in_failures_without_stopping_workers():
     def sleep(seconds):
         clock["t"] += 30.0
 
-    run_tournament_forever(official, agent_spec=SPEC, sleep=sleep, now=lambda: clock["t"],
-                           process_factory=factory, log=log.append, max_iterations=8)
+    run_tournament_forever(
+        official,
+        agent_spec=SPEC,
+        sleep=sleep,
+        now=lambda: clock["t"],
+        process_factory=factory,
+        log=log.append,
+        max_iterations=8,
+    )
 
     assert len(factory.processes) == 1
     assert official.calls >= 4
@@ -713,21 +811,38 @@ class RefreshBackend(OfficialBackend):
 
 
 REFRESH_ANSWERS = [
-    pytest.param(httpx.Response(500, json={"error": "internal_error", "detail": "Failed to authenticate"}), id="500"),
-    pytest.param(httpx.Response(429, json={"error": "rate_limited", "detail": "Too many requests."}), id="429"),
+    pytest.param(
+        httpx.Response(500, json={"error": "internal_error", "detail": "Failed to authenticate"}),
+        id="500",
+    ),
+    pytest.param(
+        httpx.Response(429, json={"error": "rate_limited", "detail": "Too many requests."}),
+        id="429",
+    ),
     pytest.param(httpx.Response(503, text="<html>Service Unavailable</html>"), id="503-html"),
     pytest.param(httpx.Response(504, json={"message": "Endpoint request timed out"}), id="504"),
-    pytest.param(httpx.Response(401, json={"error": "invalid_official_agent_key",
-                                           "detail": "Failed to mint agent session: Request rate limit reached"}),
-                 id="401-mint-failure"),
-    pytest.param(httpx.Response(503, json={"error": "agent_session_unavailable", "detail": "try again"}),
-                 id="503-agent-session-unavailable"),
+    pytest.param(
+        httpx.Response(
+            401,
+            json={
+                "error": "invalid_official_agent_key",
+                "detail": "Failed to mint agent session: Request rate limit reached",
+            },
+        ),
+        id="401-mint-failure",
+    ),
+    pytest.param(
+        httpx.Response(503, json={"error": "agent_session_unavailable", "detail": "try again"}),
+        id="503-agent-session-unavailable",
+    ),
 ]
 
 
 def _real_harness(backend):
     h = Harness([])
-    h.official = OfficialAgentClient(CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend))
+    h.official = OfficialAgentClient(
+        CONTROL, KEY, load_env_file=False, transport=httpx.MockTransport(backend)
+    )
     return h
 
 
@@ -737,10 +852,10 @@ def test_real_client_session_refresh_failure_keeps_games_running(answer):
     h = _real_harness(backend)
     h.tick()
     worker = h.factory.processes[0]
-    backend.valid.clear()   # the hour-long session expires
+    backend.valid.clear()  # the hour-long session expires
     backend.refresh = answer
 
-    h.tick()                # GET 401 -> sign in again -> temporary failure
+    h.tick()  # GET 401 -> sign in again -> temporary failure
 
     assert not worker.terminated and h.state.registry.pids().keys() == {"seat-1"}
     assert any("Could not renew your agent session" in line for line in h.log)
@@ -786,8 +901,10 @@ def test_real_client_revoked_key_still_stops_the_runtime():
 
 MATCH_ONLY = frozenset({TESTING})
 TOURNAMENT_ONLY = frozenset({TOURNAMENT})
-FALL_CUP_WARNING = ("You have a tournament game waiting (Fall Cup, Swiss round 1 of 3): run with --tournament "
-                    "to play it — it counts as a loss if your agent doesn't connect within the window.")
+FALL_CUP_WARNING = (
+    "You have a tournament game waiting (Fall Cup, Swiss round 1 of 3): run with --tournament "
+    "to play it — it counts as a loss if your agent doesn't connect within the window."
+)
 
 
 def match_game(seat_id="seat-t", **overrides):
@@ -796,8 +913,15 @@ def match_game(seat_id="seat-t", **overrides):
 
 @pytest.mark.parametrize(
     "context, kind",
-    [("testing", TESTING), ("Testing", TESTING), (" testing ", TESTING), ("tournament", TOURNAMENT),
-     (None, TOURNAMENT), ("", TOURNAMENT), ("exhibition", TOURNAMENT)],
+    [
+        ("testing", TESTING),
+        ("Testing", TESTING),
+        (" testing ", TESTING),
+        ("tournament", TOURNAMENT),
+        (None, TOURNAMENT),
+        ("", TOURNAMENT),
+        ("exhibition", TOURNAMENT),
+    ],
 )
 def test_assignment_kind_missing_or_unknown_context_is_a_tournament_game(context, kind):
     assert assignment_kind(a("seat-1", context=context)) == kind
@@ -832,13 +956,17 @@ def test_an_assignment_without_a_context_is_played_as_a_tournament_game():
 
     assert tournament.started() == ["seat-1"]
     assert match.started() == []
-    assert match.log == ["You have a tournament game waiting (pokemon_vgc_doubles_draft): run with --tournament "
-                         "to play it — it counts as a loss if your agent doesn't connect within the window."]
+    assert match.log == [
+        "You have a tournament game waiting (pokemon_vgc_doubles_draft): run with --tournament "
+        "to play it — it counts as a loss if your agent doesn't connect within the window."
+    ]
 
 
 def test_both_flags_play_both_kinds_in_one_runtime_without_notes():
-    h = Harness([tournament_game("seat-1"), match_game("seat-2"), a("seat-3")],
-                kinds=frozenset({TESTING, TOURNAMENT}))
+    h = Harness(
+        [tournament_game("seat-1"), match_game("seat-2"), a("seat-3")],
+        kinds=frozenset({TESTING, TOURNAMENT}),
+    )
 
     h.tick()
 
@@ -847,7 +975,9 @@ def test_both_flags_play_both_kinds_in_one_runtime_without_notes():
 
 
 def test_the_tournament_warning_is_shown_once_per_game():
-    second = tournament_game("seat-9", match_id="match-9", tournament_name="Winter Cup", round_label="Final")
+    second = tournament_game(
+        "seat-9", match_id="match-9", tournament_name="Winter Cup", round_label="Final"
+    )
     h = Harness([tournament_game("seat-1")], [tournament_game("seat-1"), second], kinds=MATCH_ONLY)
 
     for _ in range(5):
@@ -863,7 +993,9 @@ def test_the_tournament_warning_is_shown_once_per_game():
 
 def test_the_test_match_note_is_shown_once_per_game_even_with_several_of_its_seats():
     self_play = [match_game("seat-a", match_id="m-1"), match_game("seat-b", match_id="m-1")]
-    h = Harness(self_play, self_play + [match_game("seat-c", match_id="m-2")], kinds=TOURNAMENT_ONLY)
+    h = Harness(
+        self_play, self_play + [match_game("seat-c", match_id="m-2")], kinds=TOURNAMENT_ONLY
+    )
 
     for _ in range(4):
         h.tick()
@@ -875,7 +1007,10 @@ def test_the_test_match_note_is_shown_once_per_game_even_with_several_of_its_sea
 @pytest.mark.parametrize(
     "fields, detail",
     [
-        (dict(tournament_name="Fall Cup", round_label="Swiss round 1 of 3"), " (Fall Cup, Swiss round 1 of 3)"),
+        (
+            dict(tournament_name="Fall Cup", round_label="Swiss round 1 of 3"),
+            " (Fall Cup, Swiss round 1 of 3)",
+        ),
         (dict(tournament_name="Fall Cup"), " (Fall Cup)"),
         (dict(round_label="Final"), " (Final)"),
         (dict(), " (werewolf)"),
@@ -895,7 +1030,9 @@ def test_tournament_waiting_warning_names_what_the_server_sent(fields, detail):
 def test_a_running_game_is_not_stopped_when_its_context_changes_to_a_kind_not_played():
     # Started as a tournament game (no context: an older backend), then the
     # backend starts labelling the same seat "testing".
-    h = Harness([a("seat-1")], [match_game("seat-1", match_id="match-seat-1")], kinds=TOURNAMENT_ONLY)
+    h = Harness(
+        [a("seat-1")], [match_game("seat-1", match_id="match-seat-1")], kinds=TOURNAMENT_ONLY
+    )
 
     for _ in range(MISSING_POLLS_BEFORE_STOP + 3):
         h.tick()
@@ -906,8 +1043,9 @@ def test_a_running_game_is_not_stopped_when_its_context_changes_to_a_kind_not_pl
 
 
 def test_a_running_game_keeps_playing_while_games_of_the_other_kind_are_skipped():
-    h = Harness([match_game("seat-1")],
-                [match_game("seat-1"), tournament_game("seat-2")], kinds=MATCH_ONLY)
+    h = Harness(
+        [match_game("seat-1")], [match_game("seat-1"), tournament_game("seat-2")], kinds=MATCH_ONLY
+    )
 
     for _ in range(MISSING_POLLS_BEFORE_STOP + 3):
         h.tick()
@@ -924,7 +1062,10 @@ def test_a_skipped_game_is_never_started_after_a_played_one_finishes():
     for _ in range(3):
         h.tick(advance=100.0)  # past every cooldown
 
-    assert h.started() == ["seat-1", "seat-1"]  # the test match again (still listed), never the tournament game
+    assert h.started() == [
+        "seat-1",
+        "seat-1",
+    ]  # the test match again (still listed), never the tournament game
     assert h.log.count(FALL_CUP_WARNING) == 1
 
 
@@ -933,8 +1074,15 @@ def test_forever_hands_its_kinds_to_every_tick():
     factory = FakeProcessFactory()
     log: list[str] = []
 
-    run_tournament_forever(official, agent_spec=SPEC, kinds=MATCH_ONLY, sleep=lambda s: None,
-                           process_factory=factory, log=log.append, max_iterations=3)
+    run_tournament_forever(
+        official,
+        agent_spec=SPEC,
+        kinds=MATCH_ONLY,
+        sleep=lambda s: None,
+        process_factory=factory,
+        log=log.append,
+        max_iterations=3,
+    )
 
     assert [p.args[0].seat_id for p in factory.processes] == ["seat-2"]
     assert log.count(FALL_CUP_WARNING) == 1
@@ -944,8 +1092,14 @@ def test_forever_plays_both_kinds_by_default():
     official = FakeOfficial([tournament_game("seat-1"), match_game("seat-2")])
     factory = FakeProcessFactory()
 
-    run_tournament_forever(official, agent_spec=SPEC, sleep=lambda s: None, process_factory=factory,
-                           log=lambda line: None, max_iterations=1)
+    run_tournament_forever(
+        official,
+        agent_spec=SPEC,
+        sleep=lambda s: None,
+        process_factory=factory,
+        log=lambda line: None,
+        max_iterations=1,
+    )
 
     assert [p.args[0].seat_id for p in factory.processes] == ["seat-1", "seat-2"]
 
@@ -962,7 +1116,9 @@ def test_forever_keeps_polling_with_no_assignments_and_stops_workers_on_ctrl_c()
             raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
-        run_tournament_forever(official, agent_spec=SPEC, sleep=sleep, process_factory=factory, log=log.append)
+        run_tournament_forever(
+            official, agent_spec=SPEC, sleep=sleep, process_factory=factory, log=log.append
+        )
 
     assert official.calls == 3
     assert all(p.terminated for p in factory.processes)
@@ -981,15 +1137,24 @@ def test_forever_never_exits_on_its_own_when_nothing_is_assigned():
 
 
 def _grant(**overrides):
-    data = {"access_token": "seat-jwt", "agent_id": "synthetic-1", "gameapi_server_url": "https://gameapi.example.test",
-            "game_session_id": "game-1", "match_id": "match-1", "seat_id": "seat-1", "seat_position": 1,
-            "seat_count": 2, "game_type": "pokemon_vgc_doubles_draft", "match_status": "in_progress"}
+    data = {
+        "access_token": "seat-jwt",
+        "agent_id": "synthetic-1",
+        "gameapi_server_url": "https://gameapi.example.test",
+        "game_session_id": "game-1",
+        "match_id": "match-1",
+        "seat_id": "seat-1",
+        "seat_position": 1,
+        "seat_count": 2,
+        "game_type": "pokemon_vgc_doubles_draft",
+        "match_status": "in_progress",
+    }
     data.update(overrides)
     return SeatGrant.from_dict(data)
 
 
 class FakeWorkerOfficial:
-    instances: list["FakeWorkerOfficial"] = []
+    instances: list[FakeWorkerOfficial] = []
 
     def __init__(self, grant_result=None):
         self.control_url = "https://control.example.test"
@@ -1035,8 +1200,11 @@ def _worker(spec=SPEC, grant_result=None, run_game_fn=None):
         officials.append(FakeWorkerOfficial(grant_result))
         return officials[-1]
 
-    code = run_tournament_worker(TournamentWorkerInput("seat-1", "match-1", "pokemon_vgc_doubles_draft", spec, EXEC),
-                                 official_factory=factory, run_game_fn=run_game_fn or fake_run_game)
+    code = run_tournament_worker(
+        TournamentWorkerInput("seat-1", "match-1", "pokemon_vgc_doubles_draft", spec, EXEC),
+        official_factory=factory,
+        run_game_fn=run_game_fn or fake_run_game,
+    )
     return code, runs, officials
 
 
@@ -1050,12 +1218,16 @@ def test_worker_grants_the_seat_and_plays_it_through_run_game(capsys):
     code, runs, officials = _worker()
 
     assert code == EXIT_SUCCESS
-    (game, context, contestant), = runs
+    ((game, context, contestant),) = runs
     assert isinstance(game, MCPGameSession)
     assert (game.session_id, game.game_server_url) == ("game-1", "https://gameapi.example.test")
     assert game._client.auth.seat_id == "seat-1"
     assert (context.session_id, context.agent_id, context.seat_position, context.game_type) == (
-        "game-1", "synthetic-1", 1, "pokemon_vgc_doubles_draft")
+        "game-1",
+        "synthetic-1",
+        1,
+        "pokemon_vgc_doubles_draft",
+    )
     assert officials[0].grants == ["seat-1"] and officials[0].closed
     out = capsys.readouterr().out
     assert "finished: your agent (player 2) won (termination_reason=normal, score=1.0)" in out
@@ -1064,11 +1236,15 @@ def test_worker_grants_the_seat_and_plays_it_through_run_game(capsys):
 
 def _finish_line(capsys, termination_reason="completed", returns=None, final_result=None):
     def fake_run_game(game, context, contestant):
-        return types.SimpleNamespace(termination_reason=termination_reason, returns=returns,
-                                     final_result=final_result)
+        return types.SimpleNamespace(
+            termination_reason=termination_reason, returns=returns, final_result=final_result
+        )
 
-    code = run_tournament_worker(TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC),
-                                 official_factory=lambda: FakeWorkerOfficial(None), run_game_fn=fake_run_game)
+    code = run_tournament_worker(
+        TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC),
+        official_factory=lambda: FakeWorkerOfficial(None),
+        run_game_fn=fake_run_game,
+    )
     assert code == EXIT_SUCCESS
     (line,) = [line for line in capsys.readouterr().out.splitlines() if " finished" in line]
     return line.split("] ", 1)[1]
@@ -1077,8 +1253,15 @@ def _finish_line(capsys, termination_reason="completed", returns=None, final_res
 def test_worker_says_won_or_lost_from_the_games_own_result_werewolf(capsys):
     # Werewolf's returns are keyed by player name, not by agent id, so the
     # finished line used to say nothing about the result.
-    result = {"returns": {"Player 1": -1.0, "Player 2": 1.0}, "your_return": 1.0, "status": "completed",
-              "result": {"winning_team": "wolves", "seats": {"synthetic-1": {"outcome": "win", "team": "wolves"}}}}
+    result = {
+        "returns": {"Player 1": -1.0, "Player 2": 1.0},
+        "your_return": 1.0,
+        "status": "completed",
+        "result": {
+            "winning_team": "wolves",
+            "seats": {"synthetic-1": {"outcome": "win", "team": "wolves"}},
+        },
+    }
 
     line = _finish_line(capsys, returns=result["returns"], final_result=result)
 
@@ -1086,8 +1269,12 @@ def test_worker_says_won_or_lost_from_the_games_own_result_werewolf(capsys):
 
 
 def test_worker_says_lost_from_the_winner_pokemon_and_red_alert(capsys):
-    result = {"returns": {"other": 1.0, "synthetic-1": 0.0}, "your_return": 0.0, "status": "completed",
-              "winner_agent_id": "other"}
+    result = {
+        "returns": {"other": 1.0, "synthetic-1": 0.0},
+        "your_return": 0.0,
+        "status": "completed",
+        "winner_agent_id": "other",
+    }
 
     line = _finish_line(capsys, returns=result["returns"], final_result=result)
 
@@ -1095,17 +1282,28 @@ def test_worker_says_lost_from_the_winner_pokemon_and_red_alert(capsys):
 
 
 def test_worker_says_a_draw_from_an_even_score(capsys):
-    result = {"returns": {"other": 0.5, "synthetic-1": 0.5}, "your_return": 0.5, "status": "completed",
-              "winner_agent_id": None}
+    result = {
+        "returns": {"other": 0.5, "synthetic-1": 0.5},
+        "your_return": 0.5,
+        "status": "completed",
+        "winner_agent_id": None,
+    }
 
-    line = _finish_line(capsys, termination_reason="time_limit", returns=result["returns"], final_result=result)
+    line = _finish_line(
+        capsys, termination_reason="time_limit", returns=result["returns"], final_result=result
+    )
 
     assert line == "finished: your agent (player 2) drew (termination_reason=time_limit, score=0.5)"
 
 
 def test_worker_says_no_result_for_a_game_the_server_could_not_finish(capsys):
-    result = {"returns": None, "your_return": None, "status": "failed", "winner_agent_id": None,
-              "failure_reason": "battle_room_timeout"}
+    result = {
+        "returns": None,
+        "your_return": None,
+        "status": "failed",
+        "winner_agent_id": None,
+        "failure_reason": "battle_room_timeout",
+    }
 
     line = _finish_line(capsys, termination_reason="error", final_result=result)
 
@@ -1127,7 +1325,8 @@ def test_worker_hands_the_tournament_id_to_the_contestant():
 
     code = run_tournament_worker(
         TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC, tournament_id="t-1"),
-        official_factory=lambda: FakeWorkerOfficial(None), run_game_fn=fake_run_game,
+        official_factory=lambda: FakeWorkerOfficial(None),
+        run_game_fn=fake_run_game,
     )
 
     assert code == EXIT_SUCCESS and runs[0].tournament_id == "t-1"
@@ -1140,7 +1339,11 @@ def test_worker_testing_game_has_no_tournament_id():
 
 
 def test_each_worker_builds_its_own_contestant(monkeypatch, tmp_path):
-    _write_module(tmp_path, monkeypatch, "tournament_counting_agent", """
+    _write_module(
+        tmp_path,
+        monkeypatch,
+        "tournament_counting_agent",
+        """
         created = []
 
         class Agent:
@@ -1150,7 +1353,8 @@ def test_each_worker_builds_its_own_contestant(monkeypatch, tmp_path):
         def create_agent():
             created.append(Agent())
             return created[-1]
-    """)
+    """,
+    )
 
     _, runs_a, _ = _worker(spec="tournament_counting_agent")
     _, runs_b, _ = _worker(spec="tournament_counting_agent")
@@ -1175,13 +1379,22 @@ def test_worker_restart_requests_a_fresh_grant_each_time():
 
 
 def test_worker_exits_cleanly_when_the_assignment_already_ended():
-    code, runs, _ = _worker(grant_result=OfficialAgentError("ended", status_code=409, error_code="assignment_not_grantable"))
+    code, runs, _ = _worker(
+        grant_result=OfficialAgentError(
+            "ended", status_code=409, error_code="assignment_not_grantable"
+        )
+    )
 
     assert code == EXIT_SUCCESS and runs == []
 
 
 def test_worker_factory_error_fails_before_any_grant(monkeypatch, tmp_path):
-    _write_module(tmp_path, monkeypatch, "tournament_broken_agent", "def create_agent():\n    raise RuntimeError('no key')\n")
+    _write_module(
+        tmp_path,
+        monkeypatch,
+        "tournament_broken_agent",
+        "def create_agent():\n    raise RuntimeError('no key')\n",
+    )
 
     code, runs, officials = _worker(spec="tournament_broken_agent")
 
@@ -1190,7 +1403,9 @@ def test_worker_factory_error_fails_before_any_grant(monkeypatch, tmp_path):
 
 def test_worker_match_failure_exit_code():
     def failing(game, context, contestant):
-        raise MCPToolError("The game session was not found.", status_code=None, error_code="SESSION_NOT_FOUND")
+        raise MCPToolError(
+            "The game session was not found.", status_code=None, error_code="SESSION_NOT_FOUND"
+        )
 
     code, _, officials = _worker(run_game_fn=failing)
 
@@ -1209,13 +1424,23 @@ def test_worker_temporary_failure_before_reaching_the_game_is_not_connected():
 @pytest.mark.parametrize(
     "error",
     [
-        pytest.param(MCPToolError("MCP tool 'wait_for_update' failed: ReadTimeout('')", status_code=None,
-                                  error_code=None), id="no-answer"),
-        pytest.param(MCPToolError("waiting already", status_code=None, error_code="TOO_MANY_WAITS"),
-                     id="too-many-waits"),
+        pytest.param(
+            MCPToolError(
+                "MCP tool 'wait_for_update' failed: ReadTimeout('')",
+                status_code=None,
+                error_code=None,
+            ),
+            id="no-answer",
+        ),
+        pytest.param(
+            MCPToolError("waiting already", status_code=None, error_code="TOO_MANY_WAITS"),
+            id="too-many-waits",
+        ),
     ],
 )
-def test_worker_that_lost_the_connection_after_reaching_the_game_exits_connection_lost(error, capsys):
+def test_worker_that_lost_the_connection_after_reaching_the_game_exits_connection_lost(
+    error, capsys
+):
     # run_game gave up after 90 s of temporary failures. The supervisor needs
     # to know why (a lost connection, not an agent error) to restart it soon.
     def failing(game, context, contestant):
@@ -1234,8 +1459,12 @@ def test_worker_whose_call_the_server_cant_handle_is_a_match_failure(contacted):
     # isn't a connection problem, before or after reaching the game.
     def failing(game, context, contestant):
         game.contacted = contacted
-        raise MCPToolError("MCP tool 'play_action' failed at the protocol level: 1 validation error",
-                           status_code=None, error_code=None, protocol_error=True)
+        raise MCPToolError(
+            "MCP tool 'play_action' failed at the protocol level: 1 validation error",
+            status_code=None,
+            error_code=None,
+            protocol_error=True,
+        )
 
     code, _, _ = _worker(run_game_fn=failing)
 
@@ -1243,11 +1472,17 @@ def test_worker_whose_call_the_server_cant_handle_is_a_match_failure(contacted):
 
 
 @pytest.mark.parametrize("as_decision_error", [False, True])
-def test_worker_whose_move_cant_be_sent_as_json_is_a_match_failure_not_a_lost_connection(as_decision_error, capsys):
+def test_worker_whose_move_cant_be_sent_as_json_is_a_match_failure_not_a_lost_connection(
+    as_decision_error, capsys
+):
     # A move holding, say, a numpy number never leaves the process. That is a
     # bug in the agent's code: "match failed", never "lost the connection".
-    unsendable = MCPToolError("MCP tool 'play_action' can't send its arguments as JSON: Unable to serialize",
-                              status_code=None, error_code=None, local_error=True)
+    unsendable = MCPToolError(
+        "MCP tool 'play_action' can't send its arguments as JSON: Unable to serialize",
+        status_code=None,
+        error_code=None,
+        local_error=True,
+    )
 
     def failing(game, context, contestant):
         game.contacted = True
@@ -1360,7 +1595,9 @@ def test_a_game_that_was_playing_is_picked_up_again_within_seconds_and_its_count
     assert absences == [RESTART_AFTER_PLAY_SECONDS] * 5
     assert h.state.seat_failures == {"seat-1": 1}
     assert len(h.factory.processes) == 6
-    assert "Lost the connection to that game for a while; retrying that game in 10s" in "\n".join(h.log)
+    assert "Lost the connection to that game for a while; retrying that game in 10s" in "\n".join(
+        h.log
+    )
 
 
 def test_a_fast_failure_right_after_a_long_run_continues_the_doubling_from_one():
@@ -1397,7 +1634,9 @@ def _run_workers(h, seconds, run_for, exitcode, poll=10.0):
 
 @pytest.mark.parametrize("run_for", [30.0, 60.0, 100.0])
 @pytest.mark.parametrize("exitcode", [EXIT_MATCH_FAILURE, EXIT_UNEXPECTED])
-def test_an_agent_that_keeps_crashing_during_the_game_is_retried_less_and_less_often(exitcode, run_for):
+def test_an_agent_that_keeps_crashing_during_the_game_is_retried_less_and_less_often(
+    exitcode, run_for
+):
     # Was: any worker that ran 30 s or more was restarted after 10 s, whatever
     # the reason, so an agent that crashed 30 s into each restart was started
     # (each start one new seat grant) about 72 times an hour.
@@ -1458,18 +1697,25 @@ def test_a_worker_turned_away_by_its_registration_is_retried_every_30s_without_c
     starts = _run_ticks(h, 10, 10.0, EXIT_REGISTRATION_INCOMPLETE)
 
     gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
-    assert gaps and set(gaps) == {REGISTRATION_RETRY_SECONDS + 10.0}  # plus the poll that notices the exit
+    assert gaps and set(gaps) == {
+        REGISTRATION_RETRY_SECONDS + 10.0
+    }  # plus the poll that notices the exit
     assert h.state.seat_failures == {}
-    assert "That game can't start until your registration is complete; checking again in 30s." in h.log
+    assert (
+        "That game can't start until your registration is complete; checking again in 30s." in h.log
+    )
 
 
 RULES_UPDATED = OfficialAgentError(
     "Accept the updated Official Rules on your dashboard (https://platform.altruagent-game.com/tournament/dashboard).",
-    status_code=403, error_code="registration_incomplete",
+    status_code=403,
+    error_code="registration_incomplete",
 )
 RULES_UPDATED.next_step = "rules"
-RULES_MESSAGE = ("Accept the updated Official Rules on your dashboard "
-                 "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying.")
+RULES_MESSAGE = (
+    "Accept the updated Official Rules on your dashboard "
+    "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying."
+)
 
 
 def test_updated_rules_never_stop_the_runtime_or_its_running_games():
@@ -1486,8 +1732,11 @@ def test_updated_rules_never_stop_the_runtime_or_its_running_games():
     assert h.log.count(RULES_MESSAGE) == 1  # said once, not every 30 s
     assert h.official.calls == 5
     h.tick(advance=REGISTRATION_RETRY_SECONDS)  # accepted on the dashboard
-    assert h.log[-3:] == ["Assignment discovery recovered.", "Match assigned: pokemon_vgc_doubles_draft",
-                          "Starting match..."]
+    assert h.log[-3:] == [
+        "Assignment discovery recovered.",
+        "Match assigned: pokemon_vgc_doubles_draft",
+        "Starting match...",
+    ]
     assert h.started() == ["seat-1", "seat-2"]
 
 
@@ -1502,7 +1751,9 @@ def test_while_the_registration_is_incomplete_it_retries_slowly_and_reminds_ever
 
     gaps = {later - earlier for earlier, later in zip(attempts, attempts[1:])}
     assert gaps == {REGISTRATION_RETRY_SECONDS}
-    assert h.log.count(RULES_MESSAGE) == 1 + int((attempts[-1] - attempts[0]) // REGISTRATION_REMINDER_SECONDS)
+    assert h.log.count(RULES_MESSAGE) == 1 + int(
+        (attempts[-1] - attempts[0]) // REGISTRATION_REMINDER_SECONDS
+    )
 
 
 def test_real_client_updated_rules_mid_run_keep_the_runtime_going():
@@ -1510,9 +1761,14 @@ def test_real_client_updated_rules_mid_run_keep_the_runtime_going():
     h = _real_harness(backend)
     h.tick()
     backend.valid.clear()  # the hour-long session expires...
-    backend.refresh = httpx.Response(403, json={"error": "registration_incomplete",
-                                                "detail": "Finish your tournament registration first.",
-                                                "next_step": "rules"})  # ...after a Rules update
+    backend.refresh = httpx.Response(
+        403,
+        json={
+            "error": "registration_incomplete",
+            "detail": "Finish your tournament registration first.",
+            "next_step": "rules",
+        },
+    )  # ...after a Rules update
 
     h.tick()
 
@@ -1571,19 +1827,40 @@ def _clocked_worker(grant_result, run_game_fn=None, **input_fields):
         officials.append(FakeWorkerOfficial(grant_result))
         return officials[-1]
 
-    worker_input = TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC, **input_fields)
-    code = run_tournament_worker(worker_input, official_factory=factory, run_game_fn=run_game_fn or fake_run_game,
-                                 sleep=clock.sleep, now=clock.now)
+    worker_input = TournamentWorkerInput(
+        "seat-1", "match-1", "werewolf", SPEC, EXEC, **input_fields
+    )
+    code = run_tournament_worker(
+        worker_input,
+        official_factory=factory,
+        run_game_fn=run_game_fn or fake_run_game,
+        sleep=clock.sleep,
+        now=clock.now,
+    )
     return code, runs, officials, clock
 
 
 GRANT_HICCUPS = [
-    pytest.param(PlatformError("internal", status_code=500, error_code="internal_error"), id="seat-sign-in-500"),
+    pytest.param(
+        PlatformError("internal", status_code=500, error_code="internal_error"),
+        id="seat-sign-in-500",
+    ),
     pytest.param(PlatformError("Could not reach", status_code=None), id="unreachable"),
-    pytest.param(OfficialAgentError("slow down", status_code=429, error_code="rate_limited"), id="429"),
-    pytest.param(OfficialAgentError("busy", status_code=503, error_code="agent_session_unavailable"), id="503"),
-    pytest.param(AuthenticationError("Invalid or expired agent session token", status_code=401,
-                                     error_code="invalid_agent_session"), id="fresh-session-401"),
+    pytest.param(
+        OfficialAgentError("slow down", status_code=429, error_code="rate_limited"), id="429"
+    ),
+    pytest.param(
+        OfficialAgentError("busy", status_code=503, error_code="agent_session_unavailable"),
+        id="503",
+    ),
+    pytest.param(
+        AuthenticationError(
+            "Invalid or expired agent session token",
+            status_code=401,
+            error_code="invalid_agent_session",
+        ),
+        id="fresh-session-401",
+    ),
 ]
 
 
@@ -1593,7 +1870,9 @@ def test_worker_retries_a_temporary_grant_failure_within_seconds_and_plays(hiccu
 
     assert code == EXIT_SUCCESS and len(runs) == 1
     assert officials[0].grants == ["seat-1"] * 3
-    assert len(clock.sleeps) == 2 and 2.25 <= clock.sleeps[0] <= 3.75 and 4.5 <= clock.sleeps[1] <= 7.5
+    assert (
+        len(clock.sleeps) == 2 and 2.25 <= clock.sleeps[0] <= 3.75 and 4.5 <= clock.sleeps[1] <= 7.5
+    )
     assert "couldn't get into the game yet" in capsys.readouterr().out
 
 
@@ -1608,7 +1887,8 @@ def test_worker_that_never_gets_into_the_game_exits_not_connected_after_a_minute
 
 def test_worker_does_not_retry_a_definite_grant_refusal():
     code, _, officials, clock = _clocked_worker(
-        OfficialAgentError("missing", status_code=404, error_code="assignment_not_found"))
+        OfficialAgentError("missing", status_code=404, error_code="assignment_not_found")
+    )
 
     assert code == EXIT_UNEXPECTED and officials[0].grants == ["seat-1"] and clock.sleeps == []
 
@@ -1635,10 +1915,16 @@ def test_worker_without_a_handed_over_session_signs_in_itself():
 @pytest.mark.parametrize(
     "error, expected",
     [
-        pytest.param(OfficialAgentError("held", status_code=409, error_code="seat_busy"), EXIT_SEAT_BUSY,
-                     id="seat-busy"),
-        pytest.param(OfficialAgentError("ended", status_code=409, error_code="assignment_not_grantable"), EXIT_SUCCESS,
-                     id="game-ended"),
+        pytest.param(
+            OfficialAgentError("held", status_code=409, error_code="seat_busy"),
+            EXIT_SEAT_BUSY,
+            id="seat-busy",
+        ),
+        pytest.param(
+            OfficialAgentError("ended", status_code=409, error_code="assignment_not_grantable"),
+            EXIT_SUCCESS,
+            id="game-ended",
+        ),
     ],
 )
 def test_worker_maps_a_regrant_refusal_during_play(error, expected):
@@ -1666,8 +1952,12 @@ def test_the_game_session_counts_as_reached_only_after_gameapi_answers(monkeypat
         return answer
 
     monkeypatch.setattr(mcp_game, "call_tool", fake_call_tool)
-    game = _LeaseGuardedGameSession(object(), lost=threading.Event(), session_id="game-1",
-                                    game_server_url="https://gameapi.example.test")
+    game = _LeaseGuardedGameSession(
+        object(),
+        lost=threading.Event(),
+        session_id="game-1",
+        game_server_url="https://gameapi.example.test",
+    )
 
     with pytest.raises(MCPToolError):
         game.get_state()
@@ -1680,7 +1970,9 @@ def test_the_game_session_counts_as_reached_only_after_gameapi_answers(monkeypat
 
 KEY_REFUSED = OfficialAgentError(
     "The Official Agent Key was not accepted. Check that your agent is set to Self-hosted ...",
-    status_code=401, error_code="invalid_official_agent_key", detail="Invalid official agent key",
+    status_code=401,
+    error_code="invalid_official_agent_key",
+    detail="Invalid official agent key",
 )
 
 
@@ -1723,7 +2015,10 @@ def test_after_a_refused_key_no_new_game_is_started_and_it_is_said_once():
 
     assert h.started() == ["seat-1", "seat-2", "seat-3"]  # seat-4 and the retries never start
     assert h.log.count(KEY_REFUSED_MESSAGE) == 1
-    assert "put your new key in .env" in KEY_REFUSED_MESSAGE.lower() and "restart" in KEY_REFUSED_MESSAGE
+    assert (
+        "put your new key in .env" in KEY_REFUSED_MESSAGE.lower()
+        and "restart" in KEY_REFUSED_MESSAGE
+    )
     assert not h.factory.processes[2].terminated  # a game already running keeps playing
     h.factory.processes[2].finish(EXIT_SUCCESS)
     h.tick()

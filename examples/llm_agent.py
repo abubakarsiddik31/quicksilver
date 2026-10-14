@@ -62,7 +62,8 @@ from __future__ import annotations
 import inspect
 import json
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -75,7 +76,13 @@ from altruagent import (
     WithReasoning,
 )
 from examples.llm import pokemon, redalert
-from examples.llm.base import AdapterFactory, Choice, InvalidChoice, UnsupportedStructuredAction, object_schema
+from examples.llm.base import (
+    AdapterFactory,
+    Choice,
+    InvalidChoice,
+    UnsupportedStructuredAction,
+    object_schema,
+)
 from examples.llm.providers import LLMProvider, ProviderError, provider_from_env
 
 # Structured-action adapters, by template type. A future game that needs one
@@ -108,7 +115,14 @@ MIN_ATTEMPT_SECONDS = 3.0  # less time left than this: play the fallback now
 # Keys of GameAPI's state payload the model doesn't need (options are sent
 # separately, the rest is transport bookkeeping).
 _OMITTED_STATE_KEYS = frozenset(
-    {"legal_actions", "next_actions", "new_messages", "session_id", "runtime_adapter", "legal_action_count"}
+    {
+        "legal_actions",
+        "next_actions",
+        "new_messages",
+        "session_id",
+        "runtime_adapter",
+        "legal_action_count",
+    }
 )
 
 _SYSTEM_PROMPT = (
@@ -163,8 +177,13 @@ class LLMAgent:
         choice = self._action_choice(state)
         value, answer = self._ask(choice, state, context, counter="decision_calls")
         if value is None:
-            self._log(f"[llm] {choice.kind}: FALLBACK to a default legal action (no valid model answer in time)")
-            return WithReasoning(choice.fallback(), "Fallback: the model gave no valid answer, so a default legal action was played.")
+            self._log(
+                f"[llm] {choice.kind}: FALLBACK to a default legal action (no valid model answer in time)"
+            )
+            return WithReasoning(
+                choice.fallback(),
+                "Fallback: the model gave no valid answer, so a default legal action was played.",
+            )
         summary = str(answer.get("reasoning_summary") or "").strip()[:REASONING_CHAR_LIMIT]
         self._log(f"[llm] {choice.kind}: {summary or '(no summary)'}")
         return WithReasoning(value, summary)
@@ -215,10 +234,14 @@ class LLMAgent:
             return TERMINATE_MESSAGING
         self._round_requests += 1
 
-        choice = _message_choice(state, requests_left=MESSAGE_REQUESTS_PER_ROUND - self._round_requests)
+        choice = _message_choice(
+            state, requests_left=MESSAGE_REQUESTS_PER_ROUND - self._round_requests
+        )
         value, _ = self._ask(choice, state, context, counter="message_calls")
         if value is None:
-            self._log("[llm] message: FALLBACK to ending the discussion round (no valid model answer in time)")
+            self._log(
+                "[llm] message: FALLBACK to ending the discussion round (no valid model answer in time)"
+            )
             value = TERMINATE_MESSAGING
         if value is TERMINATE_MESSAGING:
             self._round_ended = True
@@ -263,12 +286,19 @@ class LLMAgent:
                     limit["timeout"] = min(POKEMON_REQUEST_SECONDS, left)
             setattr(self, counter, getattr(self, counter) + 1)
             try:
-                answer = self._provider.complete_structured(messages, choice.kind, choice.schema, **limit)
+                answer = self._provider.complete_structured(
+                    messages, choice.kind, choice.schema, **limit
+                )
                 return choice.build(answer), answer
             except (ProviderError, InvalidChoice) as exc:
-                self._log(f"[llm] {choice.kind}: invalid model response (attempt {attempt}/{MAX_ATTEMPTS}): {exc}")
+                self._log(
+                    f"[llm] {choice.kind}: invalid model response (attempt {attempt}/{MAX_ATTEMPTS}): {exc}"
+                )
                 messages.append(
-                    {"role": "user", "content": f"That answer was invalid: {exc}. Answer again using only the given options."}
+                    {
+                        "role": "user",
+                        "content": f"That answer was invalid: {exc}. Answer again using only the given options.",
+                    }
                 )
         return None, None
 
@@ -278,8 +308,11 @@ class LLMAgent:
                 continue
             self._seen_messages.add(message.index)
             self._transcript.append(
-                {"from": f"Player{message.sender}", "to": [f"Player{r}" for r in message.recipients] or "everyone",
-                 "text": message.content}
+                {
+                    "from": f"Player{message.sender}",
+                    "to": [f"Player{r}" for r in message.recipients] or "everyone",
+                    "text": message.content,
+                }
             )
 
 
@@ -315,7 +348,9 @@ def _is_template(action: LegalAction) -> bool:
     move; Werewolf's actions have no ``input["action"]`` at all.)
     """
     template = action.input.get("action")
-    return isinstance(template, dict) and (template.get("type") == action.action_id or "instructions" in template)
+    return isinstance(template, dict) and (
+        template.get("type") == action.action_id or "instructions" in template
+    )
 
 
 def _discrete_choice(legal_actions: list[LegalAction]) -> Choice:
@@ -324,12 +359,16 @@ def _discrete_choice(legal_actions: list[LegalAction]) -> Choice:
     def build(answer: dict) -> LegalAction:
         choice = answer.get("action_id")
         if choice not in by_id:
-            raise InvalidChoice(f"action_id {choice!r} is not one of the legal action_ids {list(by_id)}")
+            raise InvalidChoice(
+                f"action_id {choice!r} is not one of the legal action_ids {list(by_id)}"
+            )
         return by_id[choice]
 
     return Choice(
         kind="choose_action",
-        prompt={"legal_actions": [{"action_id": a.action_id, "label": a.label} for a in legal_actions]},
+        prompt={
+            "legal_actions": [{"action_id": a.action_id, "label": a.label} for a in legal_actions]
+        },
         schema=object_schema({"action_id": {"type": "string", "enum": list(by_id)}}),
         build=build,
         fallback=lambda: legal_actions[0],
@@ -337,7 +376,11 @@ def _discrete_choice(legal_actions: list[LegalAction]) -> Choice:
 
 
 def _message_choice(state: GameState, *, requests_left: int) -> Choice:
-    players = [p for p in state.raw.get("players") or [] if isinstance(p, dict) and isinstance(p.get("position"), int)]
+    players = [
+        p
+        for p in state.raw.get("players") or []
+        if isinstance(p, dict) and isinstance(p.get("position"), int)
+    ]
     me = state.raw.get("your_position")
     recipients = sorted({p["position"] for p in players} - {me})
 
@@ -346,14 +389,18 @@ def _message_choice(state: GameState, *, requests_left: int) -> Choice:
             return TERMINATE_MESSAGING
         if answer.get("decision") != "send":
             raise InvalidChoice(f"decision must be 'send' or 'end', got {answer.get('decision')!r}")
-        text = " ".join(str(answer.get("message") or "").split()[:MESSAGE_WORD_LIMIT])[:MESSAGE_CHAR_LIMIT]
+        text = " ".join(str(answer.get("message") or "").split()[:MESSAGE_WORD_LIMIT])[
+            :MESSAGE_CHAR_LIMIT
+        ]
         if not text:
             raise InvalidChoice("a 'send' decision needs a non-empty message")
         recipient = answer.get("recipient")
         if recipient is None:
             return SendMessage(text)
         if isinstance(recipient, bool) or recipient not in recipients:
-            raise InvalidChoice(f"recipient must be null (everyone) or one of {recipients}, got {recipient!r}")
+            raise InvalidChoice(
+                f"recipient must be null (everyone) or one of {recipients}, got {recipient!r}"
+            )
         return SendMessage(text, [recipient])
 
     return Choice(

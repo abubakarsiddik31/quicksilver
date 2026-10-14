@@ -11,11 +11,12 @@ from __future__ import annotations
 import sys
 import types
 
+from test_supervisor import FakeProcessFactory
+from test_tournament import EXEC, SPEC, FakeOfficial, FakeWorkerOfficial, a
+
 from altruagent.console import print_line
 from altruagent.supervisor import TournamentState, run_tournament_once
 from altruagent.worker import TournamentWorkerInput, run_tournament_worker
-from test_supervisor import FakeProcessFactory
-from test_tournament import EXEC, SPEC, FakeOfficial, FakeWorkerOfficial, a
 
 
 class RecordingStream:
@@ -35,7 +36,9 @@ class RecordingStream:
 
 
 def _every_write_is_one_whole_line(writes: list[str]) -> bool:
-    return bool(writes) and all(w.endswith("\n") and w.count("\n") == 1 and w != "\n" for w in writes)
+    return bool(writes) and all(
+        w.endswith("\n") and w.count("\n") == 1 and w != "\n" for w in writes
+    )
 
 
 def test_print_line_writes_the_text_and_its_newline_at_once_and_flushes(monkeypatch):
@@ -55,8 +58,11 @@ def test_the_worker_writes_each_line_at_once(monkeypatch):
     def fake_run_game(game, context, contestant):
         return types.SimpleNamespace(termination_reason="normal", returns={"synthetic-1": 1.0})
 
-    run_tournament_worker(TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC),
-                          official_factory=lambda: FakeWorkerOfficial(None), run_game_fn=fake_run_game)
+    run_tournament_worker(
+        TournamentWorkerInput("seat-1", "match-1", "werewolf", SPEC, EXEC),
+        official_factory=lambda: FakeWorkerOfficial(None),
+        run_game_fn=fake_run_game,
+    )
 
     assert len(stream.writes) >= 2  # starting, finished
     assert _every_write_is_one_whole_line(stream.writes)
@@ -68,10 +74,17 @@ def test_the_supervisor_writes_each_line_at_once_by_default(monkeypatch):
     factory = FakeProcessFactory()
     state = TournamentState()
 
-    run_tournament_once(FakeOfficial([a("seat-1")]), state, agent_spec=SPEC, now=lambda: 1.0,
-                        process_factory=factory)
+    run_tournament_once(
+        FakeOfficial([a("seat-1")]),
+        state,
+        agent_spec=SPEC,
+        now=lambda: 1.0,
+        process_factory=factory,
+    )
     factory.processes[0].finish(0)
-    run_tournament_once(FakeOfficial([]), state, agent_spec=SPEC, now=lambda: 2.0, process_factory=factory)
+    run_tournament_once(
+        FakeOfficial([]), state, agent_spec=SPEC, now=lambda: 2.0, process_factory=factory
+    )
 
     assert len(stream.writes) >= 3  # Match assigned, Starting match..., Match finished.
     assert _every_write_is_one_whole_line(stream.writes)

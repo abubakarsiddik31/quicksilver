@@ -100,7 +100,7 @@ class AltruAgentClient:
         self._access_token: str | None = None
         self._http = httpx.Client(base_url=self.control_url, timeout=timeout, transport=transport)
 
-    def __enter__(self) -> "AltruAgentClient":
+    def __enter__(self) -> AltruAgentClient:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -224,7 +224,7 @@ class AltruAgentClient:
         """
         return self.request("POST", f"/tournaments/{tournament_id}/leave")
 
-    def game(self, session_id: str, game_server_url: str) -> "GameSession":
+    def game(self, session_id: str, game_server_url: str) -> GameSession:
         """Open a handle to one already-known GameAPI match.
 
         Both ``session_id`` and ``game_server_url`` must be supplied
@@ -241,7 +241,7 @@ class AltruAgentClient:
 
         return GameSession(self, session_id=session_id, game_server_url=game_server_url)
 
-    def mcp_game(self, session_id: str, game_server_url: str) -> "MCPGameSession":
+    def mcp_game(self, session_id: str, game_server_url: str) -> MCPGameSession:
         """Open a handle to one already-known match, played through MCP —
         the production gameplay transport (see ``altruagent.mcp_game``).
         ``Match.game()`` calls this for you with a lazily-resolved
@@ -312,4 +312,3 @@ class AltruAgentClient:
             return self._http.request(method, url, headers=headers, **kwargs)
         except httpx.RequestError as exc:
             raise PlatformError(f"Could not reach {url}: {exc}", status_code=None) from exc
-

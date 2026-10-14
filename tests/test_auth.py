@@ -136,7 +136,9 @@ def test_claim_key_is_strong_random_and_stable_within_one_auth():
     keys = {claim["claim_key"] for claim in server.claims}
     assert len(keys) == 1
     key = keys.pop()
-    assert len(key) >= 43  # 32 random bytes, urlsafe-base64 — well above the backend's 16-char floor
+    assert (
+        len(key) >= 43
+    )  # 32 random bytes, urlsafe-base64 — well above the backend's 16-char floor
     assert key != CLAIM_TOKEN
 
 
@@ -210,31 +212,46 @@ def test_claim_errors_map_to_clear_seat_claim_errors(status, code, phrase):
 
 
 def test_retired_claim_codes_point_to_the_official_agent_key():
-    server = ClaimServer(httpx.Response(410, json={
-        "error": "claim_codes_retired",
-        "detail": "Testing now uses your Official Agent Key: run your agent with --match and it picks up your Testing games automatically.",
-    }))
+    server = ClaimServer(
+        httpx.Response(
+            410,
+            json={
+                "error": "claim_codes_retired",
+                "detail": "Testing now uses your Official Agent Key: run your agent with --match and it picks up your Testing games automatically.",
+            },
+        )
+    )
 
     with pytest.raises(SeatClaimError) as exc_info:
         seat_client(server).login()
 
     error = exc_info.value
     assert (error.status_code, error.error_code) == (410, "claim_codes_retired")
-    assert str(error).startswith("Testing claim codes were retired; run with --match and your Official Agent Key")
+    assert str(error).startswith(
+        "Testing claim codes were retired; run with --match and your Official Agent Key"
+    )
     assert "ALTRUAGENT_OFFICIAL_AGENT_KEY" in str(error) and CLAIM_TOKEN not in str(error)
 
 
 @pytest.mark.parametrize(
     "response",
     [
-        httpx.Response(410, json={"error": "platform_agents_retired", "detail": "AltruAgent now runs on the UCLA site."}),
+        httpx.Response(
+            410,
+            json={
+                "error": "platform_agents_retired",
+                "detail": "AltruAgent now runs on the UCLA site.",
+            },
+        ),
         httpx.Response(410, text="Gone"),
     ],
 )
 def test_retired_platform_api_key_login_points_to_the_official_agent_key(response):
     client = AltruAgentClient(
-        control_url=CONTROL_URL, api_key="sk_agent_old_platform_key",
-        transport=httpx.MockTransport(lambda request: response), load_env_file=False,
+        control_url=CONTROL_URL,
+        api_key="sk_agent_old_platform_key",
+        transport=httpx.MockTransport(lambda request: response),
+        load_env_file=False,
     )
 
     with pytest.raises(AuthenticationError) as exc_info:
@@ -327,7 +344,10 @@ def test_seat_auth_client_still_needs_control_url(monkeypatch):
 def test_api_key_and_auth_together_are_rejected():
     with pytest.raises(ConfigurationError):
         AltruAgentClient(
-            control_url=CONTROL_URL, api_key="sk_agent_x", auth=SeatGrantAuth(CLAIM_TOKEN), load_env_file=False
+            control_url=CONTROL_URL,
+            api_key="sk_agent_x",
+            auth=SeatGrantAuth(CLAIM_TOKEN),
+            load_env_file=False,
         )
 
 
@@ -429,16 +449,26 @@ def _mcp_server(accepted_token: str, attempts: list):
         if method == "notifications/initialized":
             return httpx.Response(202)
         if method == "tools/list":
-            tools = [{"name": "get_game_state", "inputSchema": {"type": "object"}, "outputSchema": None}]
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}})
+            tools = [
+                {"name": "get_game_state", "inputSchema": {"type": "object"}, "outputSchema": None}
+            ]
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
+            )
         if method == "tools/call":
             payload = {"ok": True}
-            result = {"content": [{"type": "text", "text": json.dumps(payload)}], "structuredContent": payload, "isError": False}
+            result = {
+                "content": [{"type": "text", "text": json.dumps(payload)}],
+                "structuredContent": payload,
+                "isError": False,
+            }
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": req_id, "result": result})
         return httpx.Response(404)
 
     def factory(headers=None, timeout=None, auth=None):
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), headers=headers, timeout=30.0)
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), headers=headers, timeout=30.0
+        )
 
     return factory
 
@@ -453,7 +483,10 @@ def test_mcp_401_renews_seat_and_retries_with_new_token():
     attempts: list = []
 
     result = call_tool(
-        client, MCP_URL, "get_game_state", {"session_id": "game-session-1"},
+        client,
+        MCP_URL,
+        "get_game_state",
+        {"session_id": "game-session-1"},
         httpx_client_factory=_mcp_server("seat-jwt-2", attempts),
     )
 
@@ -475,7 +508,10 @@ def test_mcp_failed_renewal_raises_authentication_error_without_looping():
 
     with pytest.raises(AuthenticationError):
         call_tool(
-            client, MCP_URL, "get_game_state", {"session_id": "game-session-1"},
+            client,
+            MCP_URL,
+            "get_game_state",
+            {"session_id": "game-session-1"},
             httpx_client_factory=_mcp_server("never-accepted", attempts),
         )
 
@@ -494,7 +530,10 @@ def test_mcp_second_401_after_successful_renewal_stops():
 
     with pytest.raises(MCPToolError) as exc_info:
         call_tool(
-            client, MCP_URL, "get_game_state", {"session_id": "game-session-1"},
+            client,
+            MCP_URL,
+            "get_game_state",
+            {"session_id": "game-session-1"},
             httpx_client_factory=_mcp_server("never-accepted", attempts),
         )
 

@@ -22,8 +22,20 @@ from typing import Any
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
 # Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
-JEV_SLOTS = ("doctrine", "structure", "unit", "stage", "posture", "wave", "target", "focus", "threat",
-             "harvester", "power", "style")
+JEV_SLOTS = (
+    "doctrine",
+    "structure",
+    "unit",
+    "stage",
+    "posture",
+    "wave",
+    "target",
+    "focus",
+    "threat",
+    "harvester",
+    "power",
+    "style",
+)
 ITEM_RE = re.compile(r"^[a-z0-9_]{2,8}$")
 
 MAX_WANTS = 24
@@ -56,7 +68,17 @@ ORDER_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "rally": (frozenset({"building", "to"}), frozenset()),
 }
 STANCES = ("hold_fire", "return_fire", "defend", "attack_anything")
-UNIT_ORDERS = {"move", "attack_move", "attack", "stop", "deploy", "unload", "guard", "harvest", "set_stance"}
+UNIT_ORDERS = {
+    "move",
+    "attack_move",
+    "attack",
+    "stop",
+    "deploy",
+    "unload",
+    "guard",
+    "harvest",
+    "set_stance",
+}
 BUILDING_ORDERS = {"sell", "repair", "power_toggle", "set_primary", "rally"}
 ITEM_ORDERS = {"build", "train", "place", "cancel"}
 
@@ -64,7 +86,12 @@ ITEM_ORDERS = {"build", "train", "place", "cancel"}
 ALIASES = ("barracks", "tower", "aa")  # resolved to this faction's real item by the executor
 REACTION_ARMY = ("hold", "retreat", "attack")
 COND_BOOLS = ("under_attack", "power_low", "enemy_air")
-COND_INTS = {"cash_below": (0, 20000), "cash_above": (0, 20000), "time_over_s": (0, 7200), "army_at_least": (1, 100)}
+COND_INTS = {
+    "cash_below": (0, 20000),
+    "cash_above": (0, 20000),
+    "time_over_s": (0, 7200),
+    "army_at_least": (1, 100),
+}
 
 
 @dataclass(frozen=True)
@@ -92,7 +119,8 @@ def _parse_when(value: Any) -> dict[str, Any]:
             "at_least": _clamp(near.get("at_least"), 1, 50, 1),
             "radius": _clamp(near.get("radius"), 8, 60, 28),
             "types": [t for t in (str(x).lower() for x in types) if ITEM_RE.match(t)][:8]
-            if isinstance(types, list) else [],
+            if isinstance(types, list)
+            else [],
         }
     for key in COND_BOOLS:
         if value.get(key) is True:
@@ -121,7 +149,9 @@ def _parse_do(value: Any) -> tuple[dict[str, Any], ...]:
             if isinstance(body, dict):
                 item = str(body.get("item", "")).lower().strip()
                 if ITEM_RE.match(item) and _is_int(body.get("count")):
-                    out.append({key: {"item": item, "count": max(0, min(MAX_COUNT, body["count"]))}})
+                    out.append(
+                        {key: {"item": item, "count": max(0, min(MAX_COUNT, body["count"]))}}
+                    )
         if str(action.get("army", "")).lower() in REACTION_ARMY:
             out.append({"army": str(action["army"]).lower()})
         if action.get("army_first") is True:
@@ -146,14 +176,24 @@ DEFAULT_REACTIONS = (
     Reaction(
         "enemy at the gates",
         {"enemy_near_base": {"at_least": 2, "radius": 30, "types": []}},
-        ({"want_building": {"item": "tower", "count": 3}}, {"want_unit": {"item": "e3", "count": 8}},
-         {"army": "hold"}, {"army_first": True}),
+        (
+            {"want_building": {"item": "tower", "count": 3}},
+            {"want_unit": {"item": "e3", "count": 8}},
+            {"army": "hold"},
+            {"army_first": True},
+        ),
     ),
-    Reaction("enemy aircraft", {"enemy_air": True}, ({"want_building": {"item": "aa", "count": 1}},)),
     Reaction(
-        "cash floating", {"cash_above": 2000, "time_over_s": 200, "army_at_least": 3},
-        ({"want_building": {"item": "weap", "count": 2}}, {"want_building": {"item": "barracks", "count": 2}},
-         {"army_first": True}),
+        "enemy aircraft", {"enemy_air": True}, ({"want_building": {"item": "aa", "count": 1}},)
+    ),
+    Reaction(
+        "cash floating",
+        {"cash_above": 2000, "time_over_s": 200, "army_at_least": 3},
+        (
+            {"want_building": {"item": "weap", "count": 2}},
+            {"want_building": {"item": "barracks", "count": 2}},
+            {"army_first": True},
+        ),
     ),
 )
 
@@ -193,7 +233,9 @@ class Plan:
             "army_first": self.army_first,
             "orders": list(self.orders),
             "review_in_s": self.review_in_s,
-            "reactions": [{"name": r.name, "when": r.when, "do": list(r.do)} for r in self.reactions],
+            "reactions": [
+                {"name": r.name, "when": r.when, "do": list(r.do)} for r in self.reactions
+            ],
             "tactics": {
                 "hint": self.tactics_hint,
                 "min_confidence": self.min_confidence,
@@ -210,10 +252,23 @@ class Plan:
 DEFAULT_PLAN = Plan(
     assessment="default opening: power, refinery, war factory, barracks; harvesters; cheap defence; then army",
     buildings=(
-        ("powr", 1), ("proc", 1), ("weap", 1), ("barracks", 1), ("powr", 2), ("proc", 2), ("fix", 1),
+        ("powr", 1),
+        ("proc", 1),
+        ("weap", 1),
+        ("barracks", 1),
+        ("powr", 2),
+        ("proc", 2),
+        ("fix", 1),
     ),
     units=(
-        ("harv", 3), ("e3", 4), ("e1", 3), ("1tnk", 4), ("3tnk", 8), ("2tnk", 4), ("e3", 8), ("e1", 6),
+        ("harv", 3),
+        ("e3", 4),
+        ("e1", 3),
+        ("1tnk", 4),
+        ("3tnk", 8),
+        ("2tnk", 4),
+        ("e3", 8),
+        ("e1", 6),
     ),
 )
 
@@ -260,7 +315,9 @@ def _shape_ok(order: Any) -> bool:
     if not required <= fields or not fields <= required | optional:
         return False
     if "units" in order and not (
-        isinstance(order["units"], list) and order["units"] and all(_is_int(u) for u in order["units"])
+        isinstance(order["units"], list)
+        and order["units"]
+        and all(_is_int(u) for u in order["units"])
     ):
         return False
     if "to" in order and _cell(order["to"]) is None:
@@ -300,9 +357,11 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         target = _cell(raw_target)
     gather = _cell(army["gather"]) if "gather" in army else base.gather
     note = data.get("assessment")
-    orders = tuple(o for o in (data.get("orders") or [])[:MAX_RAW_ORDERS] if _shape_ok(o)) if isinstance(
-        data.get("orders"), list
-    ) else ()
+    orders = (
+        tuple(o for o in (data.get("orders") or [])[:MAX_RAW_ORDERS] if _shape_ok(o))
+        if isinstance(data.get("orders"), list)
+        else ()
+    )
     army_first = data.get("army_first")
     tactics = data.get("tactics") if isinstance(data.get("tactics"), dict) else {}
     hint = tactics.get("hint", base.tactics_hint)
@@ -327,7 +386,8 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         tactics_hint=" ".join(hint.split())[:300] if isinstance(hint, str) else base.tactics_hint,
         min_confidence=(
             max(0.5, min(0.95, float(conf)))
-            if isinstance(conf, (int, float)) and not isinstance(conf, bool) else base.min_confidence
+            if isinstance(conf, (int, float)) and not isinstance(conf, bool)
+            else base.min_confidence
         ),
         jev_slots=jev_slots,
     )
@@ -354,7 +414,9 @@ def sanitize_order(
                 return None
     if "units" in out:
         # attack/stop/set_stance/guard may also name own buildings (defenses).
-        pool = unit_ids | (building_ids if cmd in {"attack", "stop", "set_stance", "guard"} else set())
+        pool = unit_ids | (
+            building_ids if cmd in {"attack", "stop", "set_stance", "guard"} else set()
+        )
         out["units"] = [u for u in out["units"] if u in pool][:50]
         if not out["units"]:
             return None

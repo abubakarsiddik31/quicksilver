@@ -239,13 +239,25 @@ def test_the_dispatcher_auto_terminates_the_werewolf_discussion():
 # -- the draft --------------------------------------------------------------
 
 FLUTTER_MANE = {
-    "card_id": "c-flutter", "species": "Flutter Mane", "item": "Booster Energy",
-    "ability": "Protosynthesis", "nature": "Timid", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-flutter",
+    "species": "Flutter Mane",
+    "item": "Booster Energy",
+    "ability": "Protosynthesis",
+    "nature": "Timid",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Moonblast", "Shadow Ball", "Icy Wind", "Protect"],
 }
 CATERPIE = {
-    "card_id": "c-caterpie", "species": "Caterpie", "item": "Leftovers",
-    "ability": "Shield Dust", "nature": "Bold", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-caterpie",
+    "species": "Caterpie",
+    "item": "Leftovers",
+    "ability": "Shield Dust",
+    "nature": "Bold",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Tackle", "String Shot"],
 }
 
@@ -372,8 +384,12 @@ def test_the_runner_plays_the_lineup_our_policy_chose(monkeypatch, tmp_path):
     monkeypatch.setenv("QUICKSILVER_POOL_PATH", str(tmp_path / "pool.json"))
 
     roster = [
-        "gyarados", "urshifurapidstrike", "rillaboom",
-        "amoonguss", "fluttermane", "barraskewda",
+        "gyarados",
+        "urshifurapidstrike",
+        "rillaboom",
+        "amoonguss",
+        "fluttermane",
+        "barraskewda",
     ]
     moves = {
         "gyarados": ["Waterfall", "Crunch", "Protect"],

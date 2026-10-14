@@ -57,10 +57,14 @@ def parse_answers(body: Any) -> dict[str, Answer] | None:
             choice=a.get("choice") if isinstance(a.get("choice"), str) else None,
             score=float(a["score"]) if isinstance(a.get("score"), (int, float)) else None,
             noul=float(a["noul"]) if isinstance(a.get("noul"), (int, float)) else None,
-            confidence=float(a["confidence"]) if isinstance(a.get("confidence"), (int, float)) else None,
+            confidence=float(a["confidence"])
+            if isinstance(a.get("confidence"), (int, float))
+            else None,
             probabilities={
                 str(k): float(v) for k, v in probs.items() if isinstance(v, (int, float))
-            } if isinstance(probs, dict) else {},
+            }
+            if isinstance(probs, dict)
+            else {},
         )
     return out
 
@@ -85,7 +89,7 @@ class JevClient:
         self.last_error: str | None = None
 
     @classmethod
-    def from_env(cls, env: Any = None, *, flag: str = "RA_JEV") -> "JevClient | None":
+    def from_env(cls, env: Any = None, *, flag: str = "RA_JEV") -> JevClient | None:
         """A client if ``TYPESAFE_API_KEY`` is set and ``flag`` is not switched off.
 
         Each game owns its kill switch: Red Alert reads ``RA_JEV``, Pokémon
@@ -121,7 +125,10 @@ class JevClient:
         try:
             response = self._http().post(
                 f"{self.base_url}/v1/systemone",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
                 json={"model": self.model, "state": state, "questions": questions},
                 timeout=timeout or self.timeout,
             )

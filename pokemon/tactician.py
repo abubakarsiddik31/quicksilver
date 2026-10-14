@@ -27,8 +27,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from common import trace
 from common.jev import Answer, JevClient
-from pokemon import battle, dex, draft, observation
+from pokemon import battle, dex, draft, observation, threat
 from pokemon.damage import damage
 
 # A Pokémon decision happens once per turn, so unlike Red Alert's 5 Hz loop
@@ -37,9 +38,9 @@ JEV_TIMEOUT = 2.5
 # A Jev yes below this is a shrug, not a decision: play the math.
 MIN_CONFIDENCE = 0.6
 # A battle is at most ~25 decisions; the clock budget does the real limiting.
-MAX_CALLS_PER_MATCH = 30
+MAX_CALLS_PER_MATCH = 60
 
-LABELS = ("PLAN_A", "PLAN_B", "PLAN_C")
+LABELS = ("PLAN_A", "PLAN_B", "PLAN_C", "PLAN_D", "PLAN_E")
 INDEX = {label: i for i, label in enumerate(LABELS)}
 
 
@@ -61,16 +62,16 @@ DRAFT_RULES = {
     "snake": "Players alternate single picks from the same 18 fixed prebuilt cards; a card taken is gone for both sides.",
     "item_clause": "Each item may appear only once per team; the server never offers an item already on our roster.",
     "team_over_cards": "The six must cover each other: broad coverage, both Physical and Special attackers, no weakness "
-                       "shared by several members, and speed for doubles.",
+    "shared by several members, and speed for doubles.",
     "denial": "A card left on the table may be exactly what the opponent's roster needs; taking it is worth part of the "
-              "value it would have given them.",
+    "value it would have given them.",
 }
 
 PREVIEW_RULES = {
     "win": "KO all four of the opponent's Pokémon to win the battle.",
     "bring": "Bring exactly 4 of the 6 and lead 2; reserves switch in later when an active faints.",
     "leads": "Leads act first unless a priority move or Trick Room is in play; a fast lead with Fake Out or Intimidate "
-             "shapes the opening.",
+    "shapes the opening.",
     "opponent": "The opponent's full six is visible; their moves are not published and are estimated from their typing.",
 }
 
@@ -78,11 +79,11 @@ BATTLE_RULES = {
     "win": "KO all four of the opponent's Pokémon to win the battle.",
     "turns": "Both sides choose simultaneously; faster Pokémon act first unless a priority move is used.",
     "protect": "A protecting Pokémon takes no damage this turn; if a Protect is likely, attacking the other target is "
-               "often better.",
+    "often better.",
     "spread": "Spread moves hit both opposing Pokémon; moves that also hit our partner say so.",
     "fake_out": "Fake Out flinches only on the user's first turn on the field.",
     "damage": "Damage ranges are min-max percent of the defender's max HP from the exact damage formula; a range marked "
-              "KO reaches the HP that is left.",
+    "KO reaches the HP that is left.",
     "clock": "55 seconds per decision and a 420-second bank for the whole battle; an empty bank forfeits.",
 }
 
@@ -110,25 +111,23 @@ BATTLE_INSTRUCTIONS = (
 # -- board facts -------------------------------------------------------------
 
 
-def _speed_of(active: battle.Active) -> int | None:
-    """Effective speed: the stat with speed boosts and Choice Scarf. Tailwind
-    and Trick Room are not published by the observation, so they are not here —
-    stated, not hidden."""
-    card = active.card
-    if card is None:
-        return None
-    spe = card.stats.get("spe")
-    if not isinstance(spe, (int, float)) or isinstance(spe, bool):
-        return None
-    boost = active.boosts.get("spe")
-    if isinstance(boost, int) and not isinstance(boost, bool) and boost:
-        spe = spe * (2 + boost) / 2 if boost > 0 else spe * 2 / (2 - boost)
-    if card.item == "Choice Scarf":
-        spe *= 1.5
-    return int(spe)
+def _speed_of(
+    active: battle.Active, fld: threat.Field | None = None, *, ours: bool = True
+) -> int | None:
+    """Effective speed: the stat with speed boosts, Choice Scarf and Tailwind.
+    Trick Room does not change the number; it reverses the order (see ``speed_order``)."""
+    value = threat.raw_speed(active, fld or threat.Field(), ours=ours)
+    return None if value is None else int(value)
 
 
-def _active_entry(slot: int, active: battle.Active, *, side: str) -> dict:
+def _active_entry(
+    slot: int,
+    active: battle.Active,
+    *,
+    side: str,
+    fld: threat.Field | None = None,
+    risk: float | None = None,
+) -> dict:
     card = active.card
     species = card.species if card else str((active.summary or {}).get("species") or "unknown")
     return {
@@ -141,8 +140,14 @@ def _active_entry(slot: int, active: battle.Active, *, side: str) -> dict:
         "ability": card.ability if card else None,
         "boosts": dict(active.boosts or {}),
         "moves": list(card.moves) if card else [],
-        "speed": _speed_of(active),
+        "speed": _speed_of(active, fld, ours=side == "us"),
+        "status": (active.summary or {}).get("status"),
         "fainted": active.fainted,
+        **(
+            {"expected_damage_next_turn_percent_of_remaining_hp": round(risk * 100)}
+            if risk is not None
+            else {}
+        ),
     }
 
 
@@ -246,7 +251,10 @@ def draft_request(obs: dict, agent_id: str | None, top: list[tuple[str, float, d
     for i, (_, score, card) in enumerate(top[: len(LABELS)]):
         ours_add = draft.marginal_value(card, our_roster)
         theirs_add = draft.marginal_value(card, their_roster)
-        moves = ", ".join([m for m in (card.get("moves") or []) if isinstance(m, str)][:4]) or "no moves"
+        moves = (
+            ", ".join([m for m in (card.get("moves") or []) if isinstance(m, str)][:4])
+            or "no moves"
+        )
         criteria[LABELS[i]] = (
             f"{card.get('species')} — {card.get('item')} / {card.get('ability')}; moves {moves}; "
             f"adds {ours_add:+.1f} to our team; would add {theirs_add:+.1f} to theirs if left for them "
@@ -311,18 +319,25 @@ def battle_request(
     candidate_plans: list[tuple[dict, float, str]],
     ours: list[battle.Active],
     theirs: list[battle.Active],
+    ctx: battle.Ctx | None = None,
 ) -> Request:
-    """The board as Jev sees it: both actives in full, the speed order, and
-    each candidate plan annotated with its exact damage ranges."""
-    our_entries = [_active_entry(i, a, side="us") for i, a in enumerate(ours)]
-    their_entries = [_active_entry(i, a, side="them") for i, a in enumerate(theirs)]
+    """The board as Jev sees it: both actives in full, the speed order, the field,
+    the damage coming back at us, and each candidate plan annotated with its
+    exact damage ranges."""
+    fld = ctx.field if ctx else threat.field_of(obs)
+    danger = ctx.danger if ctx else threat.danger_of(ours, theirs, fld)
+    our_entries = [
+        _active_entry(i, a, side="us", fld=fld, risk=danger.risk_of(i) if a.usable else None)
+        for i, a in enumerate(ours)
+    ]
+    their_entries = [_active_entry(i, a, side="them", fld=fld) for i, a in enumerate(theirs)]
 
     paced = [
         (entry["speed"], entry)
         for entry in our_entries + their_entries
         if entry["speed"] is not None and not entry["fainted"]
     ]
-    paced.sort(key=lambda pair: -pair[0])
+    paced.sort(key=lambda pair: pair[0] if fld.trick_room else -pair[0])
     speed_order = [f"{entry['species']} ({entry['side']}, {speed})" for speed, entry in paced]
 
     criteria = {
@@ -343,6 +358,16 @@ def battle_request(
     weather = observation.weather(obs)
     if weather:
         state["weather"] = weather
+    if fld.trick_room:
+        state["trick_room"] = "active: the SLOWEST Pokémon moves first"
+    for key, value in (
+        ("our_side", obs.get("side_conditions")),
+        ("their_side", obs.get("opponent_side_conditions")),
+    ):
+        if value:
+            state[key] = value
+    if any(danger.doomed):
+        state["doomed_slots"] = [i for i, d in enumerate(danger.doomed) if d]
     terrain = obs.get("terrain")
     if isinstance(terrain, str) and terrain and terrain != "none":
         state["terrain"] = terrain
@@ -357,7 +382,9 @@ def battle_request(
 _INSTRUCTIONS_PER_SLOT = "Choose this slot's action for this turn."
 
 
-def _slot_menu(template: Any) -> tuple[dict[int, dict[str, str]], dict[int, dict[str, dict]]] | None:
+def _slot_menu(
+    template: Any,
+) -> tuple[dict[int, dict[str, str]], dict[int, dict[str, dict]]] | None:
     """Per-slot Jev criteria and the id → choice table, from the template's own
     options — the only vocabulary the server accepts."""
     slots = template.get("slots") if isinstance(template, dict) else None
@@ -380,7 +407,11 @@ def _slot_menu(template: Any) -> tuple[dict[int, dict[str, str]], dict[int, dict
                 move_id = option.get("move_id")
                 if not isinstance(move_id, str) or not move_id:
                     continue
-                targets = [t for t in (option.get("targets") or []) if isinstance(t, int) and not isinstance(t, bool)]
+                targets = [
+                    t
+                    for t in (option.get("targets") or [])
+                    if isinstance(t, int) and not isinstance(t, bool)
+                ]
                 if targets:
                     for t in targets:
                         oid = f"move:{move_id}:{t}"
@@ -408,7 +439,7 @@ def _slot_menu(template: Any) -> tuple[dict[int, dict[str, str]], dict[int, dict
     return menus, lookup
 
 
-def slots_fallback(template: Any, obs: dict, tactician: "Tactician") -> dict | None:
+def slots_fallback(template: Any, obs: dict, tactician: Tactician) -> dict | None:
     """A whole turn from Jev when the deterministic evaluator declined: one
     choice per slot, both answered against the same state in one request."""
     parsed = _slot_menu(template)
@@ -492,7 +523,9 @@ class Tactician:
             return None
         if not self._announced:
             self._announced = True
-            self._note("tactician on: Jev reads the full game state; the damage math plays on any failure")
+            self._note(
+                "tactician on: Jev reads the full game state; the damage math plays on any failure"
+            )
         self.calls += 1
         answers = self.client.ask(state, questions, timeout=timeout)
         if not answers:
@@ -517,16 +550,21 @@ class Tactician:
             return None
         answers = self.ask(
             state=state,
-            questions={"pick": {"type": "choice", "instructions": instructions, "criteria": dict(criteria)}},
+            questions={
+                "pick": {"type": "choice", "instructions": instructions, "criteria": dict(criteria)}
+            },
             timeout=timeout,
         )
         if answers is None:
             return None
         answer = answers.get("pick")
+        trace.write("jev", instructions=instructions, criteria=criteria, state=state, answer=answer)
         if answer is None or answer.type != "choice" or answer.choice not in criteria:
             self.errors += 1
             return None
         if answer.confidence is not None and answer.confidence < MIN_CONFIDENCE:
-            self._note(f"low confidence ({answer.confidence:.2f}) on {answer.choice}; using the damage math")
+            self._note(
+                f"low confidence ({answer.confidence:.2f}) on {answer.choice}; using the damage math"
+            )
             return None
         return answer.choice

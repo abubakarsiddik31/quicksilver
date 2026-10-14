@@ -198,7 +198,11 @@ def test_join_tournament_exact_path_and_no_body():
                 "status": "waiting",
                 "position": 1,
                 "next_actions": [
-                    {"action": "poll_tournament", "endpoint": "GET /tournaments/t-1", "hint": "Poll it."}
+                    {
+                        "action": "poll_tournament",
+                        "endpoint": "GET /tournaments/t-1",
+                        "hint": "Poll it.",
+                    }
                 ],
             },
         )
@@ -285,7 +289,11 @@ def test_leave_tournament_failed_platform_error():
         if request.url.path == "/auth/agent/login":
             return login_ok(request)
         return httpx.Response(
-            400, json={"error": "leave_failed", "detail": "Cannot leave a tournament that has already started"}
+            400,
+            json={
+                "error": "leave_failed",
+                "detail": "Cannot leave a tournament that has already started",
+            },
         )
 
     client = make_client(handler)
@@ -327,7 +335,9 @@ def test_join_tournament_401_triggers_one_relogin_and_one_retry():
         join_auth_headers.append(request.headers["Authorization"])
         if len(join_auth_headers) == 1:
             return httpx.Response(401, json={"error": "Invalid or expired token"})
-        return httpx.Response(200, json={"success": True, "tournament_id": "t-1", "status": "waiting"})
+        return httpx.Response(
+            200, json={"success": True, "tournament_id": "t-1", "status": "waiting"}
+        )
 
     client = make_client(handler)
     result = client.join_tournament("t-1")

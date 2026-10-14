@@ -52,10 +52,10 @@ _FALLBACK_PATTERN = re.compile(r"Player\s*(\d+)", re.IGNORECASE)
 def format_forensic_scoreboard(belief: Any) -> str:
     """Format ground-truth facts and suspicion rankings into a dense summary."""
     lines = ["=== FORENSIC SCOREBOARD (GROUND TRUTH) ==="]
-    
+
     # 1. Our Identity
     lines.append(f"Our Seat: Player{belief.seat} (Role: {belief.role})")
-    
+
     # 2. Confirmed Dead Facts
     dead_info = []
     for seat, role in (belief.dead_roles or {}).items():
@@ -87,7 +87,7 @@ def format_forensic_scoreboard(belief: Any) -> str:
                 notes.append("Attempted Prompt Injection")
             detail = f" [{', '.join(notes)}]" if notes else ""
             lines.append(f"  - Player{s}: Suspicion Score {score:.1f}{detail}")
-    
+
     return "\n".join(lines)
 
 
@@ -95,19 +95,19 @@ def parse_seat_choice(reply: str | None, pattern: re.Pattern, legal_seats: list[
     """Extract a valid seat integer from model response."""
     if not reply or not isinstance(reply, str):
         return None
-    
+
     match = pattern.search(reply)
     if match:
         seat = int(match.group(1))
         if seat in legal_seats:
             return seat
-            
+
     # Secondary check: first mention of any legal player
     for candidate in _FALLBACK_PATTERN.findall(reply):
         seat = int(candidate)
         if seat in legal_seats:
             return seat
-            
+
     return None
 
 
@@ -119,20 +119,20 @@ def synthesize_day_vote(
     timeout: float = SYNTHESIS_TIMEOUT,
 ) -> int | None:
     """Ask Gemini to evaluate top mathematically viable suspects in context of chat.
-    
+
     Returns the chosen seat int, or None (caller falls back to rule engine's #1).
     """
     if client is None:
         return None
-        
+
     ranked = belief.ranked_suspects() if hasattr(belief, "ranked_suspects") else []
     if not ranked:
         return None
-        
+
     # If the #1 suspect is an absolute confirmed wolf (> 50 pts), vote instantly without LLM
     if ranked[0][1] >= 50.0:
         return ranked[0][0]
-        
+
     # Take top 2-3 mathematically plausible candidates
     top_candidates = [s for s, _ in ranked[:3]]
     if len(top_candidates) == 1:
@@ -140,7 +140,7 @@ def synthesize_day_vote(
 
     scoreboard_text = format_forensic_scoreboard(belief)
     chat_text = msg.render_untrusted(window, our_position=belief.seat)
-    
+
     candidate_labels = [f"Player{s}" for s in top_candidates]
     prompt = (
         f"{scoreboard_text}\n\n"
@@ -174,11 +174,8 @@ def synthesize_night_kill(
     """Ask Gemini to pick the most dangerous living village threat for wolves to eliminate."""
     if client is None or belief.role != "WOLF":
         return None
-        
-    candidates = [
-        s for s in belief.alive
-        if s != belief.seat and s not in belief.allies
-    ]
+
+    candidates = [s for s in belief.alive if s != belief.seat and s not in belief.allies]
     if not candidates:
         return None
     if len(candidates) == 1:

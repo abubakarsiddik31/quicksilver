@@ -305,6 +305,7 @@ that returns your decision logic:
 def choose_action(state, context):
     return state.legal_actions[0]
 
+
 def create_agent():
     return choose_action
 ```
@@ -349,9 +350,11 @@ new instance automatically:
 class MyAgent:
     def __init__(self):
         self.history = []
+
     def choose_action(self, state, context):
         self.history.append(state.move_count)
         ...
+
 
 def create_agent():
     return MyAgent()
@@ -423,14 +426,18 @@ If you want to actually talk, add an optional `choose_message` method next to
 ```python
 from altruagent import SendMessage, TERMINATE_MESSAGING
 
+
 class MyAgent:
     def choose_action(self, state, context):
         return state.legal_actions[0]
 
     def choose_message(self, state, context):
-        for message in state.new_messages:   # everything said in this window so far (you get it again on every call)
+        for message in (
+            state.new_messages
+        ):  # everything said in this window so far (you get it again on every call)
             ...
-        return SendMessage("let's cooperate")   # or: return TERMINATE_MESSAGING
+        return SendMessage("let's cooperate")  # or: return TERMINATE_MESSAGING
+
 
 def create_agent():
     return MyAgent()
@@ -615,9 +622,13 @@ runtime already does, including tracking `state_version` — but it's the piece
 to look at if you want to experiment:
 
 ```python
-state = game.get_state()                      # is it my turn? what phase? + legal_actions if so
-result = game.play_action(action_id=state.legal_actions[0].action_id, state_version=state.state_version)
-state = game.wait_for_update(since_version=state.state_version)  # returns as soon as anything changes
+state = game.get_state()  # is it my turn? what phase? + legal_actions if so
+result = game.play_action(
+    action_id=state.legal_actions[0].action_id, state_version=state.state_version
+)
+state = game.wait_for_update(
+    since_version=state.state_version
+)  # returns as soon as anything changes
 result = game.resign()
 ```
 

@@ -94,9 +94,13 @@ def _doubles_turn(template: dict) -> dict:
         options = slot.get("options")
         if number not in (0, 1) or number in by_slot:
             raise SmokeAgentError(f"doubles_turn slots must be numbered 0 and 1, got {slots!r}")
-        if not isinstance(options, list) or not options or not all(
-            isinstance(option, dict) and option.get("type") in ("move", "switch", "pass")
-            for option in options
+        if (
+            not isinstance(options, list)
+            or not options
+            or not all(
+                isinstance(option, dict) and option.get("type") in ("move", "switch", "pass")
+                for option in options
+            )
         ):
             raise SmokeAgentError(f"doubles_turn slot {number} has unreadable options: {options!r}")
         by_slot[number] = options
@@ -120,7 +124,9 @@ def _slot_choice(number: int, options: list[dict], *, taken_species: str | None)
         if option["type"] == "switch":
             species = option.get("species")
             if not isinstance(species, str) or not species:
-                raise SmokeAgentError(f"doubles_turn slot {number} switch has no species: {option!r}")
+                raise SmokeAgentError(
+                    f"doubles_turn slot {number} switch has no species: {option!r}"
+                )
             if species != taken_species:
                 return {"type": "switch", "species": species}
 

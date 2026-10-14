@@ -159,9 +159,10 @@ def card_quality(card: dict) -> float:
     stats = dex.base_stats(card_species(card))
     bst = sum(v for v in stats.values() if isinstance(v, int))
     speed = stats.get("spe")
-    return bst * QUALITY_PER_BST + (
-        speed if isinstance(speed, int) and not isinstance(speed, bool) else 0
-    ) * SPEED_WEIGHT
+    return (
+        bst * QUALITY_PER_BST
+        + (speed if isinstance(speed, int) and not isinstance(speed, bool) else 0) * SPEED_WEIGHT
+    )
 
 
 # -- team evaluation --------------------------------------------------------
@@ -219,8 +220,14 @@ def team_value(roster: list[dict]) -> float:
 
 # Tier-1 S-rank tournament picks in the captured pool
 _S_TIER_SPECIES = {
-    "Incineroar", "Flutter Mane", "Urshifu-Rapid-Strike", "Rillaboom",
-    "Chien-Pao", "Landorus-Therian", "Great Tusk", "Basculegion"
+    "Incineroar",
+    "Flutter Mane",
+    "Urshifu-Rapid-Strike",
+    "Rillaboom",
+    "Chien-Pao",
+    "Landorus-Therian",
+    "Great Tusk",
+    "Basculegion",
 }
 # High-priority archetype pivots
 _SPEED_CONTROL_SPECIES = {"Talonflame", "Tornadus", "Whimsicott"}
@@ -289,9 +296,7 @@ def choose_card(
 
     rosters = observation.rosters(obs)
     our_roster = rosters.get(agent_id or "", [])
-    theirs = [
-        entry for key, entries in rosters.items() if key != agent_id for entry in entries
-    ]
+    theirs = [entry for key, entries in rosters.items() if key != agent_id for entry in entries]
     denial = denial_weight(obs, agent_id)
 
     scored = [
@@ -306,9 +311,7 @@ def choose_card(
     return best["card_id"]
 
 
-def choose_from_actions(
-    obs: dict, *, agent_id: str | None, legal_actions: Any
-) -> Any:
+def choose_from_actions(obs: dict, *, agent_id: str | None, legal_actions: Any) -> Any:
     """The legal action matching our chosen card, or ``None`` if unavailable.
 
     Draft picks arrive as enumerated actions (``draft_pick:<card_id>``), so the

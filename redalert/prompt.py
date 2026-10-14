@@ -26,7 +26,14 @@ def _dict(v: Any) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
-GUIDE_SECTIONS = {1, 4, 5, 7, 8, 9}  # rules, state, orders, scoring, build primer, pitfalls (not check-in/waiting)
+GUIDE_SECTIONS = {
+    1,
+    4,
+    5,
+    7,
+    8,
+    9,
+}  # rules, state, orders, scoring, build primer, pitfalls (not check-in/waiting)
 
 
 def load_guide() -> str:
@@ -54,8 +61,12 @@ def rules_table(config: dict[str, Any] | None) -> str:
             info = _dict(info)
             bits = [f"{name} ({group[:-1]})"]
             for key, label in (
-                ("cost", "cost"), ("build_time_s", "build_s"), ("power", "power"),
-                ("queue", "queue"), ("prerequisites", "needs"), ("factions", "only"),
+                ("cost", "cost"),
+                ("build_time_s", "build_s"),
+                ("power", "power"),
+                ("queue", "queue"),
+                ("prerequisites", "needs"),
+                ("factions", "only"),
             ):
                 if info.get(key) not in (None, [], ""):
                     bits.append(f"{label}={json.dumps(info[key], separators=(',', ':'))}")
@@ -212,7 +223,9 @@ def build_system(config: dict[str, Any] | None, map_id: str | None) -> str:
     ]
     guide = load_guide()
     if guide:
-        parts.append("=== PLATFORM GUIDE (authoritative on rules, orders, limits, pitfalls) ===\n" + guide)
+        parts.append(
+            "=== PLATFORM GUIDE (authoritative on rules, orders, limits, pitfalls) ===\n" + guide
+        )
     schema = _dict(config.get("order_schema"))
     if schema:
         parts.append("=== ORDER SCHEMA ===\n" + json.dumps(schema, separators=(",", ":"))[:8000])
@@ -221,7 +234,9 @@ def build_system(config: dict[str, Any] | None, map_id: str | None) -> str:
         parts.append("=== RULES TABLE (this server) ===\n" + table)
     for key in ("results_policy", "match_rules"):
         if config.get(key):
-            parts.append(f"=== {key.upper()} ===\n" + json.dumps(config[key], separators=(",", ":"))[:3000])
+            parts.append(
+                f"=== {key.upper()} ===\n" + json.dumps(config[key], separators=(",", ":"))[:3000]
+            )
     mp = map_block(config, map_id)
     if mp:
         parts.append("=== " + mp)
@@ -232,7 +247,9 @@ def _units(obs: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for u in (obs.get("units") or [])[:MAX_UNITS]:
         if isinstance(u, dict) and not u.get("wreck"):
-            rows.append({k: u.get(k) for k in ("id", "type", "x", "y", "hp", "idle", "stance") if k in u})
+            rows.append(
+                {k: u.get(k) for k in ("id", "type", "x", "y", "hp", "idle", "stance") if k in u}
+            )
     return rows
 
 
@@ -272,7 +289,11 @@ def build_user(
         "economy": obs.get("economy"),
         "military": obs.get("military"),
         "buildings": [
-            {k: b.get(k) for k in ("id", "type", "x", "y", "hp", "powered", "producing", "repairing") if k in b}
+            {
+                k: b.get(k)
+                for k in ("id", "type", "x", "y", "hp", "powered", "producing", "repairing")
+                if k in b
+            }
             for b in (obs.get("buildings") or [])
             if isinstance(b, dict)
         ],
@@ -297,6 +318,10 @@ def build_user(
     text = json.dumps(state, separators=(",", ":"), default=str)
     if len(text) > MAX_USER_CHARS:  # shrink the biggest lists before giving up detail
         for key in ("units", "visible_enemies", "events", "last_orders"):
-            state[key] = (state[key] or [])[: max(10, len(state[key] or []) // 3)] if isinstance(state[key], list) else None
+            state[key] = (
+                (state[key] or [])[: max(10, len(state[key] or []) // 3)]
+                if isinstance(state[key], list)
+                else None
+            )
         text = json.dumps(state, separators=(",", ":"), default=str)[:MAX_USER_CHARS]
     return "CURRENT STATE (answer with your plan JSON):\n" + text

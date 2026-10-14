@@ -224,9 +224,7 @@ class _JsParser:
         return chr(int(digits, 16))
 
     def parse_number(self) -> int | float:
-        match = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?").match(
-            self.text, self.pos
-        )
+        match = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?").match(self.text, self.pos)
         if match is None:
             raise self._error("malformed number")
         self.pos = match.end()
@@ -338,9 +336,7 @@ def main(argv: list[str]) -> int:
                 data = _parse_js_module(text, _JS_VARIABLES[name])
             else:
                 data = _parse_natures_ts(text)
-            payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         (DATA_DIR / name).write_bytes(payload)
         digest = hashlib.sha256(payload).hexdigest()[:16]
         print(f"  {name:<16} {len(payload):>8} bytes  sha256:{digest}  <- {url}")

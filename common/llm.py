@@ -62,7 +62,7 @@ class GeminiClient:
     # -- construction ---------------------------------------------------
 
     @classmethod
-    def from_env(cls, env: Any = None) -> "GeminiClient | None":
+    def from_env(cls, env: Any = None) -> GeminiClient | None:
         """A client if a key is configured, otherwise ``None``.
 
         ``GEMINI_API_KEY`` is the documented name; ``GOOGLE_API_KEY`` is a
@@ -163,16 +163,18 @@ class GeminiClient:
             return None
         url = f"{self.base_url}/models/{self.model}:generateContent"
         try:
-            with httpx.Client(
-                timeout=timeout or self.timeout, transport=self._transport
-            ) as client:
+            with httpx.Client(timeout=timeout or self.timeout, transport=self._transport) as client:
                 response = client.post(
                     url,
                     params={"key": self.api_key},
                     headers={"Content-Type": "application/json"},
                     json=self._payload(
-                        prompt, system, temperature, max_output_tokens,
-                        json_output, thinking_budget,
+                        prompt,
+                        system,
+                        temperature,
+                        max_output_tokens,
+                        json_output,
+                        thinking_budget,
                     ),
                 )
             if response.status_code != 200:
@@ -241,10 +243,8 @@ def choose_ids(
     """Ask the model for one option id per slot, or ``None``. Never raises."""
     if client is None or not allowed or slots <= 0:
         return None
-    prompt = (
-        f"{instruction}\n\n"
-        f"{context}\n\n"
-        "Legal option ids:\n" + "\n".join(f"- {option}" for option in allowed)
+    prompt = f"{instruction}\n\n{context}\n\nLegal option ids:\n" + "\n".join(
+        f"- {option}" for option in allowed
     )
     try:
         reply = client.generate(

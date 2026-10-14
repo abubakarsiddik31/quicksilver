@@ -30,10 +30,24 @@ def lineup_choice(action: LegalAction, state: GameState) -> Choice:
 
     def build(answer: dict) -> dict:
         bring, leads = answer.get("bring"), answer.get("leads")
-        if not isinstance(bring, list) or len(bring) != 4 or len(set(bring)) != 4 or not set(bring) <= set(roster):
-            raise InvalidChoice(f"bring must be 4 different species from the roster {roster}, got {bring!r}")
-        if not isinstance(leads, list) or len(leads) != 2 or len(set(leads)) != 2 or not set(leads) <= set(bring):
-            raise InvalidChoice(f"leads must be 2 different species from bring {bring}, got {leads!r}")
+        if (
+            not isinstance(bring, list)
+            or len(bring) != 4
+            or len(set(bring)) != 4
+            or not set(bring) <= set(roster)
+        ):
+            raise InvalidChoice(
+                f"bring must be 4 different species from the roster {roster}, got {bring!r}"
+            )
+        if (
+            not isinstance(leads, list)
+            or len(leads) != 2
+            or len(set(leads)) != 2
+            or not set(leads) <= set(bring)
+        ):
+            raise InvalidChoice(
+                f"leads must be 2 different species from bring {bring}, got {leads!r}"
+            )
         return {"type": "select_lineup", "bring": list(bring), "leads": list(leads)}
 
     return Choice(
@@ -102,8 +116,14 @@ def doubles_choice(action: LegalAction, state: GameState) -> Choice:
         if not isinstance(answer, dict):
             raise InvalidChoice(f"slot_{number} must be an object with option and target")
         index, target = answer.get("option"), answer.get("target")
-        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(options[number]):
-            raise InvalidChoice(f"slot_{number}.option must be an index 0..{len(options[number]) - 1}, got {index!r}")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < len(options[number])
+        ):
+            raise InvalidChoice(
+                f"slot_{number}.option must be an index 0..{len(options[number]) - 1}, got {index!r}"
+            )
         option = options[number][index]
         if option["type"] == "pass":
             return {"type": "pass"}
@@ -122,7 +142,9 @@ def doubles_choice(action: LegalAction, state: GameState) -> Choice:
     def build(answer: dict) -> dict:
         slot_0, slot_1 = build_slot(0, answer.get("slot_0")), build_slot(1, answer.get("slot_1"))
         if slot_0["type"] == slot_1["type"] == "switch" and slot_0["species"] == slot_1["species"]:
-            raise InvalidChoice(f"both slots cannot switch in the same Pokémon ({slot_0['species']})")
+            raise InvalidChoice(
+                f"both slots cannot switch in the same Pokémon ({slot_0['species']})"
+            )
         if slot_0["type"] == slot_1["type"] == "pass" and not all(
             all(option["type"] == "pass" for option in slot_options) for slot_options in options
         ):
@@ -138,7 +160,8 @@ def doubles_choice(action: LegalAction, state: GameState) -> Choice:
                     "active": slot.get("active"),
                     "force_switch": slot.get("force_switch"),
                     "options": [
-                        {"option": index, **_prompt_option(option)} for index, option in enumerate(slot["options"])
+                        {"option": index, **_prompt_option(option)}
+                        for index, option in enumerate(slot["options"])
                     ],
                 }
                 for number, slot in enumerate(slots)

@@ -77,7 +77,12 @@ def test_tolerates_garbage():
 
 def test_phase_prefers_the_observation_then_the_state():
     assert obs.phase_of(state(DRAFT)) == "draft"
-    assert obs.phase_of(state({}), ) == "draft"
+    assert (
+        obs.phase_of(
+            state({}),
+        )
+        == "draft"
+    )
     assert obs.phase_of(SimpleNamespace(raw={"observation": {}}, phase="moving")) == "moving"
 
 
@@ -99,7 +104,17 @@ def test_pool_carries_everything_a_damage_calc_needs():
     cards = obs.pool_of(DRAFT)
     assert len(cards) == 2
     first = cards[0]
-    for field in ("card_id", "species", "item", "ability", "nature", "level", "evs", "ivs", "moves"):
+    for field in (
+        "card_id",
+        "species",
+        "item",
+        "ability",
+        "nature",
+        "level",
+        "evs",
+        "ivs",
+        "moves",
+    ):
         assert field in first, field
     assert first["moves"] == CARD["moves"]
 
@@ -202,12 +217,12 @@ def test_platform_acts_before_showdown_does():
 # -- pool capture -----------------------------------------------------------
 
 
-def test_merge_unions_by_card_id_and_keeps_the_first_sighting():
+def test_merge_unions_by_card_id_and_the_latest_sighting_wins():
     existing = [{"card_id": "a", "species": "First"}]
     incoming = [{"card_id": "a", "species": "Second"}, {"card_id": "b", "species": "New"}]
     merged = pool.merge(existing, incoming)
     assert [c["card_id"] for c in merged] == ["a", "b"]
-    assert merged[0]["species"] == "First"
+    assert merged[0]["species"] == "Second"  # new cards and changed sets replace stale ones
 
 
 def test_merge_ignores_junk():

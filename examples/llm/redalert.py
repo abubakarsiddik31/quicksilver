@@ -38,7 +38,8 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from altruagent import WAIT, DecisionContext, GameState, WithReasoning
 
@@ -102,7 +103,14 @@ SUGGESTED_ATTACK_NOTE = (
 # A whole-batch refusal's detail: "...: [0] place: not_ready (spen ...); [1] ..."
 _REFUSAL_ROW = re.compile(r"\[(\d+)\] ([a-z_]+): ([a-z_]+)(?: \(([^)]*)\))?")
 # When the user prompt is too long: sections dropped first, then lists halved.
-LOW_PRIORITY_SECTIONS = ("events", "your_last_reasoning", "recent_order_problems", "last_orders", "military", "limits")
+LOW_PRIORITY_SECTIONS = (
+    "events",
+    "your_last_reasoning",
+    "recent_order_problems",
+    "last_orders",
+    "military",
+    "limits",
+)
 SHRINKABLE_LISTS = ("enemies", "units", "buildings", "available_production", "production")
 MIN_LIST_SHOWN = 5
 MAX_ITEM_NAME = 32
@@ -182,8 +190,12 @@ FALLBACK_WIN = (
     "You win by destroying every enemy building and the enemy's MCV (base "
     "vehicle); units left over do not matter. Or the enemy resigns."
 )
-FALLBACK_TIEBREAK = "higher kills_cost - deaths_cost wins; if equal, higher assets_value; if still equal, a draw"
-FALLBACK_REALTIME = "The game runs in real time and never waits for you: while you think, the world keeps moving."
+FALLBACK_TIEBREAK = (
+    "higher kills_cost - deaths_cost wins; if equal, higher assets_value; if still equal, a draw"
+)
+FALLBACK_REALTIME = (
+    "The game runs in real time and never waits for you: while you think, the world keeps moving."
+)
 FALLBACK_MAP_TERMS = "bounds [x, y, w, h] = playable cells"
 
 
@@ -266,7 +278,9 @@ def _spawns(map_info: dict[str, Any] | None) -> list[tuple[int, int]]:
     return [c for c in cells if c is not None]
 
 
-def choose_enemy_spawn(spawns: list[tuple[int, int]], base: tuple[int, int] | None) -> tuple[int, int] | None:
+def choose_enemy_spawn(
+    spawns: list[tuple[int, int]], base: tuple[int, int] | None
+) -> tuple[int, int] | None:
     """The spawn farthest from our base (ties: the first in map order)."""
     if not spawns or base is None:
         return None
@@ -313,7 +327,14 @@ def answer_schema(fields: dict[str, tuple[frozenset[str], frozenset[str]]]) -> d
         for name in _field_order(optional):
             if name in FIELD_SCHEMAS:
                 props[name] = {"anyOf": [FIELD_SCHEMAS[name], {"type": "null"}]}
-        shapes.append({"type": "object", "properties": props, "required": list(props), "additionalProperties": False})
+        shapes.append(
+            {
+                "type": "object",
+                "properties": props,
+                "required": list(props),
+                "additionalProperties": False,
+            }
+        )
     return object_schema({"orders": {"type": "array", "items": {"anyOf": shapes}}})
 
 
@@ -340,7 +361,9 @@ def _field_ok(name: str, value: Any, limits: dict[str, int]) -> bool:
     return True  # a field this guard does not know: the server decides
 
 
-def order_ok(order: Any, fields: dict[str, tuple[frozenset[str], frozenset[str]]], limits: dict[str, int]) -> bool:
+def order_ok(
+    order: Any, fields: dict[str, tuple[frozenset[str], frozenset[str]]], limits: dict[str, int]
+) -> bool:
     """Cheap shape check of one order (the server rejects unknown fields too)."""
     if not isinstance(order, dict):
         return False
@@ -361,7 +384,9 @@ def validate_orders(
 ) -> tuple[list[dict[str, Any]], int]:
     """(the well-formed orders, cut to max_orders_per_batch; how many were dropped).
     Null fields (the schema's way of leaving an optional field out) are removed first."""
-    cleaned = [{k: v for k, v in o.items() if v is not None} if isinstance(o, dict) else o for o in raw]
+    cleaned = [
+        {k: v for k, v in o.items() if v is not None} if isinstance(o, dict) else o for o in raw
+    ]
     batch = [o for o in cleaned if order_ok(o, fields, limits)][: limits["max_orders_per_batch"]]
     return batch, len(raw) - len(batch)
 
@@ -376,7 +401,9 @@ def _field_order(names: frozenset[str]) -> list[str]:
     return known + sorted(names - set(known))
 
 
-def _order_lines(config: dict[str, Any], fields: dict[str, tuple[frozenset[str], frozenset[str]]]) -> list[str]:
+def _order_lines(
+    config: dict[str, Any], fields: dict[str, tuple[frozenset[str], frozenset[str]]]
+) -> list[str]:
     schema_orders = _dict(_dict(config.get("order_schema")).get("orders"))
     lines = []
     for cmd, (required, optional) in fields.items():
@@ -422,7 +449,9 @@ def build_system_prompt(config: dict[str, Any] | None) -> str:
         if max_minutes
         else "The match has a time limit (remaining_seconds is in each state). "
     )
-    war_factory = "a war factory (weap) for vehicles, " if not buildings or "weap" in buildings else ""
+    war_factory = (
+        "a war factory (weap) for vehicles, " if not buildings or "weap" in buildings else ""
+    )
     examples = "\n".join(_dumps(e) for e in ORDER_EXAMPLES)
     sections = [
         "You command one side of a 1v1 Command & Conquer: Red Alert match (OpenRA engine) against "
@@ -474,7 +503,9 @@ def build_system_prompt(config: dict[str, Any] | None) -> str:
 def _item_facts(name: str, rules: dict[str, Any]) -> dict[str, Any]:
     """An available_production entry with cost/power/build time from the rules."""
     key = name.lower()
-    info = _dict(_dict(rules.get("buildings")).get(key)) or _dict(_dict(rules.get("units")).get(key))
+    info = _dict(_dict(rules.get("buildings")).get(key)) or _dict(
+        _dict(rules.get("units")).get(key)
+    )
     entry: dict[str, Any] = {"item": key}
     if info.get("queue"):
         entry["queue"] = info["queue"]
@@ -489,7 +520,12 @@ def _item_facts(name: str, rules: dict[str, Any]) -> dict[str, Any]:
 
 def _actor(actor: dict[str, Any], *, idle: bool = False) -> dict[str, Any]:
     cell = _cell(actor)
-    entry: dict[str, Any] = {"id": actor.get("id"), "type": actor.get("type"), "cell": list(cell) if cell else None, "hp": actor.get("hp")}
+    entry: dict[str, Any] = {
+        "id": actor.get("id"),
+        "type": actor.get("type"),
+        "cell": list(cell) if cell else None,
+        "hp": actor.get("hp"),
+    }
     if idle:
         entry["idle"] = bool(actor.get("idle"))
     return entry
@@ -499,9 +535,15 @@ def _last_orders(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     results = [
-        {k: r.get(k) for k in ("index", "cmd", "status", "reason")} for r in value.get("results") or [] if isinstance(r, dict)
+        {k: r.get(k) for k in ("index", "cmd", "status", "reason")}
+        for r in value.get("results") or []
+        if isinstance(r, dict)
     ]
-    return {"batch": value.get("batch"), "pending": bool(value.get("pending")), "results": results[:MAX_ORDER_RESULTS_SHOWN]}
+    return {
+        "batch": value.get("batch"),
+        "pending": bool(value.get("pending")),
+        "results": results[:MAX_ORDER_RESULTS_SHOWN],
+    }
 
 
 def _problems(value: Any) -> list[dict[str, Any]]:
@@ -518,7 +560,9 @@ def _problems(value: Any) -> list[dict[str, Any]]:
     return rows[-MAX_PROBLEMS_SHOWN:]
 
 
-def _map_section(state: dict[str, Any], obs: dict[str, Any], map_info: dict[str, Any] | None) -> dict[str, Any]:
+def _map_section(
+    state: dict[str, Any], obs: dict[str, Any], map_info: dict[str, Any] | None
+) -> dict[str, Any]:
     merged = {**_dict(state.get("map")), **(map_info or {})}
     base = _cell(obs.get("base_center"))
     spawns = _spawns(merged)
@@ -556,11 +600,17 @@ def _sections(
     rules = _dict(_dict(config).get("rules"))
     time_info = _dict(state.get("time"))
     omitted: dict[str, int] = {}
-    enemy_buildings = [{**_actor(e), "kind": "building"} for e in _list(obs, "visible_enemy_buildings")]
+    enemy_buildings = [
+        {**_actor(e), "kind": "building"} for e in _list(obs, "visible_enemy_buildings")
+    ]
     enemy_units = [{**_actor(e), "kind": "unit"} for e in _list(obs, "visible_enemies")]
     available = [_item_facts(str(x), rules) for x in obs.get("available_production") or []]
     production = [
-        {k: p.get(k) for k in ("queue", "item", "progress", "remaining_s", "ready", "paused") if k != "paused" or p.get("paused")}
+        {
+            k: p.get(k)
+            for k in ("queue", "item", "progress", "remaining_s", "ready", "paused")
+            if k != "paused" or p.get("paused")
+        }
         for p in _list(obs, "production")
     ]
     events = [e for e in obs.get("events") or [] if isinstance(e, dict)]
@@ -571,13 +621,23 @@ def _sections(
             "remaining_seconds": time_info.get("remaining_seconds"),
             "max_minutes": time_info.get("max_minutes"),
         },
-        "you": {"seat": state.get("your_seat"), "faction": obs.get("faction"), "enemy_faction": obs.get("enemy_faction")},
+        "you": {
+            "seat": state.get("your_seat"),
+            "faction": obs.get("faction"),
+            "enemy_faction": obs.get("enemy_faction"),
+        },
         "economy": _dict(obs.get("economy")),
         "military": _dict(obs.get("military")),
-        "units": _capped([_actor(u, idle=True) for u in _list(obs, "units")], caps["units"], "units", omitted),
-        "buildings": _capped([_actor(b) for b in _list(obs, "buildings")], caps["buildings"], "buildings", omitted),
+        "units": _capped(
+            [_actor(u, idle=True) for u in _list(obs, "units")], caps["units"], "units", omitted
+        ),
+        "buildings": _capped(
+            [_actor(b) for b in _list(obs, "buildings")], caps["buildings"], "buildings", omitted
+        ),
         "production": _capped(production, caps["production"], "production", omitted),
-        "available_production": _capped(available, caps["available_production"], "available_production", omitted),
+        "available_production": _capped(
+            available, caps["available_production"], "available_production", omitted
+        ),
         "enemies": _capped(enemy_buildings + enemy_units, caps["enemies"], "enemies", omitted),
         "map": _map_section(state, obs, map_info),
         "last_orders": _last_orders(state.get("last_orders")),
@@ -589,7 +649,11 @@ def _sections(
     # Right after the clock, and never dropped for space.
     warnings: dict[str, Any] = {}
     if refused:
-        warnings["your_refused_batches"] = {"in_a_row": refused_in_row, "reasons_newest_last": list(refused), "note": REFUSED_NOTE}
+        warnings["your_refused_batches"] = {
+            "in_a_row": refused_in_row,
+            "reasons_newest_last": list(refused),
+            "note": REFUSED_NOTE,
+        }
     if repeats:
         warnings["orders_refused_repeatedly"] = {"orders": list(repeats), "note": REPEATS_NOTE}
     attack_now = _dict(state.get("legal_actions")).get("attack_now")
@@ -631,7 +695,9 @@ def build_user_prompt(
     }
     dropped: list[str] = []
     while True:
-        sections, omitted = _sections(state, map_info, config, last_reasoning, caps, refused, refused_in_row, repeats)
+        sections, omitted = _sections(
+            state, map_info, config, last_reasoning, caps, refused, refused_in_row, repeats
+        )
         for key in dropped:
             sections.pop(key, None)
         note: dict[str, Any] = {}
@@ -670,7 +736,9 @@ def refusal_rows(detail: Any) -> list[tuple[int, str, str, str | None]]:
     """(index, cmd, reason, detail) for each order in a whole-batch refusal's detail text."""
     if not isinstance(detail, str):
         return []
-    return [(int(m.group(1)), m.group(2), m.group(3), m.group(4)) for m in _REFUSAL_ROW.finditer(detail)]
+    return [
+        (int(m.group(1)), m.group(2), m.group(3), m.group(4)) for m in _REFUSAL_ROW.finditer(detail)
+    ]
 
 
 def reason_still_holds(entry: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -680,7 +748,10 @@ def reason_still_holds(entry: dict[str, Any], state: dict[str, Any]) -> bool:
     order, reason = entry["order"], entry["reason"]
     item = str(order.get("item") or "").lower()
     if reason == "not_ready" and order.get("cmd") == "place":
-        return not any(str(p.get("item") or "").lower() == item and p.get("ready") for p in _list(obs, "production"))
+        return not any(
+            str(p.get("item") or "").lower() == item and p.get("ready")
+            for p in _list(obs, "production")
+        )
     if reason == "not_available" and order.get("cmd") in ("build", "train"):
         return item not in {str(x).lower() for x in obs.get("available_production") or []}
     if reason in ("is_building", "not_owned", "wreck") and order.get("units"):
@@ -696,7 +767,11 @@ def over_queued(state: dict[str, Any]) -> list[dict[str, Any]]:
         if str(p.get("queue")).lower() in ("building", "defense") and not p.get("ready"):
             item = str(p.get("item") or "").lower()
             counts[item] = counts.get(item, 0) + 1
-    return [{"item": i, "queued": n} for i, n in sorted(counts.items(), key=lambda kv: -kv[1]) if n >= OVERQUEUE_WARN_AT]
+    return [
+        {"item": i, "queued": n}
+        for i, n in sorted(counts.items(), key=lambda kv: -kv[1])
+        if n >= OVERQUEUE_WARN_AT
+    ]
 
 
 # --- The player ---------------------------------------------------------------------
@@ -777,7 +852,10 @@ class RedAlertPlayer:
             repeats=self._repeats(raw),
         )
         self.calls += 1
-        messages = [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": user}]
+        messages = [
+            {"role": "system", "content": self._system_prompt()},
+            {"role": "user", "content": user},
+        ]
         try:
             answer = self._provider.complete_structured(messages, "red_alert_orders", self._schema)
         except ProviderError as exc:
@@ -815,7 +893,10 @@ class RedAlertPlayer:
         self.fallbacks[reason] = count
         # cap and backoff repeat on every decision while they last: log the first.
         if reason not in (FALLBACK_CAP, FALLBACK_BACKOFF) or count == 1:
-            self._log(f"[llm] red_alert: FALLBACK ({reason}), nothing sent" + (f": {detail[:200]}" if detail else ""))
+            self._log(
+                f"[llm] red_alert: FALLBACK ({reason}), nothing sent"
+                + (f": {detail[:200]}" if detail else "")
+            )
         return WAIT
 
     # -- play_action answers -------------------------------------------------------------
@@ -869,16 +950,26 @@ class RedAlertPlayer:
     def _repeats(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
         """The prompt's orders_refused_repeatedly rows (forgets old refusals)."""
         now = self._clock()
-        self._refusals = {k: e for k, e in self._refusals.items() if now - e["last"] < REFUSAL_FORGET_SECONDS}
+        self._refusals = {
+            k: e for k, e in self._refusals.items() if now - e["last"] < REFUSAL_FORGET_SECONDS
+        }
         rows = [
-            {"order": e["order"], "refused": e["count"], "reason": e["reason"], "detail": e["detail"], "blocked": self._blocked(e, raw)}
+            {
+                "order": e["order"],
+                "refused": e["count"],
+                "reason": e["reason"],
+                "detail": e["detail"],
+                "blocked": self._blocked(e, raw),
+            }
             for e in self._refusals.values()
             if e["count"] >= REPEAT_WARN_AFTER
         ]
         rows.sort(key=lambda r: -r["refused"])
         return rows[:MAX_REPEATS_SHOWN]
 
-    def _drop_blocked(self, orders: list[dict[str, Any]], raw: dict[str, Any]) -> list[dict[str, Any]]:
+    def _drop_blocked(
+        self, orders: list[dict[str, Any]], raw: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         kept = []
         for order in orders:
             entry = self._refusals.get(order_key(order))

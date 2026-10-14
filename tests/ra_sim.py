@@ -34,10 +34,19 @@ INCOME_PER_HARV = 20.0  # measured from the lost-match trace: one harvester ~20 
 GAME_CONFIG: dict = {"rules": {"buildings": {}, "units": {}}}
 for _name, (_cost, _secs, _queue, _pre) in ITEMS.items():
     GAME_CONFIG["rules"]["buildings" if _queue in ("Building", "Defense") else "units"][_name] = {
-        "cost": _cost, "queue": _queue, "build_time_s": _secs, "prerequisites": list(_pre),
+        "cost": _cost,
+        "queue": _queue,
+        "build_time_s": _secs,
+        "prerequisites": list(_pre),
     }
-CTX = DecisionContext(session_id="sim", tournament_id=None, game_type="red_alert", agent_id="q", seat_position=0,
-                      game_config=GAME_CONFIG)
+CTX = DecisionContext(
+    session_id="sim",
+    tournament_id=None,
+    game_type="red_alert",
+    agent_id="q",
+    seat_position=0,
+    game_config=GAME_CONFIG,
+)
 # Faction-only items (Soviets: flame tower, heavy tank; Allies: pillbox, light tank).
 SOVIET_ONLY, ALLIED_ONLY = {"ftur", "3tnk"}, {"pbox", "1tnk"}
 
@@ -59,14 +68,20 @@ class Sim:
             return []
         out = []
         for name, (_, _, _, pre) in ITEMS.items():
-            if all(self.owned.get(p) for p in pre) and name not in (ALLIED_ONLY if self.faction == "russia" else SOVIET_ONLY):
+            if all(self.owned.get(p) for p in pre) and name not in (
+                ALLIED_ONLY if self.faction == "russia" else SOVIET_ONLY
+            ):
                 out.append(name)
         return out
 
     def power(self) -> tuple[int, int]:
         provided = 100 * self.owned.get("powr", 0)
-        drained = 30 * self.owned.get("proc", 0) + 30 * self.owned.get("weap", 0) + 20 * self.owned.get("barr", 0) \
+        drained = (
+            30 * self.owned.get("proc", 0)
+            + 30 * self.owned.get("weap", 0)
+            + 20 * self.owned.get("barr", 0)
             + 30 * self.owned.get("fix", 0)
+        )
         return provided, drained
 
     def step(self, dt: float) -> None:
@@ -100,7 +115,9 @@ class Sim:
     def apply(self, orders: list[dict]) -> None:
         for o in orders:
             cmd = o["cmd"]
-            if cmd == "deploy" and any(u["id"] == o["units"][0] and u["type"] == "mcv" for u in self.units):
+            if cmd == "deploy" and any(
+                u["id"] == o["units"][0] and u["type"] == "mcv" for u in self.units
+            ):
                 self.units = [u for u in self.units if u["type"] != "mcv"]
                 self.owned["fact"] = 1
                 self.log.append((self.t, "deploy"))
@@ -109,15 +126,22 @@ class Sim:
                 if item in self.avail():
                     for _ in range(o.get("count", 1) if cmd == "train" else 1):
                         self.queues.setdefault(ITEMS[item][2], []).append(
-                            {"item": item, "progress": 0.0, "ready": False})
+                            {"item": item, "progress": 0.0, "ready": False}
+                        )
                     self.log.append((self.t, f"{cmd} {item}"))
             elif cmd == "place":
                 for q, items in self.queues.items():
                     for e in items:
-                        if e["item"] == o["item"].lower() and e["ready"] and q in ("Building", "Defense"):
+                        if (
+                            e["item"] == o["item"].lower()
+                            and e["ready"]
+                            and q in ("Building", "Defense")
+                        ):
                             self.owned[e["item"]] = self.owned.get(e["item"], 0) + 1
                             if e["item"] == "proc":
-                                self.units.append({"id": self.next_id, "type": "harv", "x": 22, "y": 22})
+                                self.units.append(
+                                    {"id": self.next_id, "type": "harv", "x": 22, "y": 22}
+                                )
                                 self.next_id += 1
                             items.remove(e)
                             self.log.append((self.t, f"placed {e['item']}"))
@@ -127,28 +151,61 @@ class Sim:
     def state(self) -> SimpleNamespace:
         provided, drained = self.power()
         production = [
-            {"item": e["item"], "queue": q, "progress": round(e["progress"], 3), "ready": e["ready"],
-             "remaining_s": round((1 - e["progress"]) * ITEMS[e["item"]][1], 1)}
-            for q, items in self.queues.items() for e in items
+            {
+                "item": e["item"],
+                "queue": q,
+                "progress": round(e["progress"], 3),
+                "ready": e["ready"],
+                "remaining_s": round((1 - e["progress"]) * ITEMS[e["item"]][1], 1),
+            }
+            for q, items in self.queues.items()
+            for e in items
         ]
         units = [dict(u, hp=100, idle=True, x=u.get("x", 20), y=u.get("y", 20)) for u in self.units]
-        buildings = [{"id": 1000 + i, "type": t, "hp": 100} for i, (t, n) in enumerate(self.owned.items()) for _ in range(n)]
+        buildings = [
+            {"id": 1000 + i, "type": t, "hp": 100}
+            for i, (t, n) in enumerate(self.owned.items())
+            for _ in range(n)
+        ]
         combat = [u["id"] for u in units if u["type"] not in ("mcv", "harv")]
         obs = {
-            "tick": int(self.t * 25), "faction": self.faction, "enemy_faction": "england",
-            "economy": {"cash": int(self.cash), "power_provided": provided, "power_drained": drained,
-                        "harvesters": sum(1 for u in units if u["type"] == "harv")},
-            "production": production, "available_production": self.avail(), "units": units, "buildings": buildings,
-            "visible_enemies": [], "visible_enemy_buildings": [], "events": [], "base_center": [20, 20],
+            "tick": int(self.t * 25),
+            "faction": self.faction,
+            "enemy_faction": "england",
+            "economy": {
+                "cash": int(self.cash),
+                "power_provided": provided,
+                "power_drained": drained,
+                "harvesters": sum(1 for u in units if u["type"] == "harv"),
+            },
+            "production": production,
+            "available_production": self.avail(),
+            "units": units,
+            "buildings": buildings,
+            "visible_enemies": [],
+            "visible_enemy_buildings": [],
+            "events": [],
+            "base_center": [20, 20],
         }
-        legal = {"deploy": [u["id"] for u in units if u["type"] == "mcv"], "combat_units": combat,
-                 "idle_units": [u["id"] for u in units], "enemy_base": [80, 80], "attack_now": None}
-        raw = {"observation": obs, "legal_actions": legal, "time": {"game_seconds": self.t, "remaining_seconds": 1200},
-               "map": {"id": "sim", "bounds": [0, 0, 96, 96]}}
+        legal = {
+            "deploy": [u["id"] for u in units if u["type"] == "mcv"],
+            "combat_units": combat,
+            "idle_units": [u["id"] for u in units],
+            "enemy_base": [80, 80],
+            "attack_now": None,
+        }
+        raw = {
+            "observation": obs,
+            "legal_actions": legal,
+            "time": {"game_seconds": self.t, "remaining_seconds": 1200},
+            "map": {"id": "sim", "bounds": [0, 0, 96, 96]},
+        }
         return SimpleNamespace(raw=raw, legal_actions=[], is_current_actor=True)
 
 
-def run(make_agent, seconds: float = 340.0, decide_every: float = 0.2, faction: str = "russia") -> dict:
+def run(
+    make_agent, seconds: float = 340.0, decide_every: float = 0.2, faction: str = "russia"
+) -> dict:
     """Drive an agent through the sim; returns the same metrics the trace scorer reports.
 
     ``make_agent(clock)`` builds the agent with the sim's clock so cooldowns run on game time.
@@ -166,24 +223,42 @@ def run(make_agent, seconds: float = 340.0, decide_every: float = 0.2, faction: 
         if sim.cash < 50:
             m["zero"] += 0.1
         has_weap = bool(sim.owned.get("weap"))
-        if has_weap and not any(e["item"] in ("1tnk", "3tnk", "harv", "ftrk") for e in sim.queues.get("Vehicle", [])) \
-                and sim.cash >= 300:
+        if (
+            has_weap
+            and not any(
+                e["item"] in ("1tnk", "3tnk", "harv", "ftrk") for e in sim.queues.get("Vehicle", [])
+            )
+            and sim.cash >= 300
+        ):
             m["idle"] += 0.1
         sim.step(0.1)
         if int(round(sim.t * 10)) % 10 == 0:
-            sim.history.append({"t": round(sim.t), "owned": dict(sim.owned), "cash": int(sim.cash),
-                                "harv": sum(1 for u in sim.units if u["type"] == "harv"),
-                                "tanks": sum(1 for u in sim.units if u["type"] in ("1tnk", "3tnk"))})
+            sim.history.append(
+                {
+                    "t": round(sim.t),
+                    "owned": dict(sim.owned),
+                    "cash": int(sim.cash),
+                    "harv": sum(1 for u in sim.units if u["type"] == "harv"),
+                    "tanks": sum(1 for u in sim.units if u["type"] in ("1tnk", "3tnk")),
+                }
+            )
     placed: dict[str, float] = {}
     for t, msg in sim.log:  # first placement of each item
         if msg.startswith("placed"):
             placed.setdefault(msg.split()[1], t)
+
     def at(sec):
         return min(sim.history, key=lambda h: abs(h["t"] - sec))
+
     return {
-        "war_factory_s": round(placed.get("weap", -1)), "first_defence_s": round(min(
-            (t for k, t in placed.items() if k in ("pbox", "ftur", "tsla")), default=-1)),
-        "harvesters_at_180s": at(180)["harv"], "tanks_at_330s": at(330)["tanks"],
-        "zero_cash_s": round(m["zero"]), "vehicle_idle_s": round(m["idle"]), "placed": {k: round(v) for k, v in placed.items()},
+        "war_factory_s": round(placed.get("weap", -1)),
+        "first_defence_s": round(
+            min((t for k, t in placed.items() if k in ("pbox", "ftur", "tsla")), default=-1)
+        ),
+        "harvesters_at_180s": at(180)["harv"],
+        "tanks_at_330s": at(330)["tanks"],
+        "zero_cash_s": round(m["zero"]),
+        "vehicle_idle_s": round(m["idle"]),
+        "placed": {k: round(v) for k, v in placed.items()},
         "final": sim.history[-1] if sim.history else None,
     }

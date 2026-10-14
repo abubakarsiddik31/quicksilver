@@ -31,7 +31,13 @@ import httpx
 
 from ._responses import _parse_error_body, _parse_json_body
 from .client import AltruAgentClient
-from .errors import MINT_FAILURE_PREFIX, AltruAgentError, AuthenticationError, ConfigurationError, PlatformError
+from .errors import (
+    MINT_FAILURE_PREFIX,
+    AltruAgentError,
+    AuthenticationError,
+    ConfigurationError,
+    PlatformError,
+)
 from .models import OfficialAssignment, SeatGrant
 from .notices import DASHBOARD_URL
 
@@ -104,8 +110,12 @@ def _error_from(response: httpx.Response, fallback: str) -> OfficialAgentError:
     elif code == "registration_incomplete" and next_step == "rules":
         message = _RULES_MESSAGE
     else:
-        message = _ERROR_MESSAGES.get(code) or f"{fallback} (HTTP {response.status_code}" + (f", {code})" if code else ")")
-    error = OfficialAgentError(message, status_code=response.status_code, error_code=code, detail=parsed["detail"])
+        message = _ERROR_MESSAGES.get(code) or f"{fallback} (HTTP {response.status_code}" + (
+            f", {code})" if code else ")"
+        )
+    error = OfficialAgentError(
+        message, status_code=response.status_code, error_code=code, detail=parsed["detail"]
+    )
     error.next_step = next_step if isinstance(next_step, str) else None
     return error
 
@@ -126,7 +136,9 @@ def registration_wait_message(exc: BaseException) -> str:
     if getattr(exc, "next_step", None) == "rules":
         what = f"Accept the updated Official Rules on your dashboard ({DASHBOARD_URL})"
     else:
-        what = f"Your event registration isn't complete. Finish it on your dashboard ({DASHBOARD_URL})"
+        what = (
+            f"Your event registration isn't complete. Finish it on your dashboard ({DASHBOARD_URL})"
+        )
     return f"{what}; I'll keep trying."
 
 
@@ -184,14 +196,18 @@ class OfficialAgentAuth:
         try:
             response = http.post(AUTHENTICATE_PATH, json={"official_agent_key": self._key})
         except httpx.RequestError as exc:
-            raise PlatformError(f"Could not reach the control plane at {control_url}: {exc}", status_code=None) from exc
+            raise PlatformError(
+                f"Could not reach the control plane at {control_url}: {exc}", status_code=None
+            ) from exc
         if response.status_code != 200:
             raise _error_from(response, "Official agent authentication failed")
         body = _parse_json_body(response)
         token = body.get("access_token") if isinstance(body, dict) else None
         if not token:
-            raise OfficialAgentError("The authentication response did not include a session token.",
-                                     status_code=response.status_code)
+            raise OfficialAgentError(
+                "The authentication response did not include a session token.",
+                status_code=response.status_code,
+            )
         return token
 
 
@@ -221,7 +237,7 @@ class OfficialAgentClient:
         # end up with two sessions.
         self._lock = threading.RLock()
 
-    def __enter__(self) -> "OfficialAgentClient":
+    def __enter__(self) -> OfficialAgentClient:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -268,7 +284,12 @@ class OfficialAgentClient:
         """
         data = self._post(f"{ASSIGNMENTS_PATH}/{seat_id}/grant", execution_id)
         grant = SeatGrant.from_dict(data if isinstance(data, dict) else {})
-        if not (grant.access_token and grant.game_session_id and grant.gameapi_server_url and grant.agent_id):
+        if not (
+            grant.access_token
+            and grant.game_session_id
+            and grant.gameapi_server_url
+            and grant.agent_id
+        ):
             raise OfficialAgentError("The seat grant response was missing required fields.")
         return grant
 
@@ -287,8 +308,10 @@ class OfficialAgentClient:
         except PlatformError as exc:
             if exc.error_code in _ERROR_MESSAGES:
                 raise OfficialAgentError(
-                    _ERROR_MESSAGES[exc.error_code], status_code=exc.status_code,
-                    error_code=exc.error_code, detail=exc.detail,
+                    _ERROR_MESSAGES[exc.error_code],
+                    status_code=exc.status_code,
+                    error_code=exc.error_code,
+                    detail=exc.detail,
                 ) from None
             raise
 
@@ -325,9 +348,12 @@ class OfficialSeatAuth:
     def login(self, http: httpx.Client, control_url: str) -> str:
         grant = self._official.grant(self.seat_id, self._execution_id)
         if self._grant is not None and (grant.seat_id, grant.game_session_id) != (
-            self._grant.seat_id, self._grant.game_session_id,
+            self._grant.seat_id,
+            self._grant.game_session_id,
         ):
-            raise OfficialAgentError("Seat renewal returned a different seat than the one assigned.")
+            raise OfficialAgentError(
+                "Seat renewal returned a different seat than the one assigned."
+            )
         self._grant = grant
         return grant.access_token
 
@@ -335,7 +361,7 @@ class OfficialSeatAuth:
 # -- seat execution lease ---------------------------------------------------------------
 
 LEASE_RENEW_SECONDS = 10.0  # the backend's lease lasts 30 s from each renewal
-LEASE_RETRY_SECONDS = 5.0   # sooner after a failed renewal, to stay inside the 30 s
+LEASE_RETRY_SECONDS = 5.0  # sooner after a failed renewal, to stay inside the 30 s
 
 
 class SeatLeaseLost(AltruAgentError):
@@ -361,7 +387,7 @@ class SeatLeaseKeeper:
 
     def __init__(
         self,
-        official: "OfficialAgentClient",
+        official: OfficialAgentClient,
         seat_id: str,
         execution_id: str,
         *,

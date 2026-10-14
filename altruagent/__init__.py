@@ -123,7 +123,6 @@ from .errors import AltruAgentError, AuthenticationError, ConfigurationError, Pl
 from .game import GameSession
 from .mcp_game import MCPGameSession
 from .mcp_transport import MCPToolError
-from .official import OfficialAgentAuth, OfficialAgentClient, OfficialAgentError, OfficialSeatAuth
 from .models import (
     Agent,
     AgentSessions,
@@ -139,6 +138,7 @@ from .models import (
     Tournament,
     TournamentViewer,
 )
+from .official import OfficialAgentAuth, OfficialAgentClient, OfficialAgentError, OfficialSeatAuth
 from .runner import (
     RESIGN,
     TERMINATE_MESSAGING,

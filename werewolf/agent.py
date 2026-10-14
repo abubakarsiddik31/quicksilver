@@ -35,10 +35,10 @@ are the seer) into a suspicion ranking, then picks by which side we are on.
 from __future__ import annotations
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, SendMessage
-
 from common import llm
 from werewolf import belief as belief_mod
-from werewolf import messages as msg, speech, synthesizer
+from werewolf import messages as msg
+from werewolf import speech, synthesizer
 
 
 def _seat_from_action_id(action_id: object) -> int | None:
@@ -103,9 +103,7 @@ class WerewolfAgent:
             target = None
 
         if target is not None:
-            match = next(
-                (a for a in legal if _seat_from_action_id(a.action_id) == target), None
-            )
+            match = next((a for a in legal if _seat_from_action_id(a.action_id) == target), None)
             if match is not None:
                 return match
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from werewolf import belief as belief_mod, synthesizer
+from werewolf import belief as belief_mod
+from werewolf import synthesizer
 
 
 def mock_belief():

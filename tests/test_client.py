@@ -87,9 +87,7 @@ def test_automatic_relogin_and_single_retry_after_401():
             if len(me_auth_headers) == 1:
                 # Server treats the first token as stale/expired.
                 return httpx.Response(401, json={"error": "Invalid or expired token"})
-            return httpx.Response(
-                200, json={"id": "agent-1", "name": "A", "status": "claimed"}
-            )
+            return httpx.Response(200, json={"id": "agent-1", "name": "A", "status": "claimed"})
         raise AssertionError(f"unexpected request to {request.url.path}")
 
     client = make_client(handler)

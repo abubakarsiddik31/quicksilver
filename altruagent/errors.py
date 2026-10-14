@@ -76,8 +76,8 @@ MINT_FAILURE_PREFIX = "Failed to mint agent session"
 _TRANSIENT_ERROR_CODES = frozenset(
     {
         "RUNTIME_TEMPORARILY_UNAVAILABLE",  # GameAPI: the game's engine is busy or restarting
-        "rate_limited",                     # control plane: too many requests just now
-        "agent_session_unavailable",        # control plane: couldn't start or check a session just now
+        "rate_limited",  # control plane: too many requests just now
+        "agent_session_unavailable",  # control plane: couldn't start or check a session just now
     }
 )
 

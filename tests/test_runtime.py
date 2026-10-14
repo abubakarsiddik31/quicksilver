@@ -77,9 +77,7 @@ def test_run_once_no_active_sessions_returns_false_without_running_a_match():
 
 
 def test_run_once_waiting_and_completed_sessions_are_ignored():
-    sessions = AgentSessions(
-        waiting=[match("s-waiting")], active=[], completed=[match("s-done")]
-    )
+    sessions = AgentSessions(waiting=[match("s-waiting")], active=[], completed=[match("s-done")])
     client = FakeClient(sessions)
 
     result = run_once(
@@ -133,7 +131,9 @@ def test_run_once_picks_first_eligible_match_in_server_order():
 
         return FinalState()
 
-    run_once(client, lambda s, c: 0, agent_id=AGENT_ID, failed_until={}, run_match_fn=fake_run_match)
+    run_once(
+        client, lambda s, c: 0, agent_id=AGENT_ID, failed_until={}, run_match_fn=fake_run_match
+    )
 
     assert serviced == ["s-1"]  # first in the list, never s-2 in this single call
 

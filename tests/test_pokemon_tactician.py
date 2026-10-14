@@ -77,18 +77,36 @@ def test_every_shrug_falls_back_to_none():
 
 # Real cards, as a draft state publishes them.
 FLUTTER = {
-    "card_id": "c-flutter", "species": "Flutter Mane", "item": "Booster Energy",
-    "ability": "Protosynthesis", "nature": "Timid", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-flutter",
+    "species": "Flutter Mane",
+    "item": "Booster Energy",
+    "ability": "Protosynthesis",
+    "nature": "Timid",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Moonblast", "Shadow Ball", "Icy Wind", "Protect"],
 }
 URS = {
-    "card_id": "c-urshifu", "species": "Urshifu-Rapid-Strike", "item": "Mystic Water",
-    "ability": "Unseen Fist", "nature": "Adamant", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-urshifu",
+    "species": "Urshifu-Rapid-Strike",
+    "item": "Mystic Water",
+    "ability": "Unseen Fist",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Surging Strikes", "Close Combat", "Aqua Jet", "Protect"],
 }
 GRA = {
-    "card_id": "c-gyarados", "species": "Gyarados", "item": "Sitrus Berry",
-    "ability": "Intimidate", "nature": "Adamant", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-gyarados",
+    "species": "Gyarados",
+    "item": "Sitrus Berry",
+    "ability": "Intimidate",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Waterfall", "Crunch", "Icy Wind", "Protect"],
 }
 
@@ -238,10 +256,12 @@ SWITCH = {"type": "switch", "species": "gholdengo"}
 
 def test_slots_fallback_picks_one_action_per_slot():
     t = tactician.Tactician(
-        FakeJev({
-            "slot_0": Answer("choice", choice="move:Close Combat:2", confidence=0.9),
-            "slot_1": Answer("choice", choice="switch:gholdengo", confidence=0.9),
-        }),
+        FakeJev(
+            {
+                "slot_0": Answer("choice", choice="move:Close Combat:2", confidence=0.9),
+                "slot_1": Answer("choice", choice="switch:gholdengo", confidence=0.9),
+            }
+        ),
         log=lambda m: None,
     )
     turn = tactician.slots_fallback(
@@ -261,10 +281,12 @@ def test_slots_fallback_picks_one_action_per_slot():
 
 def test_slots_fallback_refuses_illegal_and_unconfident_pairs():
     duplicate = tactician.Tactician(
-        FakeJev({
-            "slot_0": Answer("choice", choice="switch:Rillaboom", confidence=0.9),
-            "slot_1": Answer("choice", choice="switch:Rillaboom", confidence=0.9),
-        }),
+        FakeJev(
+            {
+                "slot_0": Answer("choice", choice="switch:Rillaboom", confidence=0.9),
+                "slot_1": Answer("choice", choice="switch:Rillaboom", confidence=0.9),
+            }
+        ),
         log=lambda m: None,
     )
     both_switch = move_template(
@@ -273,19 +295,25 @@ def test_slots_fallback_refuses_illegal_and_unconfident_pairs():
     assert tactician.slots_fallback(both_switch, {}, duplicate) is None
 
     shrug = tactician.Tactician(
-        FakeJev({
-            "slot_0": Answer("choice", choice="move:Close Combat:2", confidence=0.2),
-            "slot_1": Answer("choice", choice="switch:gholdengo", confidence=0.9),
-        }),
+        FakeJev(
+            {
+                "slot_0": Answer("choice", choice="move:Close Combat:2", confidence=0.2),
+                "slot_1": Answer("choice", choice="switch:gholdengo", confidence=0.9),
+            }
+        ),
         log=lambda m: None,
     )
-    assert tactician.slots_fallback(
-        move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, shrug
-    ) is None
+    assert (
+        tactician.slots_fallback(move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, shrug)
+        is None
+    )
 
-    assert tactician.slots_fallback(
-        move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, tactician.Tactician(None)
-    ) is None
+    assert (
+        tactician.slots_fallback(
+            move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, tactician.Tactician(None)
+        )
+        is None
+    )
 
 
 # -- the agent wiring --------------------------------------------------------
@@ -321,10 +349,19 @@ def test_the_agent_plays_the_math_when_jev_fails(tmp_path):
 
 
 def test_the_agent_obeys_a_confident_jev_lineup():
-    species = ["Incineroar", "Flutter Mane", "Urshifu-Rapid-Strike", "Gyarados", "Rillaboom", "Whimsicott"]
+    species = [
+        "Incineroar",
+        "Flutter Mane",
+        "Urshifu-Rapid-Strike",
+        "Gyarados",
+        "Rillaboom",
+        "Whimsicott",
+    ]
     board = {
         "phase": "team_preview",
-        "your_roster": [{"species": s, "item": "Sitrus Berry", "ability": "Intimidate"} for s in species],
+        "your_roster": [
+            {"species": s, "item": "Sitrus Berry", "ability": "Intimidate"} for s in species
+        ],
         "opponent_roster": [
             {"species": "Flutter Mane", "item": "Choice Specs"},
             {"species": "Chien-Pao", "item": "Focus Sash"},

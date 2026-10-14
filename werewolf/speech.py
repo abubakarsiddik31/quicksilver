@@ -89,9 +89,7 @@ def accusation_text(belief: Any, vote: int | None) -> str:
         reason = " Their seer claim is a confirmed lie."
     elif getattr(belief, "accused_by_seer", None) and vote in belief.accused_by_seer:
         reason = " The real seer identified them before dying."
-    return msg.shorten(
-        f"{seat_label(vote)} is my top suspect.{reason} Vote {seat_label(vote)}."
-    )
+    return msg.shorten(f"{seat_label(vote)} is my top suspect.{reason} Vote {seat_label(vote)}.")
 
 
 def compose(belief: Any, *, already_sent: Any = None) -> tuple[str, str] | None:
@@ -212,9 +210,7 @@ def phrase(
         return intent
     try:
         candidate = client.generate(
-            phrasing_prompt(
-                kind=kind, intent=intent, window=window, our_position=our_position
-            ),
+            phrasing_prompt(kind=kind, intent=intent, window=window, our_position=our_position),
             system=PHRASING_SYSTEM,
             temperature=0.9,
             max_output_tokens=160,

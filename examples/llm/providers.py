@@ -106,7 +106,9 @@ def provider_from_env() -> LLMProvider:
     """``OPENAI_API_KEY`` (required), ``OPENAI_MODEL``, ``OPENAI_BASE_URL``."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set — add it to your environment or the starter's .env.")
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set — add it to your environment or the starter's .env."
+        )
     return OpenAIProvider(
         api_key,
         os.environ.get("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL,

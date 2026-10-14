@@ -138,7 +138,9 @@ def test_mcp_url_appends_mcp_path_to_normalized_game_server_url(monkeypatch):
         return {"session_id": SESSION_ID}
 
     patch_call_tool(monkeypatch, fake_call_tool)
-    session = MCPGameSession(FakeClient(), session_id=SESSION_ID, game_server_url="game.example.test")
+    session = MCPGameSession(
+        FakeClient(), session_id=SESSION_ID, game_server_url="game.example.test"
+    )
     session.get_state()
 
     assert seen_urls == ["https://game.example.test/mcp"]
@@ -148,7 +150,11 @@ def test_get_legal_actions_returns_raw_dict_not_gamestate(monkeypatch):
     def fake_call_tool(client, mcp_url, name, arguments):
         assert name == "get_legal_actions"
         assert arguments == {"session_id": SESSION_ID}
-        return {"session_id": SESSION_ID, "state_version": 5, "actions": [{"action_id": "0", "label": "a", "input": {}}]}
+        return {
+            "session_id": SESSION_ID,
+            "state_version": 5,
+            "actions": [{"action_id": "0", "label": "a", "input": {}}],
+        }
 
     patch_call_tool(monkeypatch, fake_call_tool)
     result = make_session().get_legal_actions()
@@ -162,12 +168,19 @@ def test_play_action_with_action_id_sends_action_id_and_state_version(monkeypatc
 
     def fake_call_tool(client, mcp_url, name, arguments):
         calls.append((name, arguments))
-        return {"accepted": True, "session_id": SESSION_ID, "state_version": 6, "status": "in_progress"}
+        return {
+            "accepted": True,
+            "session_id": SESSION_ID,
+            "state_version": 6,
+            "status": "in_progress",
+        }
 
     patch_call_tool(monkeypatch, fake_call_tool)
     result = make_session().play_action(action_id="0", state_version=5)
 
-    assert calls == [("play_action", {"session_id": SESSION_ID, "state_version": 5, "action_id": "0"})]
+    assert calls == [
+        ("play_action", {"session_id": SESSION_ID, "state_version": 5, "action_id": "0"})
+    ]
     assert result["state_version"] == 6
 
 
@@ -197,7 +210,10 @@ def test_send_message_never_sends_state_version(monkeypatch):
     make_session().send_message(message_type="chat", content="hi", recipients=[1])
 
     assert calls == [
-        ("send_message", {"session_id": SESSION_ID, "message_type": "chat", "content": "hi", "recipients": [1]})
+        (
+            "send_message",
+            {"session_id": SESSION_ID, "message_type": "chat", "content": "hi", "recipients": [1]},
+        )
     ]
     assert "state_version" not in calls[0][1]
 
@@ -225,7 +241,12 @@ def test_resign_calls_resign_tool(monkeypatch):
 def test_get_result_calls_get_result_tool(monkeypatch):
     def fake_call_tool(client, mcp_url, name, arguments):
         assert name == "get_result"
-        return {"session_id": SESSION_ID, "is_terminal": True, "status": "completed", "returns": {"Me": 1.0}}
+        return {
+            "session_id": SESSION_ID,
+            "is_terminal": True,
+            "status": "completed",
+            "returns": {"Me": 1.0},
+        }
 
     patch_call_tool(monkeypatch, fake_call_tool)
     result = make_session().get_result()
@@ -260,7 +281,9 @@ def test_stale_state_error_propagates_as_mcp_tool_error(monkeypatch):
 
 def test_mcp_game_and_rest_game_from_same_client_are_independent_classes():
     session = make_session()
-    real_client = AltruAgentClient(control_url="https://example.test", api_key="k", load_env_file=False)
+    real_client = AltruAgentClient(
+        control_url="https://example.test", api_key="k", load_env_file=False
+    )
     rest_session = real_client.game(session_id=SESSION_ID, game_server_url=GAME_SERVER_URL)
 
     assert isinstance(session, MCPGameSession)

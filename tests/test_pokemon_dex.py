@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pokemon import dex
 
-
 # -- id folding -------------------------------------------------------------
 
 
@@ -56,15 +55,15 @@ def test_type_chart_matches_hand_checked_values():
         ("Fire", ("Water",), 0.5),
         ("Grass", ("Water",), 2.0),
         ("Fighting", ("Normal",), 2.0),
-        ("Ice", ("Dragon", "Flying"), 4.0),      # doubly weak
+        ("Ice", ("Dragon", "Flying"), 4.0),  # doubly weak
         ("Rock", ("Fire", "Flying"), 4.0),
-        ("Bug", ("Grass", "Psychic"), 4.0),      # 2x on both
+        ("Bug", ("Grass", "Psychic"), 4.0),  # 2x on both
         ("Fairy", ("Dragon",), 2.0),
         ("Steel", ("Fairy",), 2.0),
         ("Bug", ("Fire",), 0.5),
-        ("Ghost", ("Normal",), 0.0),             # immunity
+        ("Ghost", ("Normal",), 0.0),  # immunity
         ("Normal", ("Ghost",), 0.0),
-        ("Ground", ("Fire", "Flying"), 0.0),     # Flying is immune to Ground
+        ("Ground", ("Fire", "Flying"), 0.0),  # Flying is immune to Ground
         ("Electric", ("Ground",), 0.0),
         ("Fighting", ("Ghost",), 0.0),
         ("Psychic", ("Dark",), 0.0),
@@ -91,8 +90,8 @@ def test_a_single_type_accepts_a_bare_string():
 
 
 def test_effectiveness_is_total():
-    assert dex.effectiveness(None, ("Water",)) == 1.0              # nothing to hit with
-    assert dex.effectiveness("Water", None) == 1.0                 # nothing to hit
+    assert dex.effectiveness(None, ("Water",)) == 1.0  # nothing to hit with
+    assert dex.effectiveness("Water", None) == 1.0  # nothing to hit
     assert dex.effectiveness("Water", ("Notatype",)) == 1.0
     assert dex.effectiveness("Water", ("Water", "Flying")) == 0.5  # multiplied through
     assert dex.effectiveness("Notatype", ("Water",)) == 1.0

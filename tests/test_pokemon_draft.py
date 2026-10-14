@@ -12,23 +12,47 @@ from pokemon import draft
 
 # Real cards, as a draft state publishes them.
 FLUTTER = {
-    "card_id": "c-flutter", "species": "Flutter Mane", "item": "Booster Energy",
-    "ability": "Protosynthesis", "nature": "Timid", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-flutter",
+    "species": "Flutter Mane",
+    "item": "Booster Energy",
+    "ability": "Protosynthesis",
+    "nature": "Timid",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Moonblast", "Shadow Ball", "Icy Wind", "Protect"],
 }
 URS = {
-    "card_id": "c-urshifu", "species": "Urshifu-Rapid-Strike", "item": "Mystic Water",
-    "ability": "Unseen Fist", "nature": "Adamant", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-urshifu",
+    "species": "Urshifu-Rapid-Strike",
+    "item": "Mystic Water",
+    "ability": "Unseen Fist",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Surging Strikes", "Close Combat", "Aqua Jet", "Protect"],
 }
 GRA = {
-    "card_id": "c-gyarados", "species": "Gyarados", "item": "Sitrus Berry",
-    "ability": "Intimidate", "nature": "Adamant", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-gyarados",
+    "species": "Gyarados",
+    "item": "Sitrus Berry",
+    "ability": "Intimidate",
+    "nature": "Adamant",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Waterfall", "Crunch", "Icy Wind", "Protect"],
 }
 CATERPIE = {
-    "card_id": "c-caterpie", "species": "Caterpie", "item": "Leftovers",
-    "ability": "Shield Dust", "nature": "Bold", "level": 50, "evs": {}, "ivs": {},
+    "card_id": "c-caterpie",
+    "species": "Caterpie",
+    "item": "Leftovers",
+    "ability": "Shield Dust",
+    "nature": "Bold",
+    "level": 50,
+    "evs": {},
+    "ivs": {},
     "moves": ["Tackle", "String Shot"],
 }
 
@@ -55,14 +79,22 @@ def test_the_snake_order_is_a_b_b_a_a_b_b_a_a_b_b_a():
     exactly the documented order."""
     sequence = [draft.pick_owner(n, we_are_first=True) for n in range(1, 13)]
     assert sequence == [
-        "us", "them", "them", "us", "us", "them",
-        "them", "us", "us", "them", "them", "us",
+        "us",
+        "them",
+        "them",
+        "us",
+        "us",
+        "them",
+        "them",
+        "us",
+        "us",
+        "them",
+        "them",
+        "us",
     ]
     # And it is symmetric from the other seat.
     mirrored = [draft.pick_owner(n, we_are_first=False) for n in range(1, 13)]
-    assert mirrored == [
-        "them" if owner == "us" else "us" for owner in sequence
-    ]
+    assert mirrored == ["them" if owner == "us" else "us" for owner in sequence]
 
 
 def test_each_side_gets_exactly_six_picks():
@@ -89,10 +121,7 @@ def test_denial_is_worth_more_when_the_opponent_picks_twice_next():
 
 
 def test_denial_falls_back_when_the_order_is_unknown():
-    assert (
-        draft.denial_weight({"phase": "draft"}, "us")
-        == draft.DENIAL_WEIGHT_OTHERWISE
-    )
+    assert draft.denial_weight({"phase": "draft"}, "us") == draft.DENIAL_WEIGHT_OTHERWISE
 
 
 # -- card profiles ----------------------------------------------------------
@@ -174,8 +203,8 @@ def test_a_shared_weakness_is_penalised():
 
 
 def test_role_balance_rewards_both_attack_types():
-    assert draft.role_bonus([FLUTTER]) == 0.0          # special only
-    assert draft.role_bonus([URS]) == 0.0              # physical only
+    assert draft.role_bonus([FLUTTER]) == 0.0  # special only
+    assert draft.role_bonus([URS]) == 0.0  # physical only
     assert draft.role_bonus([FLUTTER, URS]) == draft.ROLE_BALANCE_BONUS
     assert draft.role_bonus([]) == 0.0
 
@@ -185,9 +214,7 @@ def test_role_balance_rewards_both_attack_types():
 
 def test_a_card_is_scored_by_the_swing_it_creates():
     """Denial means a card the opponent wants is worth more to us to take."""
-    without_denial = draft.score_card(
-        GRA, our_roster=[], their_roster=[], denial=0.0
-    )
+    without_denial = draft.score_card(GRA, our_roster=[], their_roster=[], denial=0.0)
     with_denial = draft.score_card(GRA, our_roster=[], their_roster=[FLUTTER], denial=0.8)
     assert with_denial > without_denial
 
@@ -223,7 +250,9 @@ def test_choose_from_actions_maps_back_onto_the_servers_own_list():
             self.action_id = action_id
 
     actions = [Action("draft_pick:c-flutter"), Action("draft_pick:c-urshifu")]
-    picked = draft.choose_from_actions(obs(cards=[FLUTTER, URS]), agent_id="us", legal_actions=actions)
+    picked = draft.choose_from_actions(
+        obs(cards=[FLUTTER, URS]), agent_id="us", legal_actions=actions
+    )
     assert picked in actions
     assert picked.action_id == "draft_pick:c-flutter" or picked.action_id == "draft_pick:c-urshifu"
 

@@ -8,7 +8,8 @@ switch off with ``RA_TRACE=0``). Lines are ``{"t": <unix time>, "kind": ..., ...
 - ``jev``     each Jev answer: values, confidences, latency
 - ``orders``  each batch sent: tick and a compact summary of its orders
 - ``refused`` orders the server refused, with the reason
-- ``state``   a sample every ~5 s: cash, power, units, army, enemies seen, queue
+- ``state``   a sample every ~5 s: cash, power, units, army, enemies seen (by type), queue, doctrine, roles
+- ``directive`` the General's orders whenever they change: enemy stance, garrison / raider / scout quotas
 
 Writing never raises and never blocks the decision loop for more than a short append.
 """
@@ -45,7 +46,14 @@ def write(kind: str, **data: Any) -> None:
         return
     try:
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"t": round(time.time(), 2), "kind": kind, **data}, default=str, separators=(",", ":")) + "\n")
+            f.write(
+                json.dumps(
+                    {"t": round(time.time(), 2), "kind": kind, **data},
+                    default=str,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
     except OSError:
         pass
 

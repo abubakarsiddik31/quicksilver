@@ -29,7 +29,7 @@ or copy this file's contents into agent/agent.py (the default) and run
 `python -m agent --tournament`.
 """
 
-from altruagent import DecisionContext, GameState, LegalAction, SendMessage, TERMINATE_MESSAGING
+from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, LegalAction, SendMessage
 
 
 class WerewolfAgent:

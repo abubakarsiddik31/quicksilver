@@ -72,17 +72,16 @@ def save_pool(cards: list[dict], path: Path | None = None) -> Path:
 
 
 def merge(existing: list[dict] | None, cards: list[dict]) -> list[dict]:
-    """Union by ``card_id``, keeping whatever we already knew and adding new
-    cards. A later observation of the same card must not overwrite an earlier
-    one — the pool is fixed, so any difference is noise, and the first sighting
-    is as good as any."""
+    """Union by ``card_id``. A newer sighting of a card replaces the older one:
+    the pool is *not* fixed — new cards turn up between matches, and a card id can
+    come back with a different set — so the latest set is the one to trust."""
     merged: dict[str, dict] = {}
     for card in list(existing or []) + list(cards or []):
         if not isinstance(card, dict):
             continue
         card_id = card.get("card_id")
-        if isinstance(card_id, str) and card_id and card_id not in merged:
-            merged[card_id] = card
+        if isinstance(card_id, str) and card_id:
+            merged[card_id] = {k: v for k, v in card.items() if not k.startswith("_")}
     return sorted(merged.values(), key=lambda card: str(card.get("card_id", "")))
 
 
@@ -107,6 +106,45 @@ def is_full_card(card: Any) -> bool:
         and isinstance(card.get("species"), str)
         and bool(card.get("species"))
     )
+
+
+class MatchCards:
+    """Every full card seen *in this match*, with who holds it.
+
+    The banked file is only what earlier matches showed. A new match can bring
+    cards the file has never seen, or a known card with a different set, so the
+    match's own draft — available cards and both rosters — is the source of
+    truth and the file is the fallback for what this match never showed.
+    """
+
+    def __init__(self) -> None:
+        self._cards: dict[str, dict] = {}
+
+    def observe(self, observation: dict, agent_id: str | None = None) -> None:
+        for card in obs.pool_of(observation):
+            self._add(card, None)
+        for owner_id, cards in obs.rosters(observation).items():
+            side = None if agent_id is None else ("ours" if owner_id == agent_id else "theirs")
+            for card in cards:
+                self._add(card, side)
+
+    def _add(self, card: Any, owner: str | None) -> None:
+        if not is_full_card(card):
+            return
+        known = self._cards.get(card["card_id"])
+        owner = owner or (known or {}).get("_owner")
+        self._cards[card["card_id"]] = {**card, **({"_owner": owner} if owner else {})}
+
+    def cards(self) -> list[dict]:
+        return list(self._cards.values())
+
+    def with_fallback(self, banked: list[dict] | None) -> list[dict] | None:
+        """This match's cards first, then banked cards for anything it never showed."""
+        mine = self.cards()
+        if not mine:
+            return banked
+        seen = {c["card_id"] for c in mine}
+        return mine + [c for c in (banked or []) if c.get("card_id") not in seen]
 
 
 def capture(state, *, path: Path | None = None) -> list[dict] | None:

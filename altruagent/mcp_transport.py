@@ -106,7 +106,12 @@ class MCPToolError(PlatformError):
     """
 
     def __init__(
-        self, message: str, *, protocol_error: bool = False, local_error: bool = False, **kwargs: Any
+        self,
+        message: str,
+        *,
+        protocol_error: bool = False,
+        local_error: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, **kwargs)
         self.protocol_error = protocol_error
@@ -218,14 +223,21 @@ def _raw_client() -> httpx.Client:
     with _RAW_LOCK:
         if _RAW_CLIENT is None:
             _RAW_CLIENT = httpx.Client(
-                timeout=httpx.Timeout(MCP_READ_TIMEOUT_SECONDS, connect=MCP_CONNECT_TIMEOUT_SECONDS),
+                timeout=httpx.Timeout(
+                    MCP_READ_TIMEOUT_SECONDS, connect=MCP_CONNECT_TIMEOUT_SECONDS
+                ),
                 limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=60.0),
             )
         return _RAW_CLIENT
 
 
 def _use_raw() -> bool:
-    return os.environ.get("ALTRUAGENT_MCP_SESSION", "").strip().lower() not in ("1", "true", "yes", "on")
+    return os.environ.get("ALTRUAGENT_MCP_SESSION", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _parse_rpc_body(response: httpx.Response) -> dict:
@@ -258,8 +270,12 @@ def _call_tool_raw(mcp_url: str, token: str, name: str, arguments: dict) -> dict
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         },
-        json={"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
-              "params": {"name": name, "arguments": arguments}},
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
     )
     if response.status_code >= 400:
         response.raise_for_status()
@@ -300,7 +316,9 @@ def _call_tool_raw(mcp_url: str, token: str, name: str, arguments: dict) -> dict
     return payload if isinstance(payload, dict) else {}
 
 
-def _call_raw_with_relogin(client: "AltruAgentClient", mcp_url: str, name: str, arguments: dict) -> dict:
+def _call_raw_with_relogin(
+    client: AltruAgentClient, mcp_url: str, name: str, arguments: dict
+) -> dict:
     token = client._current_access_token()
     for attempt in (1, 2):
         try:
@@ -383,7 +401,7 @@ def _wrap_http_status_error(name: str, exc: httpx.HTTPStatusError) -> MCPToolErr
 
 
 def call_tool(
-    client: "AltruAgentClient",
+    client: AltruAgentClient,
     mcp_url: str,
     name: str,
     arguments: dict,
@@ -407,7 +425,9 @@ def call_tool(
     token = client._current_access_token()
     try:
         return asyncio.run(
-            _call_tool_once(mcp_url, token, name, arguments, httpx_client_factory=httpx_client_factory)
+            _call_tool_once(
+                mcp_url, token, name, arguments, httpx_client_factory=httpx_client_factory
+            )
         )
     except MCPToolError:
         raise
@@ -431,7 +451,9 @@ def call_tool(
         token = client._current_access_token(force_relogin=True)
         try:
             return asyncio.run(
-                _call_tool_once(mcp_url, token, name, arguments, httpx_client_factory=httpx_client_factory)
+                _call_tool_once(
+                    mcp_url, token, name, arguments, httpx_client_factory=httpx_client_factory
+                )
             )
         except MCPToolError:
             raise
@@ -440,5 +462,7 @@ def call_tool(
             if http_exc2 is not None:
                 raise _wrap_http_status_error(name, http_exc2) from exc2
             raise MCPToolError(
-                f"MCP tool {name!r} failed after re-login: {exc2!r}", status_code=None, error_code=None
+                f"MCP tool {name!r} failed after re-login: {exc2!r}",
+                status_code=None,
+                error_code=None,
             ) from exc2

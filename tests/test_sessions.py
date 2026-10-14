@@ -101,7 +101,10 @@ def test_sessions_does_not_resolve_game_server_url():
             return login_ok(request)
         if request.url.path.startswith("/competitions/"):
             competitions_calls.append(request.url.path)
-            return httpx.Response(200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"})
+            return httpx.Response(
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
+            )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])
         )
@@ -118,9 +121,23 @@ def test_multiple_active_matches_remain_independent():
         if request.url.path == "/auth/agent/login":
             return login_ok(request)
         if request.url.path == "/competitions/s-1":
-            return httpx.Response(200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host-1:8000"})
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": "s-1",
+                    "status": "in_progress",
+                    "game_server_url": "host-1:8000",
+                },
+            )
         if request.url.path == "/competitions/s-2":
-            return httpx.Response(200, json={"session_id": "s-2", "status": "in_progress", "game_server_url": "host-2:8000"})
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": "s-2",
+                    "status": "in_progress",
+                    "game_server_url": "host-2:8000",
+                },
+            )
         return httpx.Response(
             200,
             json=sessions_payload(
@@ -158,7 +175,8 @@ def test_active_match_game_performs_competition_lookup_and_builds_mcp_session():
         if request.url.path == "/competitions/s-1":
             lookups.append(request.url.path)
             return httpx.Response(
-                200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"}
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
             )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])
@@ -187,7 +205,8 @@ def test_active_match_rest_game_performs_competition_lookup_and_builds_gamesessi
         if request.url.path == "/competitions/s-1":
             lookups.append(request.url.path)
             return httpx.Response(
-                200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"}
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
             )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])
@@ -214,7 +233,8 @@ def test_game_and_rest_game_share_the_same_cached_game_server_url():
         if request.url.path == "/competitions/s-1":
             lookups.append(request.url.path)
             return httpx.Response(
-                200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"}
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
             )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])
@@ -241,7 +261,8 @@ def test_resolved_game_server_url_is_cached_and_not_refetched():
         if request.url.path == "/competitions/s-1":
             lookups.append(request.url.path)
             return httpx.Response(
-                200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"}
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
             )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])
@@ -356,7 +377,8 @@ def test_lazy_resolution_401_triggers_one_relogin_and_one_retry():
             if len(competition_auth_headers) == 1:
                 return httpx.Response(401, json={"error": "Invalid or expired token"})
             return httpx.Response(
-                200, json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"}
+                200,
+                json={"session_id": "s-1", "status": "in_progress", "game_server_url": "host:8000"},
             )
         return httpx.Response(
             200, json=sessions_payload(active_sessions=[match_payload("s-1", "in_progress")])

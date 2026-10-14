@@ -28,6 +28,8 @@ def funds(econ: Any) -> float:
         if isinstance(v, (int, float)) and v > 0:
             total += float(v)
     return total
+
+
 ALPHA = 0.25
 
 
@@ -67,6 +69,8 @@ class EconTracker:
         dt = now - self._t
         if dt >= WINDOW_S:
             gained = max(0.0, (float(cash) - self._cash + self._spend) / dt)
-            self.income = gained if self.income == 0.0 else ALPHA * gained + (1 - ALPHA) * self.income
+            self.income = (
+                gained if self.income == 0.0 else ALPHA * gained + (1 - ALPHA) * self.income
+            )
             self._cash, self._t, self._spend = float(cash), now, 0.0
         return self.income

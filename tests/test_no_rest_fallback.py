@@ -47,10 +47,22 @@ class FakeMCPGameSession:
         return {"session_id": "session-1", "state_version": 0, "actions": []}
 
     def resign(self):
-        return {"session_id": "session-1", "is_terminal": True, "status": "completed", "returns": {}, "termination_reason": "resignation"}
+        return {
+            "session_id": "session-1",
+            "is_terminal": True,
+            "status": "completed",
+            "returns": {},
+            "termination_reason": "resignation",
+        }
 
     def get_result(self):
-        return {"session_id": "session-1", "is_terminal": True, "status": "completed", "returns": {}, "termination_reason": None}
+        return {
+            "session_id": "session-1",
+            "is_terminal": True,
+            "status": "completed",
+            "returns": {},
+            "termination_reason": None,
+        }
 
 
 @pytest.fixture
@@ -73,7 +85,9 @@ def forbid_rest_gamesession(monkeypatch):
 
 def test_run_game_never_constructs_rest_gamesession(forbid_rest_gamesession):
     game = FakeMCPGameSession()
-    context = DecisionContext(session_id="session-1", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1")
+    context = DecisionContext(
+        session_id="session-1", tournament_id=None, game_type="tic_tac_toe", agent_id="agent-1"
+    )
 
     result = run_game(game, context, lambda s, c: RESIGN, sleep=lambda s: None)
 
@@ -81,7 +95,9 @@ def test_run_game_never_constructs_rest_gamesession(forbid_rest_gamesession):
 
 
 def test_run_match_never_constructs_rest_gamesession(forbid_rest_gamesession):
-    match = Match.from_dict({"session_id": "session-1", "status": "in_progress", "game_type": "tic_tac_toe"})
+    match = Match.from_dict(
+        {"session_id": "session-1", "status": "in_progress", "game_type": "tic_tac_toe"}
+    )
     match.game = lambda: FakeMCPGameSession()
 
     result = run_match(match, "agent-1", lambda s, c: RESIGN, sleep=lambda s: None)

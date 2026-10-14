@@ -71,23 +71,41 @@ def test_tournament_mode_authenticates_and_runs_the_tournament_supervisor(env, m
     assert official.authenticated and official.closed
     assert calls == [(official, "agent.agent:create_agent", frozenset({TOURNAMENT}))]
     out = capsys.readouterr().out.splitlines()
-    assert out[:3] == ["Connected with your Official Agent Key.",
-                       "Playing your tournament games only. Add --match to also play your test matches.",
-                       "Waiting for your next game... (Press Ctrl+C to stop.)"]
+    assert out[:3] == [
+        "Connected with your Official Agent Key.",
+        "Playing your tournament games only. Add --match to also play your test matches.",
+        "Waiting for your next game... (Press Ctrl+C to stop.)",
+    ]
 
 
 @pytest.mark.parametrize(
     "argv, kinds, playing",
     [
-        (["--tournament"], {TOURNAMENT},
-         "Playing your tournament games only. Add --match to also play your test matches."),
-        (["--match"], {TESTING},
-         "Playing your test matches only. Add --tournament to also play your tournament games."),
-        (["--tournament", "--match"], {TESTING, TOURNAMENT}, "Playing your test matches and tournament games."),
-        (["--match", "--tournament"], {TESTING, TOURNAMENT}, "Playing your test matches and tournament games."),
+        (
+            ["--tournament"],
+            {TOURNAMENT},
+            "Playing your tournament games only. Add --match to also play your test matches.",
+        ),
+        (
+            ["--match"],
+            {TESTING},
+            "Playing your test matches only. Add --tournament to also play your tournament games.",
+        ),
+        (
+            ["--tournament", "--match"],
+            {TESTING, TOURNAMENT},
+            "Playing your test matches and tournament games.",
+        ),
+        (
+            ["--match", "--tournament"],
+            {TESTING, TOURNAMENT},
+            "Playing your test matches and tournament games.",
+        ),
     ],
 )
-def test_each_flag_chooses_which_kinds_of_game_one_process_plays(env, monkeypatch, capsys, argv, kinds, playing):
+def test_each_flag_chooses_which_kinds_of_game_one_process_plays(
+    env, monkeypatch, capsys, argv, kinds, playing
+):
     official, calls = _install(monkeypatch)
 
     assert agent_main.main(argv) == 0
@@ -101,28 +119,48 @@ def _run_with_the_real_supervisor(monkeypatch, argv):
     over one test match and one tournament game without a ``context``."""
     from functools import partial
 
+    from test_supervisor import FakeProcessFactory
+
     from altruagent import supervisor
     from altruagent.models import OfficialAssignment
-    from test_supervisor import FakeProcessFactory
 
     rows = [
         OfficialAssignment(match_id="m-1", seat_id="s-1", game_type="werewolf", context="testing"),
-        OfficialAssignment(match_id="m-2", seat_id="s-2", game_type="werewolf",
-                           tournament_name="Fall Cup", round_label="Swiss round 1 of 3"),
+        OfficialAssignment(
+            match_id="m-2",
+            seat_id="s-2",
+            game_type="werewolf",
+            tournament_name="Fall Cup",
+            round_label="Swiss round 1 of 3",
+        ),
     ]
     factory = FakeProcessFactory()
-    monkeypatch.setattr(agent_main, "OfficialAgentClient", lambda *a, **k: FakeOfficial(assignments_result=rows))
-    monkeypatch.setattr(agent_main, "run_tournament_forever", partial(
-        supervisor.run_tournament_forever, sleep=lambda s: None, process_factory=factory, max_iterations=3))
+    monkeypatch.setattr(
+        agent_main, "OfficialAgentClient", lambda *a, **k: FakeOfficial(assignments_result=rows)
+    )
+    monkeypatch.setattr(
+        agent_main,
+        "run_tournament_forever",
+        partial(
+            supervisor.run_tournament_forever,
+            sleep=lambda s: None,
+            process_factory=factory,
+            max_iterations=3,
+        ),
+    )
     assert agent_main.main(argv) == 0
     return [p.args[0].seat_id for p in factory.processes]
 
 
-TOURNAMENT_WARNING = ("You have a tournament game waiting (Fall Cup, Swiss round 1 of 3): run with --tournament "
-                      "to play it — it counts as a loss if your agent doesn't connect within the window.")
+TOURNAMENT_WARNING = (
+    "You have a tournament game waiting (Fall Cup, Swiss round 1 of 3): run with --tournament "
+    "to play it — it counts as a loss if your agent doesn't connect within the window."
+)
 
 
-def test_match_mode_end_to_end_plays_the_test_match_and_warns_once_about_the_tournament_game(env, monkeypatch, capsys):
+def test_match_mode_end_to_end_plays_the_test_match_and_warns_once_about_the_tournament_game(
+    env, monkeypatch, capsys
+):
     assert _run_with_the_real_supervisor(monkeypatch, ["--match"]) == ["s-1"]
 
     out = capsys.readouterr().out.splitlines()
@@ -130,7 +168,9 @@ def test_match_mode_end_to_end_plays_the_test_match_and_warns_once_about_the_tou
     assert "Test match waiting: run with --match to play it" not in out
 
 
-def test_tournament_mode_end_to_end_plays_the_tournament_game_and_notes_the_test_match(env, monkeypatch, capsys):
+def test_tournament_mode_end_to_end_plays_the_tournament_game_and_notes_the_test_match(
+    env, monkeypatch, capsys
+):
     assert _run_with_the_real_supervisor(monkeypatch, ["--tournament"]) == ["s-2"]
 
     out = capsys.readouterr().out.splitlines()
@@ -185,14 +225,19 @@ def test_tournament_mode_configuration_error(env, monkeypatch, capsys):
 
 
 def test_tournament_mode_authentication_failure(env, monkeypatch, capsys):
-    official, calls = _install(monkeypatch, FakeOfficial(auth_error=OfficialAgentError("The Official Agent Key was not accepted.")))
+    official, calls = _install(
+        monkeypatch,
+        FakeOfficial(auth_error=OfficialAgentError("The Official Agent Key was not accepted.")),
+    )
 
     assert agent_main.main(["--tournament"]) == 1
     assert "Could not connect with your Official Agent Key" in capsys.readouterr().out
     assert calls == [] and official.closed
 
 
-def test_tournament_mode_with_updated_rules_keeps_running_and_says_what_to_do(env, monkeypatch, capsys):
+def test_tournament_mode_with_updated_rules_keeps_running_and_says_what_to_do(
+    env, monkeypatch, capsys
+):
     # Was: "Could not connect with your Official Agent Key: ..." and exit 1.
     # The key is fine; the runtime waits for the contestant to accept the
     # updated Official Rules, then plays.
@@ -200,23 +245,31 @@ def test_tournament_mode_with_updated_rules_keeps_running_and_says_what_to_do(en
 
     from altruagent import supervisor
 
-    rules = OfficialAgentError("Accept the updated Official Rules on your dashboard (x).", status_code=403,
-                               error_code="registration_incomplete")
+    rules = OfficialAgentError(
+        "Accept the updated Official Rules on your dashboard (x).",
+        status_code=403,
+        error_code="registration_incomplete",
+    )
     rules.next_step = "rules"
     official = FakeOfficial(auth_error=rules, assignments_result=rules)
     monkeypatch.setattr(agent_main, "OfficialAgentClient", lambda *a, **k: official)
-    monkeypatch.setattr(agent_main, "run_tournament_forever", partial(
-        supervisor.run_tournament_forever, sleep=lambda s: None, max_iterations=3))
+    monkeypatch.setattr(
+        agent_main,
+        "run_tournament_forever",
+        partial(supervisor.run_tournament_forever, sleep=lambda s: None, max_iterations=3),
+    )
 
     assert agent_main.main(["--tournament"]) == 0
 
     out = capsys.readouterr().out.splitlines()
     assert "Could not connect with your Official Agent Key" not in "\n".join(out)
     assert "Connected with your Official Agent Key." not in out
-    assert out[:3] == ["Playing your tournament games only. Add --match to also play your test matches.",
-                       "Waiting for your next game... (Press Ctrl+C to stop.)",
-                       "Accept the updated Official Rules on your dashboard "
-                       "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying."]
+    assert out[:3] == [
+        "Playing your tournament games only. Add --match to also play your test matches.",
+        "Waiting for your next game... (Press Ctrl+C to stop.)",
+        "Accept the updated Official Rules on your dashboard "
+        "(https://platform.altruagent-game.com/tournament/dashboard); I'll keep trying.",
+    ]
 
 
 def test_tournament_mode_ctrl_c(env, monkeypatch, capsys):
@@ -253,13 +306,18 @@ def test_tournament_mode_ignores_a_stray_platform_api_key(env, monkeypatch):
     assert agent_main.main(["--tournament"]) == 0 and len(calls) == 1
 
 
-@pytest.mark.parametrize("argv", [["--tournament", "--claim", "seatclaim_x"],
-                                  ["--tournament", "--check-tournament"],
-                                  ["--check-tournament", "--claim", "seatclaim_x"],
-                                  ["--match", "--check-tournament"],
-                                  ["--check-tournament", "--match"],
-                                  ["--match", "--claim", "seatclaim_x"],
-                                  ["--tournament", "--match", "--check-tournament"]])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--tournament", "--claim", "seatclaim_x"],
+        ["--tournament", "--check-tournament"],
+        ["--check-tournament", "--claim", "seatclaim_x"],
+        ["--match", "--check-tournament"],
+        ["--check-tournament", "--match"],
+        ["--match", "--claim", "seatclaim_x"],
+        ["--tournament", "--match", "--check-tournament"],
+    ],
+)
 def test_modes_are_mutually_exclusive(env, monkeypatch, argv):
     _, calls = _install(monkeypatch)
 
@@ -304,12 +362,28 @@ def test_check_tournament_never_acquires_or_renews_a_seat_lease(env, monkeypatch
         paths.append(request.url.path)
         if request.url.path == "/tournament/agent/authenticate":
             return httpx.Response(200, json={"access_token": "sess-1", "expires_at": "x"})
-        return httpx.Response(200, json={"assignments": [
-            {"match_id": "m", "seat_id": "s", "game_type": "werewolf", "seat_position": 3, "seat_count": 7,
-             "match_status": "in_progress", "seat_status": "running"}]})
+        return httpx.Response(
+            200,
+            json={
+                "assignments": [
+                    {
+                        "match_id": "m",
+                        "seat_id": "s",
+                        "game_type": "werewolf",
+                        "seat_position": 3,
+                        "seat_count": 7,
+                        "match_status": "in_progress",
+                        "seat_status": "running",
+                    }
+                ]
+            },
+        )
 
-    monkeypatch.setattr(agent_main, "OfficialAgentClient",
-                        lambda: OfficialAgentClient(load_env_file=False, transport=httpx.MockTransport(backend)))
+    monkeypatch.setattr(
+        agent_main,
+        "OfficialAgentClient",
+        lambda: OfficialAgentClient(load_env_file=False, transport=httpx.MockTransport(backend)),
+    )
     monkeypatch.setattr(agent_main, "_mark", lambda symbol, fallback: symbol)
 
     assert agent_main.main(["--check-tournament"]) == 0
@@ -318,7 +392,12 @@ def test_check_tournament_never_acquires_or_renews_a_seat_lease(env, monkeypatch
 
 
 def test_check_tournament_uses_agent_override(env, monkeypatch, capsys):
-    code, out = _check(monkeypatch, capsys, FakeOfficial(), argv=("--check-tournament", "--agent", "examples.smoke_agent"))
+    code, out = _check(
+        monkeypatch,
+        capsys,
+        FakeOfficial(),
+        argv=("--check-tournament", "--agent", "examples.smoke_agent"),
+    )
 
     assert code == 0 and "✓ Agent ready (examples.smoke_agent)" in out
 
@@ -326,20 +405,50 @@ def test_check_tournament_uses_agent_override(env, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "official, last_line",
     [
-        (FakeOfficial(auth_error=PlatformError("Could not reach", status_code=None)), "✗ Control plane not reachable"),
-        (FakeOfficial(auth_error=OfficialAgentError("not accepted", status_code=401)), "✗ Official Agent Key rejected"),
-        (FakeOfficial(auth_error=OfficialAgentError("boom", status_code=500)), "✗ Official agent authentication failed"),
-        (FakeOfficial(auth_error=OfficialAgentError(
-            "temporary", status_code=401, error_code="invalid_official_agent_key",
-            detail="Failed to mint agent session: Request rate limit reached")),
-         "✗ Official agent authentication failed"),
-        (FakeOfficial(auth_error=OfficialAgentError("slow down", status_code=429, error_code="rate_limited")),
-         "✗ Official agent authentication failed"),
-        (FakeOfficial(assignments_result=AuthenticationError("session rejected")), "✗ Tournament agent session was not accepted"),
-        (FakeOfficial(assignments_result=PlatformError("down", status_code=500)), "✗ Assignment discovery failed"),
+        (
+            FakeOfficial(auth_error=PlatformError("Could not reach", status_code=None)),
+            "✗ Control plane not reachable",
+        ),
+        (
+            FakeOfficial(auth_error=OfficialAgentError("not accepted", status_code=401)),
+            "✗ Official Agent Key rejected",
+        ),
+        (
+            FakeOfficial(auth_error=OfficialAgentError("boom", status_code=500)),
+            "✗ Official agent authentication failed",
+        ),
+        (
+            FakeOfficial(
+                auth_error=OfficialAgentError(
+                    "temporary",
+                    status_code=401,
+                    error_code="invalid_official_agent_key",
+                    detail="Failed to mint agent session: Request rate limit reached",
+                )
+            ),
+            "✗ Official agent authentication failed",
+        ),
+        (
+            FakeOfficial(
+                auth_error=OfficialAgentError(
+                    "slow down", status_code=429, error_code="rate_limited"
+                )
+            ),
+            "✗ Official agent authentication failed",
+        ),
+        (
+            FakeOfficial(assignments_result=AuthenticationError("session rejected")),
+            "✗ Tournament agent session was not accepted",
+        ),
+        (
+            FakeOfficial(assignments_result=PlatformError("down", status_code=500)),
+            "✗ Assignment discovery failed",
+        ),
     ],
 )
-def test_check_tournament_failures_are_nonzero_and_specific(env, monkeypatch, capsys, official, last_line):
+def test_check_tournament_failures_are_nonzero_and_specific(
+    env, monkeypatch, capsys, official, last_line
+):
     code, out = _check(monkeypatch, capsys, official)
 
     assert code == 1
@@ -348,10 +457,16 @@ def test_check_tournament_failures_are_nonzero_and_specific(env, monkeypatch, ca
 
 
 def test_check_tournament_agent_factory_failure(env, monkeypatch, capsys):
-    code, out = _check(monkeypatch, capsys, FakeOfficial(),
-                       argv=("--check-tournament", "--agent", "examples.basic_agent:missing"))
+    code, out = _check(
+        monkeypatch,
+        capsys,
+        FakeOfficial(),
+        argv=("--check-tournament", "--agent", "examples.basic_agent:missing"),
+    )
 
-    assert code == 1 and out.splitlines()[-1].startswith("✗ Agent examples.basic_agent:missing could not be created")
+    assert code == 1 and out.splitlines()[-1].startswith(
+        "✗ Agent examples.basic_agent:missing could not be created"
+    )
 
 
 def test_check_tournament_configuration_failure(env, monkeypatch, capsys):

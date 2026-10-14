@@ -13,6 +13,7 @@ runtime starts a fresh process — and a fresh ``create_agent()`` — per match.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 try:
@@ -23,6 +24,7 @@ except ImportError:
     pass
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState
+from common import trace
 
 # Which package owns which game. Set ENABLE_RED_ALERT env to route red_alert
 # to redalert.agent; otherwise falls back to common.fallback to satisfy starter test contract.
@@ -36,7 +38,11 @@ _FALLBACK_MODULE = "common.fallback"
 def _create_delegate(game_type: str | None):
     """Import and call the game's factory. Imported lazily so one broken
     package can't take down dispatch for the other games."""
-    if game_type == "red_alert" and os.environ.get("ENABLE_RED_ALERT", "").lower() in ("1", "true", "yes"):
+    if game_type == "red_alert" and os.environ.get("ENABLE_RED_ALERT", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         module_name = "redalert.agent"
     else:
         module_name = _FACTORY_MODULES.get(game_type or "", _FALLBACK_MODULE)
@@ -64,14 +70,34 @@ class QuicksilverAgent:
     def _delegate_for(self, context: DecisionContext):
         if self._delegate is None:
             self.game_type = getattr(context, "game_type", None)
+            trace.set_game(self.game_type)
             self._delegate = _create_delegate(self.game_type)
         return self._delegate
 
+    def _traced(self) -> bool:
+        # Red Alert writes its own, richer trace.
+        return self.game_type != "red_alert"
+
     def choose_action(self, state: GameState, context: DecisionContext):
-        return _call(self._delegate_for(context), "choose_action", state, context)
+        delegate = self._delegate_for(context)
+        started = time.time()
+        action = _call(delegate, "choose_action", state, context)
+        if self._traced():
+            trace.write(
+                "decision",
+                session=getattr(context, "session_id", None),
+                agent=getattr(context, "agent_id", None),
+                seat=getattr(context, "seat_position", None),
+                action=action,
+                latency_s=round(time.time() - started, 3),
+                **trace.state_fields(state),
+            )
+        return action
 
     def on_action_result(self, result: dict, context: DecisionContext) -> None:
         """Forward the runner's per-move answer to a delegate that wants it (Red Alert)."""
+        if self._traced():
+            trace.write("result", result=result)
         hook = getattr(self._delegate, "on_action_result", None)
         if callable(hook):
             hook(result, context)
@@ -80,7 +106,10 @@ class QuicksilverAgent:
         delegate = self._delegate_for(context)
         method = getattr(delegate, "choose_message", None)
         if callable(method):
-            return method(state, context)
+            said = method(state, context)
+            if self._traced():
+                trace.write("message", said=said, **trace.state_fields(state))
+            return said
         # The runtime's own default for an agent that doesn't talk: vote the
         # discussion window closed. Replicated here because this object *does*
         # define choose_message, so the runtime will always call it and the

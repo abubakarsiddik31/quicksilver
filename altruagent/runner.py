@@ -113,8 +113,9 @@ import re
 import sysconfig
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Callable, NamedTuple, Protocol, Union
+from typing import Any, NamedTuple, Protocol, Union
 
 from .errors import AltruAgentError, is_transient_error
 from .mcp_game import MCPGameSession
@@ -288,7 +289,9 @@ class WithReasoning:
         self.reasoning_summary = text or None
 
     def __repr__(self) -> str:
-        return f"WithReasoning(action={self.action!r}, reasoning_summary={self.reasoning_summary!r})"
+        return (
+            f"WithReasoning(action={self.action!r}, reasoning_summary={self.reasoning_summary!r})"
+        )
 
 
 Decision = Union[int, str, LegalAction, dict, _Resign, _Wait, WithReasoning]
@@ -398,7 +401,9 @@ def _cant_play_realtime_message(context: DecisionContext) -> str:
     list is empty: plainly that it can't play the game, and where to look,
     instead of a raw ``IndexError``."""
     game_type = context.game_type or ""
-    name = _GAME_NAMES.get(game_type) or (f"this real-time game ({game_type})" if game_type else "this real-time game")
+    name = _GAME_NAMES.get(game_type) or (
+        f"this real-time game ({game_type})" if game_type else "this real-time game"
+    )
     return (
         f"Your agent can't play {name}: it picks its move from state.legal_actions, which is empty "
         "in a real-time game (a move there is a batch of orders your agent writes itself). The "
@@ -422,7 +427,11 @@ def _is_stdlib_file(filename: str) -> bool:
     if filename.startswith("<frozen "):
         return True
     path = os.path.realpath(filename)
-    return path.startswith(_STDLIB_DIRS) and "site-packages" not in path and "dist-packages" not in path
+    return (
+        path.startswith(_STDLIB_DIRS)
+        and "site-packages" not in path
+        and "dist-packages" not in path
+    )
 
 
 def _failing_expression(frame: traceback.FrameSummary) -> str:
@@ -430,7 +439,12 @@ def _failing_expression(frame: traceback.FrameSummary) -> str:
     raised (Python 3.11+ records its columns, as UTF-8 byte offsets), or the
     whole line when the columns aren't known; "" without the source."""
     line = linecache.getline(frame.filename, frame.lineno or 0)
-    if line and frame.end_lineno == frame.lineno and frame.colno is not None and frame.end_colno is not None:
+    if (
+        line
+        and frame.end_lineno == frame.lineno
+        and frame.colno is not None
+        and frame.end_colno is not None
+    ):
         return line.encode("utf-8")[frame.colno : frame.end_colno].decode("utf-8", "replace")
     return line
 
@@ -516,7 +530,9 @@ def _with_game_config(game: Any, context: DecisionContext) -> DecisionContext:
     return replace(context, game_config=config) if isinstance(config, dict) else context
 
 
-def _validate_decision(decision: Any, legal_actions: list[LegalAction]) -> Union[_Resign, _Wait, _PlayAction]:
+def _validate_decision(
+    decision: Any, legal_actions: list[LegalAction]
+) -> _Resign | _Wait | _PlayAction:
     if isinstance(decision, WithReasoning):
         inner = decision.action
         if inner is RESIGN or inner is WAIT or isinstance(inner, WithReasoning):
@@ -600,7 +616,9 @@ def _last_message_seq(state: GameState, extra: dict | None = None) -> int | None
         messages = list(extra.get("new_messages") or [])
         if isinstance(extra.get("message"), dict):
             messages.append(extra["message"])
-        seqs += [m["seq"] for m in messages if isinstance(m, dict) and isinstance(m.get("seq"), int)]
+        seqs += [
+            m["seq"] for m in messages if isinstance(m, dict) and isinstance(m.get("seq"), int)
+        ]
     return max(seqs) if seqs else None
 
 
@@ -668,8 +686,13 @@ class _TransientRetry:
     retried like a temporary failure.
     """
 
-    def __init__(self, *, sleep: Callable[[float], None], now: Callable[[], float],
-                 log: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        *,
+        sleep: Callable[[float], None],
+        now: Callable[[], float],
+        log: Callable[[str], None],
+    ) -> None:
         self._sleep = sleep
         self._now = now
         self._log = log
@@ -691,14 +714,18 @@ class _TransientRetry:
             self._since = current
             if _is_tool_failure(exc):
                 self._back = "The game server answers again; the game goes on."
-                self._log(f"The game server couldn't answer ({exc}); retrying for up to "
-                          f"{TRANSIENT_GIVE_UP_SECONDS:.0f}s.")
+                self._log(
+                    f"The game server couldn't answer ({exc}); retrying for up to "
+                    f"{TRANSIENT_GIVE_UP_SECONDS:.0f}s."
+                )
             else:
                 self._back = "Connection back; the game goes on."
-                self._log(f"Connection problem ({exc}); retrying for up to {TRANSIENT_GIVE_UP_SECONDS:.0f}s.")
+                self._log(
+                    f"Connection problem ({exc}); retrying for up to {TRANSIENT_GIVE_UP_SECONDS:.0f}s."
+                )
         elif current - self._since >= TRANSIENT_GIVE_UP_SECONDS:
             raise exc
-        delay = min(TRANSIENT_RETRY_MAX_SECONDS, TRANSIENT_RETRY_FIRST_SECONDS * 2 ** self._streak)
+        delay = min(TRANSIENT_RETRY_MAX_SECONDS, TRANSIENT_RETRY_FIRST_SECONDS * 2**self._streak)
         self._streak += 1
         self._sleep(delay * random.uniform(0.5, 1.0))
 
@@ -928,9 +955,7 @@ def run_game(
                 # The server omits legal_actions when a move landed between
                 # its state and legal-actions reads; fetch them directly.
                 legal = read(game.get_legal_actions, settles=False)  # the move that follows settles
-                state.legal_actions = [
-                    LegalAction.from_dict(a) for a in legal.get("actions") or []
-                ]
+                state.legal_actions = [LegalAction.from_dict(a) for a in legal.get("actions") or []]
                 state.state_version = int(legal.get("state_version", state.state_version))
 
             decision = _validate_decision(

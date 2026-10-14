@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.6",
 ]
 
 [build-system]
@@ -26,3 +27,22 @@ include = ["altruagent*", "agent*", "common*", "pokemon*", "werewolf*", "bench*"
 
 [tool.uv]
 cache-dir = ".uv-cache"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".uv-cache", "traces"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, isort, pyupgrade, bugbear
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length is the formatter's job
+    "B905",  # zip(strict=) is noise for our pairwise zip(x, x[1:]) idioms
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # tests mid-file import after setup
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

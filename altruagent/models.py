@@ -44,7 +44,7 @@ class Agent:
         return self.status == "claimed"
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Agent":
+    def from_dict(cls, data: dict) -> Agent:
         raw = {k: v for k, v in data.items() if k not in _SENSITIVE_FIELDS}
         return cls(
             id=data.get("id", ""),
@@ -79,7 +79,7 @@ class NextAction:
     required_fields: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "NextAction":
+    def from_dict(cls, data: dict) -> NextAction:
         return cls(
             action=data.get("action") or data.get("tool", ""),
             hint=data.get("hint", ""),
@@ -119,7 +119,7 @@ class Message:
     move_index: int
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Message":
+    def from_dict(cls, data: dict) -> Message:
         return cls(
             # Platform messages carry `seq` (the MCP envelope); `index` is the
             # legacy alias. Prefer `seq`, which wait_for_update compares on.
@@ -157,7 +157,7 @@ class LegalAction:
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "LegalAction":
+    def from_dict(cls, data: dict) -> LegalAction:
         return cls(
             action_id=str(data.get("action_id", "")),
             label=data.get("label"),
@@ -219,23 +219,17 @@ class GameState:
     final_result: dict | None = field(default=None, repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "GameState":
+    def from_dict(cls, data: dict) -> GameState:
         """Parse a REST ``GameStateResponse`` (``GameSession`` — the debug
         path). Synthesizes ``LegalAction`` entries from the separate
         ``legal_actions``/``legal_actions_str`` int/str lists REST returns.
         """
         current_player_data = data.get("current_player")
         current_player = (
-            PlayerRef(name=current_player_data["name"])
-            if current_player_data
-            else None
+            PlayerRef(name=current_player_data["name"]) if current_player_data else None
         )
-        next_actions = [
-            NextAction.from_dict(a) for a in (data.get("next_actions") or [])
-        ]
-        new_messages = [
-            Message.from_dict(m) for m in (data.get("new_messages") or [])
-        ]
+        next_actions = [NextAction.from_dict(a) for a in (data.get("next_actions") or [])]
+        new_messages = [Message.from_dict(m) for m in (data.get("new_messages") or [])]
         raw_actions = list(data.get("legal_actions") or [])
         raw_labels = list(data.get("legal_actions_str") or [])
         legal_actions = [
@@ -276,7 +270,7 @@ class GameState:
         *,
         legal_actions: dict | None = None,
         result: dict | None = None,
-    ) -> "GameState":
+    ) -> GameState:
         """Parse an MCP ``get_game_state``/``wait_for_update`` result (the
         production path — see ``MCPGameSession``). ``legal_actions`` defaults
         to the one the server embeds in the state when this agent can act;
@@ -304,9 +298,7 @@ class GameState:
             legal_actions = state["legal_actions"]
         actions = list((legal_actions or {}).get("actions") or [])
         parsed_actions = [LegalAction.from_dict(a) for a in actions]
-        new_messages = [
-            Message.from_dict(m) for m in (state.get("new_messages") or [])
-        ]
+        new_messages = [Message.from_dict(m) for m in (state.get("new_messages") or [])]
         result = result or {}
         # `result` (get_result/resign) is authoritative for is_terminal/status
         # when present — it's fetched precisely because `state` (an earlier
@@ -332,9 +324,7 @@ class GameState:
             termination_reason=result.get("termination_reason"),
             messaging_enabled=bool(state.get("messaging_enabled", False)),
             phase=state.get("phase", "moving"),
-            next_actions=[
-                NextAction.from_dict(a) for a in (state.get("next_actions") or [])
-            ],
+            next_actions=[NextAction.from_dict(a) for a in (state.get("next_actions") or [])],
             new_messages=new_messages,
             terminated_messaging=list(state.get("terminated_messaging") or []),
             messaging_mode=state.get("messaging_mode", "per_move"),
@@ -371,7 +361,7 @@ class Match:
     _client: Any = field(default=None, repr=False, compare=False, init=False)
 
     @classmethod
-    def from_dict(cls, data: dict, *, client: "AltruAgentClient | None" = None) -> "Match":
+    def from_dict(cls, data: dict, *, client: AltruAgentClient | None = None) -> Match:
         match = cls(
             session_id=data.get("session_id", ""),
             status=data.get("status", "unknown"),
@@ -434,7 +424,7 @@ class Match:
         self.game_server_url = game_server_url
         return game_server_url
 
-    def game(self) -> "MCPGameSession":
+    def game(self) -> MCPGameSession:
         """Return a playable ``MCPGameSession`` for this match — the
         production gameplay path ``run_match``/``python -m agent`` use.
         Resolves ``game_server_url`` lazily (see ``_resolve_game_server_url``)
@@ -445,7 +435,7 @@ class Match:
         game_server_url = self._resolve_game_server_url()
         return self._client.mcp_game(session_id=self.session_id, game_server_url=game_server_url)
 
-    def rest_game(self) -> "GameSession":
+    def rest_game(self) -> GameSession:
         """Return a playable REST ``GameSession`` for this match — the
         lower-level debug/manual-testing path (see ``scripts/check_game.py``),
         not used by ``run_match``/``python -m agent``. Same lazy resolution
@@ -476,7 +466,7 @@ class AgentSessions:
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict, *, client: "AltruAgentClient | None" = None) -> "AgentSessions":
+    def from_dict(cls, data: dict, *, client: AltruAgentClient | None = None) -> AgentSessions:
         def _matches(key: str) -> list[Match]:
             return [Match.from_dict(m, client=client) for m in (data.get(key) or [])]
 
@@ -505,7 +495,7 @@ class TournamentViewer:
     next_actions: list[NextAction] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TournamentViewer":
+    def from_dict(cls, data: dict) -> TournamentViewer:
         return cls(
             agent_id=data.get("agent_id"),
             is_tournament_participant=bool(data.get("is_tournament_participant", False)),
@@ -547,7 +537,7 @@ class Tournament:
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict, *, viewer: dict | None = None) -> "Tournament":
+    def from_dict(cls, data: dict, *, viewer: dict | None = None) -> Tournament:
         return cls(
             tournament_id=data.get("tournament_id", ""),
             status=data.get("status", "unknown"),
@@ -588,7 +578,7 @@ class SeatGrant:
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SeatGrant":
+    def from_dict(cls, data: dict) -> SeatGrant:
         return cls(
             access_token=data.get("access_token") or "",
             agent_id=data.get("agent_id") or "",
@@ -660,7 +650,7 @@ class OfficialAssignment:
     connect_deadline_at: str | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "OfficialAssignment":
+    def from_dict(cls, data: dict) -> OfficialAssignment:
         return cls(
             match_id=str(data.get("match_id") or ""),
             seat_id=str(data.get("seat_id") or ""),
