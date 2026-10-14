@@ -40,8 +40,8 @@ def test_the_home_line_scales_with_the_threat_and_the_doctrine():
     assert (
         decide(army_n=16, doctrine="pressure").garrison == 4
     )  # even attacking, nobody-home is how rushes won
-    assert decide(army_n=16, raided_recently=True).garrison == 8
-    assert decide(army_n=16, doctrine="defend").garrison == 8
+    assert decide(army_n=16, raided_recently=True).garrison == 4  # threat does not split the army further
+    assert decide(army_n=16, doctrine="defend").garrison == 4
     assert decide(army_n=6, game_s=200).garrison == 4  # never under four once the opening is over
     assert decide(army_n=3).garrison == 1  # a tiny army cannot split
     assert decide(army_n=4, game_s=100).garrison == 1
@@ -218,3 +218,14 @@ def test_the_army_saves_for_a_tank_instead_of_feeding_the_money_to_more_infantry
     act = agent.choose_action(state, CTX)
     out = [] if act is WAIT else orders_of(act)
     assert not any(o["cmd"] == "train" and o["item"] in ("e1", "e3") for o in out)
+
+
+def test_the_battle_simulator_runs_a_match_end_to_end():
+    """Keeps ``tests.ra_battle`` (the war simulator behind scripts/ra_battle.py) from rotting."""
+    from redalert.agent import RedAlertAgent
+    from redalert.strategist import Strategist
+    from redalert.tactics import TacticalAdvisor
+    from tests.ra_battle import play
+
+    out = play(lambda c: RedAlertAgent(Strategist(None), TacticalAdvisor(None), clock=c), 150.0)
+    assert out["outcome"] == "timeout" and out["army_left"] >= 3 and out["timeline"]

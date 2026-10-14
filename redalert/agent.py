@@ -184,6 +184,7 @@ EXPECTED = {  # documented observation fields we rely on; a missing one is repor
     ),
     "legal_actions": ("deploy", "combat_units", "idle_units", "harvesters", "enemy_base"),
 }
+FLOAT_CASH = 1200.0  # cash this high is idle production: add a war factory / barracks
 ATTACK_VALUE = 5000  # an army worth this much (credits) attacks even if the plan or Jev says hold
 FORWARD_RADIUS = (
     36  # idle fighters farther than this from home are already in the field: keep them fighting
@@ -305,6 +306,7 @@ class RedAlertAgent:
         self._scouts: set[int] = set()
         self._scouts_sent = 0
         self._scout_at = -1e9
+        self._threat_until = -1e9
         self.general = roles.General()
         self._directive = self.general.decide(
             game_s=0, army_n=0, doctrine=doctrines.DEFAULT, enemy_types={}
@@ -989,6 +991,17 @@ class RedAlertAgent:
                     unit_wants.insert(
                         0, (tank_item, owned.get(tank_item, 0) + queued.get(tank_item, 0) + 1)
                     )
+                else:
+                    # No vehicle can be built yet: whatever unlocks the best one (the depot for heavy tanks) goes
+                    # to the front of the structures, or the army meets its first push without a single tank.
+                    for i in (*directive.units, *FILLER_VEHICLES):
+                        missing = [
+                            n for n in self._needs.get(i) or []
+                            if not owned.get(n) and not queued.get(n) and n in avail
+                        ]
+                        if self.queue_of(i) == "vehicle" and i not in NON_COMBAT and missing:
+                            wants.insert(0, (missing[0], 1))
+                            break
         unit_wants.sort(
             key=lambda w: w[0] != "harv"
         )  # harvesters stay first under any ranking (stable)
@@ -1043,6 +1056,13 @@ class RedAlertAgent:
         if ore_full and "silo" in avail and owned.get("silo", 0) + queued.get("silo", 0) < 3:
             wants.append(("silo", owned.get("silo", 0) + queued.get("silo", 0) + 1))
 
+        # Money piling up means production is the bottleneck: a second war factory, then a second barracks.
+        if owned.get("weap") and cash >= FLOAT_CASH:
+            for prod in ("weap", self._resolve("barracks", faction, avail, owned)):
+                if prod in avail and owned.get(prod, 0) + queued.get(prod, 0) < 2:
+                    wants.append((prod, owned.get(prod, 0) + queued.get(prod, 0) + 1))
+                    break
+
         # Army floor (computed above): once the war factory is up, an army that lags the clock gets the money first.
         essential: set[str] = {"powr", "weap", *BARRACKS}
         if (
@@ -1086,6 +1106,7 @@ class RedAlertAgent:
             floor_exempt: bool = False,
             budget_exempt: bool = False,
             reserve: float = 0.0,
+            is_unit: bool = False,
         ) -> bool:
             """The spending governor, as one ledger. Every queue draws credits per second while it works, and at
             cash 0 the engine draws from ALL queues at once - so committing more than the income supports starves
@@ -1097,11 +1118,16 @@ class RedAlertAgent:
             """
             if not floor_exempt and not emergency and cash < CASH_FLOOR:
                 return False
-            if budget_exempt or burn_struct + burn_units + rate + reserve <= budget:
+            # An army behind the clock outranks the structures in flight: in the battle sim, a refinery, a depot
+            # and a tower together claimed the whole ledger and 1,700 cash sat idle for 60 s while the enemy
+            # massed fourteen units. Units then see only the other units' draw and commitments.
+            first = is_unit and army_short and army_first
+            burn = burn_units if first else burn_struct + burn_units
+            if budget_exempt or burn + rate + reserve <= budget:
                 return True
             return (
                 cash - (0.0 if floor_exempt else CASH_FLOOR)
-                >= committed_s + committed_u + spent_s + spent_u + cost + reserve
+                >= (0.0 if first else committed_s) + committed_u + spent_s + spent_u + cost + reserve
             )
 
         # Structures: priority order; one per queue, pre-queued, within the spending budget.
@@ -1188,7 +1214,7 @@ class RedAlertAgent:
             if (
                 item != "harv"
             ):  # harvesters are the economy: never held back, though they count toward the burn
-                if not affordable(cost, rate):
+                if not affordable(cost, rate, is_unit=True):
                     if item == tank_item and not saving_for:
                         saving_for = float(
                             cost
@@ -1257,7 +1283,7 @@ class RedAlertAgent:
                 if (
                     spendable < unit_cost + margin
                     or not self._fresh(f"train:{item}", TTL["train"])
-                    or not affordable(unit_cost * n, self.rate_of(item) * n)
+                    or not affordable(unit_cost * n, self.rate_of(item) * n, is_unit=True)
                 ):
                     continue
                 orders.append({"cmd": "train", "item": item, "count": n})
@@ -1557,13 +1583,15 @@ class RedAlertAgent:
         """The General's directive for this decision; traced whenever the picture changes."""
         if enemies or enemy_buildings:
             self._enemy_seen_at = mono
+        if near_n:
+            self._threat_until = mono + 30.0  # one sighting at the gate keeps the line strong for 30 s, no flicker
         d = self.general.decide(
             game_s=game_s,
             army_n=army_n,
             doctrine=self.doctrines.name,
             enemy_types=self.intel.enemy_types(),
             enemy_towers=self.intel.enemy_tower_count(),
-            raided_recently=mono - self._attack_at <= 90.0,
+            raided_recently=mono - self._attack_at <= 90.0 or mono < self._threat_until,
             enemy_near=near_n,
             blind_for_s=mono - self._enemy_seen_at,
         )
@@ -1713,7 +1741,13 @@ class RedAlertAgent:
                 rules=rule,
                 numbers=numbers,
             )
-        return doctrines.apply(self.doctrines.doctrine, plan)
+        applied = doctrines.apply(self.doctrines.doctrine, plan)
+        if self.doctrines.name == "mass_army" and applied.army_mode == "attack" \
+                and not doctrines.attack_allowed("pressure", numbers):
+            # "Build up, attack when a wave is ready" meant a wave of twelve into an enemy nobody had scouted,
+            # behind towers nobody had counted. Until the army is clearly ahead of what is known, build at home.
+            applied = dataclasses.replace(applied, army_mode="hold")
+        return applied
 
     def _battle_summary(
         self,

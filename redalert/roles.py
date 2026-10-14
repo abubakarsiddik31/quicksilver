@@ -112,12 +112,12 @@ class General:
         stance = profile(enemy_types, enemy_towers)
         table = {"armor": VS_ARMOR, "infantry": VS_INFANTRY, "air": VS_AIR}.get(stance, VS_MIXED)
 
-        # Home line: a quarter of the army by default; half when the enemy is here, was here, or the doctrine
-        # is a defensive one; a thin line even when attacking, because the enemy that keeps its army together
+        # Home line: a quarter of the army whatever the threat (the reflex recalls everyone when the enemy is
+        # actually in the base; in the battle sim a standing half-army line lost fights the whole army wins); a thin line even when attacking, because the enemy that keeps its army together
         # walks in as the strike force walks out.
         threatened = raided_recently or enemy_near > 0
         if doctrine in self.HOMEBOUND or threatened:
-            share = 0.5
+            share = 0.25
         elif doctrine in self.ATTACKING:
             share = 0.15
         else:

@@ -27,7 +27,7 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
-from pokemon import dex, observation, threat
+from pokemon import dex, lookahead, observation, threat
 from pokemon.damage import Card, parse_card
 
 # -- scoring weights --------------------------------------------------------
@@ -47,6 +47,7 @@ DOUBLE_FIELD_MOVE_PENALTY = 40.0
 DOUBLE_PROTECT_PENALTY = 15.0
 SWITCH_RISK_WEIGHT = 35.0
 SWITCH_LOW_BONUS = 15.0
+REPLACEMENT_WEIGHT = 0.5     # forced replacements: matchup percent -> score
 DOMINANT_LEAD = 25.0  # Jev is skipped past this lead, unless we are threatened
 THREATENED_RISK = 0.5
 LOW_HP_FRACTION = 0.35
@@ -232,6 +233,18 @@ class Ctx:
     danger: threat.Danger = threat.Danger()
     memory: threat.Memory | None = None
     pool_cards: Any = None
+
+    def replacement_value(self, species: Any) -> float:
+        """How good a reserve is as a forced replacement: the damage it deals the
+        foes on the board minus the damage they deal it (percent of max HP, averaged)."""
+        card = card_for_summary({"species": species}, self.pool_cards, "ours") if isinstance(species, str) else None
+        foes = [f for f in self.theirs if f.usable]
+        if card is None or not card.stats or not foes:
+            return 0.0
+        mine = Active(card=card, summary={"species": species})
+        offence = sum(threat.best_hit(mine, f, self.field, defender_is_ours=False) for f in foes)
+        defence = sum(threat.best_hit(f, mine, self.field, defender_is_ours=True) for f in foes)
+        return REPLACEMENT_WEIGHT * (offence - defence) / len(foes)
 
     def switch_resilience(self, species: Any) -> float:
         """How well a benched Pokémon takes the foes' best hits, in ``[0, 1]``
@@ -526,6 +539,9 @@ def _option_score(
             return DUPLICATE_SWITCH_PENALTY  # the server rejects two slots taking one
         if ctx is None:
             return SWITCH_WHEN_LOW if (attacker is not None and attacker.is_low) else SWITCH_BASE
+        if attacker is None or not attacker.usable:
+            # A forced replacement: nothing is being given up, so pick the best matchup.
+            return SWITCH_BASE + ctx.replacement_value(species)
         # Worth switching when we are about to be hit hard and the Pokémon coming
         # in takes that hit well; pointless to rotate a healthy Pokémon in no danger.
         urgency = SWITCH_RISK_WEIGHT * ctx.danger.risk_of(slot_index)
@@ -535,6 +551,20 @@ def _option_score(
     if kind == "pass":
         return PASS_PENALTY
     return 0.0
+
+
+def _clean_options(slot: dict) -> list[dict]:
+    raw = slot.get("options")
+    return [clean_option(o) for o in raw if isinstance(o, dict)] if isinstance(raw, list) else []
+
+
+def clean_option(option: dict) -> dict:
+    """An option with ``targets`` guaranteed to be a list of ints (junk becomes ``[]``)."""
+    if "targets" not in option:
+        return option
+    raw = option["targets"]
+    targets = [t for t in raw if isinstance(t, int) and not isinstance(t, bool)] if isinstance(raw, list) else []
+    return {**option, "targets": targets}
 
 
 def _partner(ours: list[Active], slot_index: int) -> Active | None:
@@ -593,7 +623,7 @@ def choose_turn(
         number = slot.get("slot", position)
         if number not in (0, 1):
             continue
-        options = [o for o in (slot.get("options") or []) if isinstance(o, dict)]
+        options = _clean_options(slot)
         if not options:
             continue
         picks[number] = _pick(
@@ -726,7 +756,7 @@ def generate_candidate_plans(
             continue
         num = slot.get("slot", pos)
         if num in (0, 1):
-            opts = [o for o in (slot.get("options") or []) if isinstance(o, dict)]
+            opts = _clean_options(slot)
             if opts:
                 slot_options[num] = opts
 
@@ -764,6 +794,7 @@ def generate_candidate_plans(
         o.get("type") == "pass" for o in s1_opts
     )
     joint_candidates: list[tuple[dict, float, str]] = []
+    look = lookahead.Lookahead(ctx)
 
     for o0 in s0_opts:
         choice0 = resolve(o0, 0)
@@ -787,8 +818,16 @@ def generate_candidate_plans(
                 continue
 
             sc1 = option_score(o1, 1, taken_switches)
-            joint_score, note = _joint_adjust(choice0, choice1, ctx)
-            joint_score += sc0 + sc1
+            plan_for_eval = {"type": "doubles_turn", "slot_0": choice0, "slot_1": choice1}
+            swing = look.value(plan_for_eval)
+            if swing is not None:
+                # The resolved turn prices every attack, Protect and switch; only
+                # what it cannot see (status, setup, field moves) keeps its heuristic.
+                joint_score, note = _joint_adjust(choice0, choice1, ctx, combat=False)
+                joint_score += swing + _residual(o0, sc0, not ours[0].usable) + _residual(o1, sc1, len(ours) > 1 and not ours[1].usable)
+            else:
+                joint_score, note = _joint_adjust(choice0, choice1, ctx)
+                joint_score += sc0 + sc1
 
             explanation = (
                 (f"{note}; " if note else "")
@@ -847,7 +886,24 @@ def _uses_switch(plan: dict) -> bool:
     )
 
 
-def _joint_adjust(choice0: dict, choice1: dict, ctx: Ctx) -> tuple[float, str]:
+def _residual(option: dict, heuristic: float, forced: bool = False) -> float:
+    """The part of an option's heuristic score the turn lookahead does not price.
+
+    Attacks, Protect and switches are resolved by the lookahead; passes keep their
+    penalty; status, setup and field moves keep their heuristic value.
+    """
+    kind = option.get("type")
+    if kind == "pass":
+        return heuristic
+    if kind == "switch":
+        return heuristic if forced else 0.0  # a forced replacement is not on the battlefield to resolve
+    move = option.get("move_id")
+    if dex.is_damaging(move) or dex.to_id(move) in _PROTECT_LIKE:
+        return 0.02 * heuristic  # tie-break only
+    return heuristic
+
+
+def _joint_adjust(choice0: dict, choice1: dict, ctx: Ctx, *, combat: bool = True) -> tuple[float, str]:
     """Score changes that only exist for the pair: focus fire, overkill, and
     two slots doing the same one-shot thing."""
     ours, theirs = ctx.ours, ctx.theirs
@@ -863,7 +919,7 @@ def _joint_adjust(choice0: dict, choice1: dict, ctx: Ctx) -> tuple[float, str]:
             return -DOUBLE_PROTECT_PENALTY * (1.0 - worst), "Both slots Protect"
 
         t0, t1 = choice0.get("target"), choice1.get("target")
-        if isinstance(t0, int) and t0 > 0 and t0 == t1:
+        if combat and isinstance(t0, int) and t0 > 0 and t0 == t1:
             idx = target_index(t0)
             if idx is not None and idx < len(theirs) and theirs[idx].usable and theirs[idx].card:
                 foe = theirs[idx]
@@ -913,8 +969,9 @@ def _resolve_single_choice(
             elif legal_targets == [0] and is_spread(option.get("move_id")):
                 # Spread moves like Dazzling Gleam / Bleakwind Storm targeting all foes
                 choice["target"] = 0
-            elif target is not None:
-                # If a positive target was chosen but not directly in targets (e.g. edge case), pick legal
+            elif legal_targets != [0]:
+                # Nothing to aim at scored (an immune target, say), but the server still
+                # refuses a move without its target: send the first one it offered.
                 choice["target"] = legal_targets[0]
         elif target is not None:
             choice["target"] = target

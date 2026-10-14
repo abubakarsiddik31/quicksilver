@@ -37,6 +37,8 @@ from typing import Any
 from pokemon import dex
 from pokemon.damage import damage, parse_card
 
+# The commit whose battle scorer is the "before" in A/B runs (override with --old-ref).
+OLD_REF = "1dceda0"
 POOL = json.loads((Path(__file__).resolve().parent.parent / "pokemon" / "pool.json").read_text())[
     "cards"
 ]
@@ -100,6 +102,33 @@ class Battle:
         mon = self.mons[side][index] if index is not None else None
         return mon if mon is not None and mon.alive else None
 
+    def _shown(self, side: int, slot: int) -> Mon | None:
+        """The Pokémon in a slot, fainted or not (the server keeps showing it)."""
+        return self.mons[side][self.active[side][slot]]
+
+    def bench(self, side: int) -> list[str]:
+        return [
+            m.name for i, m in enumerate(self.mons[side]) if m.alive and i not in self.active[side]
+        ]
+
+    def forced_slots(self, side: int) -> list[int]:
+        """Slots whose Pokémon fainted and that have a reserve to send in."""
+        if not self.bench(side):
+            return []
+        return [s for s in (0, 1) if self._slot(side, s) is None]
+
+    def template_forced(self, side: int) -> dict:
+        forced, bench = self.forced_slots(side), self.bench(side)
+        slots = []
+        for s in (0, 1):
+            options: list[dict] = (
+                [{"type": "switch", "species": b} for b in bench] if s in forced else []
+            )
+            if s not in forced or len(bench) < len(forced):
+                options.append({"type": "pass"})
+            slots.append({"slot": s, "options": options})
+        return {"type": "doubles_turn", "slots": slots}
+
     def _summary(self, mon: Mon | None, *, own: bool) -> dict | None:
         if mon is None:
             return None
@@ -133,14 +162,17 @@ class Battle:
             "opponent_side_conditions": {"tailwind": self.tailwind[foe]}
             if self.tailwind[foe]
             else {},
-            "active_pokemon": [self._summary(self._slot(side, s), own=True) for s in (0, 1)],
+            "active_pokemon": [self._summary(self._shown(side, s), own=True) for s in (0, 1)],
             "opponent_active_pokemon": [
-                self._summary(self._slot(foe, s), own=False) for s in (0, 1)
+                self._summary(self._shown(foe, s), own=False) for s in (0, 1)
             ],
+            "force_switch": [s in self.forced_slots(side) for s in (0, 1)],
             "clock": {"decision_seconds_left": 50, "bank_seconds_left": 400},
         }
 
     def template(self, side: int) -> dict:
+        if self.forced_slots(side):
+            return self.template_forced(side)
         foe = 1 - side
         foes = [s + 1 for s in (0, 1) if self._slot(foe, s)]
         bench = [
@@ -166,10 +198,11 @@ class Battle:
 
     # -- validation -----------------------------------------------------------
 
-    def validate(self, side: int, action: Any) -> list[dict | None]:
+    def validate(self, side: int, action: Any, template: dict | None = None) -> list[dict | None]:
         if not isinstance(action, dict) or action.get("type") != "doubles_turn":
             raise SimError(f"not a doubles_turn: {action!r}")
-        template, chosen, switched = self.template(side), [], set()
+        template = template or self.template(side)
+        chosen, switched = [], set()
         for s in (0, 1):
             pick = action.get(f"slot_{s}")
             options = template["slots"][s]["options"]
@@ -205,7 +238,9 @@ class Battle:
                 chosen.append({**pick, "target": target})
             else:
                 raise SimError(f"junk slot {pick!r}")
-        if chosen == [None, None]:
+        if chosen == [None, None] and any(
+            o["type"] != "pass" for slot in template["slots"] for o in slot["options"]
+        ):
             raise SimError("both slots passed")
         return chosen
 
@@ -269,7 +304,6 @@ class Battle:
                     mon.turns_out += 1
             self.tailwind[side] = max(0, self.tailwind[side] - 1)
         self.trick_room = max(0, self.trick_room - 1)
-        self._replace()
         self.turn += 1
 
     def _switch(self, side: int, slot: int, species: str) -> None:
@@ -279,18 +313,10 @@ class Battle:
         self.active[side][slot] = index
         self.mons[side][index].turns_out = 0
 
-    def _replace(self) -> None:
-        for side in (0, 1):
-            for slot in (0, 1):
-                if self._slot(side, slot) is None:
-                    bench = [
-                        i
-                        for i, m in enumerate(self.mons[side])
-                        if m.alive and i not in self.active[side]
-                    ]
-                    if bench:
-                        self.active[side][slot] = bench[0]
-                        self.mons[side][bench[0]].turns_out = 0
+    def apply_replacements(self, side: int, chosen: list[dict | None]) -> None:
+        for slot, pick in enumerate(chosen):
+            if pick is not None and pick["type"] == "switch":
+                self._switch(side, slot, pick["species"])
 
     def _targets(self, side: int, slot: int, act: dict) -> list[tuple[int, Mon]]:
         kind = (dex.move(act["move_id"]) or {}).get("target")
@@ -392,7 +418,13 @@ def first_legal() -> Policy:
                     **({"target": move["targets"][0]} if move["targets"] != [0] else {}),
                 }
             else:
-                action[f"slot_{slot['slot']}"] = {"type": "pass"}
+                taken = {a.get("species") for a in action.values() if isinstance(a, dict)}
+                switch = next(
+                    (o for o in opts if o["type"] == "switch" and o["species"] not in taken), None
+                )
+                action[f"slot_{slot['slot']}"] = (
+                    {"type": "switch", "species": switch["species"]} if switch else {"type": "pass"}
+                )
         return action
 
     return policy
@@ -408,6 +440,7 @@ def random_legal(seed: int) -> Policy:
             opts = [
                 o for o in slot["options"] if o["type"] != "switch" or o["species"] not in switched
             ]
+            opts = [o for o in opts if o["type"] != "pass"] or opts  # pass only when forced
             o = rng.choice(opts)
             if o["type"] == "move":
                 action[f"slot_{slot['slot']}"] = {
@@ -441,12 +474,12 @@ def quicksilver(cards_ours: list[dict], cards_theirs: list[dict]) -> Policy:
 
 
 def old_quicksilver(cards_ours: list[dict], cards_theirs: list[dict]) -> Policy | None:
-    """The pre-fix greedy scorer, loaded from git (``HEAD:pokemon/battle.py``)."""
+    """The pre-fix greedy scorer, loaded from git (``OLD_REF:pokemon/battle.py``)."""
     global _OLD
     if "_OLD" not in globals():
         try:
             source = subprocess.run(
-                ["git", "show", "HEAD:pokemon/battle.py"],
+                ["git", "show", f"{OLD_REF}:pokemon/battle.py"],
                 capture_output=True,
                 text=True,
                 cwd=Path(__file__).resolve().parent.parent,
@@ -469,6 +502,7 @@ def old_quicksilver(cards_ours: list[dict], cards_theirs: list[dict]) -> Policy 
     def policy(obs: dict, template: dict) -> dict:
         return _OLD.choose_turn(template, obs, pool_cards=cards) or first_legal()(obs, template)
 
+    policy.lenient = True
     return policy
 
 
@@ -480,6 +514,9 @@ def draw_teams(rng: random.Random) -> list[list[dict]]:
     return [picked[:4], picked[4:]]
 
 
+REFUSALS = {"lenient": 0}
+
+
 def play(make_a, make_b, teams: list[list[dict]], rng: random.Random, max_turns: int = 40) -> int:
     """0 if A wins, 1 if B wins, -1 on a draw. ``make_*(ours, theirs)`` build a fresh policy."""
     battle = Battle(teams, rng)
@@ -488,8 +525,29 @@ def play(make_a, make_b, teams: list[list[dict]], rng: random.Random, max_turns:
         actions = []
         for side in (0, 1):
             obs, template = battle.observation(side), battle.template(side)
-            actions.append(battle.validate(side, policies[side](obs, template)))
+            action = policies[side](obs, template)
+            try:
+                actions.append(battle.validate(side, action))
+            except SimError:
+                if not getattr(policies[side], "lenient", False):
+                    raise
+                # The platform refuses and the runner re-asks; the old scorer has no
+                # second answer, so it plays the baseline for that turn.
+                REFUSALS["lenient"] += 1
+                actions.append(battle.validate(side, first_legal()(obs, template)))
         battle.step(actions)
+        for side in (0, 1):  # a Pokémon fainted: the server asks which reserve comes in
+            if battle.forced_slots(side):
+                obs, template = battle.observation(side), battle.template(side)
+                action = policies[side](obs, template)
+                try:
+                    chosen = battle.validate(side, action, template)
+                except SimError:
+                    if not getattr(policies[side], "lenient", False):
+                        raise
+                    REFUSALS["lenient"] += 1
+                    chosen = battle.validate(side, first_legal()(obs, template), template)
+                battle.apply_replacements(side, chosen)
     result = battle.winner()
     if result is None:  # out of turns: more total HP left wins
         left = [sum(m.hp / m.max_hp for m in team) for team in battle.mons]
@@ -515,27 +573,81 @@ def versus(make_a, make_b, matches: int, seed: int) -> tuple[int, int, int]:
     return a, b, d
 
 
+# -- Team Preview --------------------------------------------------------------
+
+
+def bring_quicksilver(six: list[dict], theirs: list[dict]) -> list[dict]:
+    """The agent's own Team Preview choice: four of six, leads first."""
+    from pokemon import lineup
+
+    def summary(card: dict) -> dict:
+        return {"species": card["species"], "types": list(dex.types_of(card["species"])),
+                "base_stats": dex.base_stats(card["species"])}
+
+    ids = [c["species"] for c in six]
+    obs = {"phase": "team_preview", "your_roster": [summary(c) for c in six],
+           "opponent_roster": [summary(c) for c in theirs]}
+    cards = [{**c, "_owner": "ours"} for c in six] + [{**c, "_owner": "theirs"} for c in theirs]
+    action = lineup.choose_lineup({"type": "select_lineup", "roster": ids}, obs, pool_cards=cards)
+    by_name = {c["species"]: c for c in six}
+    bring = [by_name[n] for n in action["bring"]]
+    leads = [by_name[n] for n in action["leads"]]
+    return leads + [c for c in bring if c not in leads]
+
+
+def bring_random(rng: random.Random):
+    def choose(six: list[dict], theirs: list[dict]) -> list[dict]:
+        return rng.sample(six, 4)
+    return choose
+
+
+def preview_versus(bring_a, bring_b, matches: int, seed: int) -> tuple[int, int, int]:
+    """Both sides fight with the agent's battle policy, so only the Team Preview
+    choice (which four, which two lead) differs. A is played from both seats."""
+    a = b = d = 0
+    for i in range(matches):
+        rng = random.Random(seed * 100003 + i)
+        sixes = [rng.sample(POOL, 6)]
+        rest = [c for c in POOL if c not in sixes[0]]
+        sixes.append(rng.sample(rest, 6))
+        for swap in (False, True):
+            mine, theirs = (sixes[1], sixes[0]) if swap else (sixes[0], sixes[1])
+            teams = [bring_a(mine, theirs), bring_b(theirs, mine)]
+            r = play(quicksilver, quicksilver, teams, random.Random(seed * 7919 + i))
+            a, b, d = a + (r == 0), b + (r == 1), d + (r == -1)
+    return a, b, d
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--matches", type=int, default=100, help="team draws; each is played from both seats"
     )
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--old-ref", default=OLD_REF, help="git ref of the scorer to compare against"
+    )
     args = parser.parse_args()
+    globals()["OLD_REF"] = args.old_ref
     rivals = {
         "first-legal-move": lambda o, t: first_legal(),
         "random-legal": lambda o, t: random_legal(args.seed),
-        "previous scorer (git HEAD)": old_quicksilver,
+        "previous scorer (old ref)": old_quicksilver,
     }
     for name, make in rivals.items():
         if name.startswith("previous") and make([], []) is None:
             print(f"{name:28} skipped (HEAD has no older battle.py to load)")
             continue
+        REFUSALS["lenient"] = 0
         a, b, d = versus(quicksilver, make, args.matches, args.seed)
         n = a + b + d
+        extra = f"  [rival's illegal moves: {REFUSALS['lenient']}]" if REFUSALS["lenient"] else ""
         print(
-            f"quicksilver vs {name:28} {a:4}-{b:<4} draws {d:<3} win rate {100 * a / n:5.1f}%  ({n} games)"
+            f"quicksilver vs {name:28} {a:4}-{b:<4} draws {d:<3} win rate {100 * a / n:5.1f}%  ({n} games){extra}"
         )
+    a, b, d = preview_versus(bring_quicksilver, bring_random(random.Random(args.seed)), args.matches, args.seed)
+    n = a + b + d
+    print(f"Team Preview: agent's four vs a random four {a:4}-{b:<4} draws {d:<3} win rate {100 * a / n:5.1f}%  ({n} games)")
     return 0
 
 

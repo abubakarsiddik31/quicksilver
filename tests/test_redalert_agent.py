@@ -1011,15 +1011,15 @@ def test_a_guard_line_holds_the_front_while_the_rest_attacks():
     out = orders_of(agent.choose_action(state, CTX))
     line = [o for o in out if o.get("stance") == "defend"]
     assert (
-        line and len(line[0]["units"]) == 5
-    )  # raided: the General keeps half the army home; the push is the rest
+        line and len(line[0]["units"]) == 2
+    )  # raided: the General keeps a quarter of the army home; the push is the rest
     move = next(
         o for o in out if o["cmd"] == "move" and o["to"] == [27, 27]
     )  # the front toward the enemy
     wave = next(o for o in out if o["cmd"] == "attack_move" and o["to"] == [60, 60])
     assert set(move["units"]) | set(line[0]["units"]) <= set(combat)
     assert (
-        not (set(move["units"]) & set(wave["units"])) and len(wave["units"]) == 5
+        not (set(move["units"]) & set(wave["units"])) and len(wave["units"]) == 8
     )  # the wave is the rest
 
 
@@ -1272,7 +1272,7 @@ def test_the_defence_line_faces_the_raid_not_their_base():
     out = orders_of(agent.choose_action(state, CTX))
     line = [o for o in out if o["cmd"] == "move" and o["to"] == [22, 29]]
     assert (
-        line and len(line[0]["units"]) == 5
+        line and len(line[0]["units"]) == 2
     )  # the defence line turns toward the raiders' centroid
 
 
@@ -1282,7 +1282,10 @@ def test_rally_points_send_reinforcements_to_the_staging_point():
         {"id": 3, "type": "barr", "rally": None},
         {"id": 4, "type": "proc", "rally": None},
     ]
+    # a 6,650-credit army is clearly cleared to attack (a small one builds up at home: see the doctrine gate)
+    tanks = [{"id": 20 + k, "type": "3tnk", "x": 21, "y": 21} for k in range(7)]
     state = make_state(
+        units=tanks,
         buildings=buildings,
         enemy_base=[80, 80],
         attack_now={"cmd": "attack_move", "units": [1], "to": [60, 60]},
@@ -1303,6 +1306,7 @@ def test_rally_points_send_reinforcements_to_the_staging_point():
     # already pointing at the staging point: no repeat order (WAIT is fine - there is nothing else to do)
     clock.t += 6
     state2 = make_state(
+        units=tanks,
         buildings=[
             {"id": 2, "type": "weap", "rally": [28, 28]},
             {"id": 3, "type": "barr", "rally": [28, 28]},

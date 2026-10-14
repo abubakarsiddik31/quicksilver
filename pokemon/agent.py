@@ -23,7 +23,10 @@ spent, not free.
 
 from __future__ import annotations
 
+import traceback
+
 from altruagent import DecisionContext, GameState
+from common import trace
 from common.jev import JevClient
 from pokemon import (
     actions,
@@ -61,6 +64,33 @@ class PokemonAgent:
         self._agent_id: str | None = None
 
     def choose_action(self, state: GameState, context: DecisionContext):
+        """Decide, and never raise: a raised error kills this match's worker, so any
+        failure in the policy is traced and answered from the plain baseline instead."""
+        try:
+            return self._decide(state, context)
+        except Exception as exc:  # noqa: BLE001 - one bad observation must not forfeit a match
+            trace.write("error", where="choose_action", error=repr(exc), traceback=traceback.format_exc())
+            return self._baseline(state)
+
+    def _baseline(self, state: GameState):
+        """The simplest legal answer for whatever was asked."""
+        legal = getattr(state, "legal_actions", None) or []
+        if not legal:
+            return actions.PASS
+        try:
+            first = legal[0]
+            kind = actions.template_type(first)
+            if kind == "select_lineup":
+                roster = actions.roster_of(actions.template_of(first))
+                bring = roster[:4]
+                return {"type": "select_lineup", "bring": bring, "leads": bring[:2]} if len(bring) == 4 else first
+            if kind == "doubles_turn":
+                return self._baseline_turn(actions.template_of(first))
+        except Exception:  # noqa: BLE001
+            pass
+        return legal[0]
+
+    def _decide(self, state: GameState, context: DecisionContext):
         legal = state.legal_actions
         if not legal:
             # The runner only asks on a real decision and the server always
@@ -239,6 +269,10 @@ class PokemonAgent:
             if fallback is not None:
                 return fallback
 
+        return self._baseline_turn(template)
+
+    def _baseline_turn(self, template: dict) -> dict:
+        """First usable move per slot, first switch slot 0 didn't take, else pass."""
         slots = actions.slots_of(template)
         if len(slots) != 2:
             # Not a shape we can fill. Passing is refused by the server, but an
