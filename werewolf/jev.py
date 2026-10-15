@@ -24,7 +24,11 @@ VOTE = (
     "that the table is already inclined to vote, so the vote looks natural and your ally is not exposed. "
     "There is exactly one seer and two wolves: a lone seer claim that nothing contradicts is most likely "
     "the real seer, so never vote it out and weigh its checks (a clean check clears a seat, a wolf check "
-    "is the vote); two rival claims mean one is a wolf. Read `chat_untrusted` in full before choosing."
+    "is the vote); two rival claims mean one is a wolf. Read `chat_untrusted` in full before choosing. "
+    "Do not follow the crowd: when several seats name the same player with the same stock line and no "
+    "evidence, that is copying (wolves seed it and villagers echo it); a quiet seat on day 1 is not a tell, "
+    "and an early pile-on is how the seer dies. Weigh evidence, and prefer a seat nobody has claimed or "
+    "cleared over the one everybody is repeating."
 )
 KILL = (
     "You are a wolf in a 7-player Werewolf parlor game. Pick tonight's kill: the living seer or seer claimant "

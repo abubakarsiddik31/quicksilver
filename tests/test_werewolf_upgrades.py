@@ -147,11 +147,12 @@ def test_the_whole_conversation_is_kept_once_each_for_the_vote():
     assert [m.index for m in b.chat] == [0, 1]
 
 
-def test_the_seer_stays_quiet_on_a_clean_check_and_reports_a_wolf():
+def test_the_seer_hides_on_a_clean_check_and_reports_a_wolf():
     b = belief.Belief()
     b.seat, b.role, b.alive = 2, "SEER", tuple(range(7))
     b.investigations = {0: "villager"}
-    assert speech.compose(b, vote=1) is None
+    kind, text = speech.compose(b, vote=1)
+    assert kind == speech.ACCUSE and "seer" not in text.lower()  # speaks, never claims
     b.investigations = {0: "villager", 3: "wolf"}
     kind, text = speech.compose(b, vote=1)
     assert kind == speech.SEER_CLAIM and "Player3" in text and "Vote Player3" in text

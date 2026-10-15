@@ -62,11 +62,12 @@ def test_the_seer_claims_and_reports_its_findings():
     assert "Vote Player1" in text
 
 
-def test_the_seer_stays_quiet_without_results():
-    """A claim with no findings only paints a target on the seer."""
+def test_the_seer_talks_like_a_villager_without_results():
+    """A claim with no findings paints a target, but total silence is the table's easiest vote."""
     belief = belief_for(observation=SEER_NO_CHECKS, your_position=0)
     assert belief.investigations == {}
-    assert speech.compose(belief) is None
+    kind, _ = speech.compose(belief)
+    assert kind == speech.ACCUSE
 
 
 def test_the_seer_claims_only_once():

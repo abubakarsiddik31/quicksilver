@@ -423,4 +423,7 @@ def test_a_wolf_never_ranks_its_ally_and_silence_breaks_a_blind_tie():
     assert 0 not in [seat for seat, _ in w.ranked_suspects()]
     v = _table()
     v.note_messages([_chat(0, "hello"), _chat(1, "hi")], our_position=4)
+    v.day = 2
     assert v.best_vote() == 2  # first silent seat, not simply Player0
+    v.day = 1
+    assert v.suspicion(2) == v.suspicion(3)  # day 1: speaking order says nothing

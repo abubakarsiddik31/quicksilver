@@ -50,7 +50,9 @@ W_ATTACKED_CLEAN_VILLAGER = 1.5
 W_ACCUSED_BY_LONE_CLAIMANT = 3.0
 W_LONE_CLAIMANT = -1.5
 W_RIVAL_CLAIMANT = 2.0
-W_SILENT = 0.5  # said nothing while the table talked: a small tell, and it breaks day-1 ties off Player0
+W_SILENT = (
+    0.5  # said nothing while the table talked: a small tell, and it breaks day-1 ties off Player0
+)
 # Applied once for anything we know is not a wolf — a published role, our own
 # investigation, or (for the seer) ourselves. It must not be summed per source:
 # an investigated villager is one fact, not two.
@@ -192,7 +194,9 @@ class Belief:
     seer_claims: set[int] = field(default_factory=set)
     accused_by_seer: set[int] = field(default_factory=set)
     injection_seats: set[int] = field(default_factory=set)
-    accusations: dict[int, set[int]] = field(default_factory=dict)  # sender -> seats they called wolves
+    accusations: dict[int, set[int]] = field(
+        default_factory=dict
+    )  # sender -> seats they called wolves
     speakers: set[int] = field(default_factory=set)
     chat: list = field(default_factory=list)  # every message seen so far, once each, oldest first
     _chat_seen: set = field(default_factory=set)
@@ -255,9 +259,8 @@ class Belief:
         for message in window or []:
             sender = getattr(message, "sender", None)
             index = getattr(message, "index", None)
-            if (
-                getattr(message, "type", "chat") != "terminate"
-                and (index is None or index not in self._chat_seen)
+            if getattr(message, "type", "chat") != "terminate" and (
+                index is None or index not in self._chat_seen
             ):
                 # The vote window only carries what is new, so the day's whole conversation is kept here.
                 self.chat.append(message)
@@ -322,7 +325,9 @@ class Belief:
         return {
             seat
             for seat in self.seer_claims
-            if seat not in self.dead_roles and seat != self.seat and (not self.alive or seat in self.alive)
+            if seat not in self.dead_roles
+            and seat != self.seat
+            and (not self.alive or seat in self.alive)
         }
 
     @property
@@ -375,6 +380,7 @@ class Belief:
             seat != self.seat
             and seat not in self.speakers
             and len(self.speakers) >= 2
+            and (self.day or 0) >= 2  # day 1 order is arbitrary: speaking first or last says nothing, and a day-1 pile-on kills the seer
             and seat in self.alive
         ):
             score += W_SILENT

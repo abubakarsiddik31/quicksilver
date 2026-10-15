@@ -98,6 +98,14 @@ class QuicksilverAgent:
         """Forward the runner's per-move answer to a delegate that wants it (Red Alert)."""
         if self._traced():
             trace.write("result", result=result)
+            # A trace otherwise ends at our last move: say plainly that the game finished and how.
+            if isinstance(result, dict) and str(result.get("status")) in ("completed", "finished", "game_over"):
+                inner = result.get("state") if isinstance(result.get("state"), dict) else {}
+                trace.write(
+                    "final",
+                    status=result.get("status"),
+                    **{k: v for k, v in {**inner, **result}.items() if k in ("winner", "outcome", "result", "scores", "reward", "message")},
+                )
         hook = getattr(self._delegate, "on_action_result", None)
         if callable(hook):
             hook(result, context)

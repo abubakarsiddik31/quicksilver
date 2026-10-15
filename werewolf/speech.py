@@ -120,11 +120,16 @@ def compose(
         # results is the strongest information in the game.
         # Claim only with a wolf in hand: a day-1 "Player0 is clean" paints a target on the seer and hands the
         # wolves their night kill (the last game voted its own seer out on exactly that claim).
+        # Silence is no cover either: a seer that says nothing is the table's easiest vote. With no wolf
+        # in hand it talks like a villager (one accusation) and keeps its role hidden.
         if "wolf" not in (getattr(belief, "investigations", None) or {}).values():
+            if ACCUSE in sent:
+                return None
+            kind, text = ACCUSE, accusation_text(belief, vote)
+        elif SEER_CLAIM in sent:
             return None
-        if SEER_CLAIM in sent:
-            return None
-        kind, text = SEER_CLAIM, seer_claim_text(belief, vote)
+        else:
+            kind, text = SEER_CLAIM, seer_claim_text(belief, vote)
     elif role == "WOLF":
         if WOLF_COVER in sent:
             return None
