@@ -163,3 +163,32 @@ def test_what_a_villager_says_is_the_vote_it_was_given():
     b.seat, b.role, b.alive = 4, "VILLAGER", tuple(range(7))
     kind, text = speech.compose(b, vote=5)
     assert kind == speech.ACCUSE and "Vote Player5" in text
+
+
+def test_the_seer_claims_to_save_a_cleared_seat_the_table_is_accusing():
+    b = belief.Belief()
+    b.seat, b.role, b.alive = 4, "SEER", tuple(range(7))
+    b.investigations = {1: "villager"}
+    b.accusations = {5: {1}, 6: {1}}
+    kind, text = speech.compose(b, vote=1)
+    assert kind == speech.SEER_CLAIM and "Player1" in text and "Vote Player1" not in text
+
+
+def test_the_seer_names_nobody_on_day_one_without_evidence():
+    b = belief.Belief()
+    b.seat, b.role, b.alive, b.day = 4, "SEER", tuple(range(7)), 1
+    b.investigations = {0: "villager"}
+    kind, text = speech.compose(b, vote=2)
+    assert kind == speech.ACCUSE and "Player2" not in text
+    b.day = 2
+    assert "Player2" in speech.compose(b, vote=2)[1]
+
+
+def test_a_seer_claimants_wolf_call_is_parsed_and_tagged_for_jev():
+    from werewolf import jev
+    b = belief.Belief()
+    b.seat, b.role, b.alive = 4, "VILLAGER", tuple(range(7))
+    b.note_messages([type("M", (), {"sender": 0, "index": 0, "type": "chat", "content": "I am the Seer. I checked Player1 last night and they are definitely a werewolf. Put your votes on Player1 today."})()], our_position=4)
+    assert b.accusations == {0: {1}}
+    assert "named a wolf by seer claimant Player0" in jev._seat_facts(b, 1)
+    assert b.suspicion(1) > b.suspicion(0)

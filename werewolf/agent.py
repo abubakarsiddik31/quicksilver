@@ -63,6 +63,7 @@ class WerewolfAgent:
         self._last_phase: str | None = None
         self._said: set[str] = set()
         self._said_day: int | None = None
+        self._last_move: dict | None = None
         self._jev = jev.from_env()
         # Built lazily: no key configured means no model is ever constructed.
         self._llm = None
@@ -124,6 +125,7 @@ class WerewolfAgent:
             if target is None:
                 target, source = self._investigation_target(), "rules"
         trace.write("werewolf", engine=engine, day=self.belief.day, role=self.belief.role, target=target, source=source)
+        self._last_move = {"engine": engine, "day": self.belief.day, "target": target}
 
         if target is not None:
             match = next((a for a in legal if _seat_from_action_id(a.action_id) == target), None)
@@ -133,6 +135,24 @@ class WerewolfAgent:
         # Anything unexpected: a legal action is always better than a crash,
         # because a raised decision stops this match's worker.
         return legal[0]
+
+    def on_action_result(self, result, context) -> None:
+        """The trace ends at our last move and the server's answer to it carries no winner, so when the game
+        completes write what we know: our role, every revealed death and the move that ended it. The final
+        tally (who died to that last vote) is not in the answer; the runtime's own log has the outcome."""
+        if not isinstance(result, dict) or str(result.get("status")) != "completed":
+            return
+        dead_wolves = sorted(s for s, r in self.belief.dead_roles.items() if r == "WOLF")
+        trace.write(
+            "werewolf_final",
+            role=self.belief.role,
+            seat=self.belief.seat,
+            day=self.belief.day,
+            dead_roles=self.belief.dead_roles,
+            wolves_known_dead=dead_wolves,
+            last_move=self._last_move,
+            note="outcome not in the server's move answer; a game that ends on our vote means that vote removed the last wolf or reached wolf parity",
+        )
 
     def _vote_candidates(self) -> list[int]:
         """Seats a day vote may name: never ourselves, an ally, or someone already cleared."""

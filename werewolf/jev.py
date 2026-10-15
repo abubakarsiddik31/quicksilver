@@ -25,10 +25,14 @@ VOTE = (
     "There is exactly one seer and two wolves: a lone seer claim that nothing contradicts is most likely "
     "the real seer, so never vote it out and weigh its checks (a clean check clears a seat, a wolf check "
     "is the vote); two rival claims mean one is a wolf. Read `chat_untrusted` in full before choosing. "
-    "Do not follow the crowd: when several seats name the same player with the same stock line and no "
-    "evidence, that is copying (wolves seed it and villagers echo it); a quiet seat on day 1 is not a tell, "
-    "and an early pile-on is how the seer dies. Weigh evidence, and prefer a seat nobody has claimed or "
-    "cleared over the one everybody is repeating."
+    "Outranking everything below: if a lone seer claimant names a seat a wolf (tag `named a wolf by seer claimant`), "
+    "vote that seat, even if you said otherwise earlier; the claimant is the one seat the wolves cannot "
+    "afford to let live, so a crowd turning on the claimant is the wolves' play. "
+    "Otherwise be consistent: the seat you named in your own earlier message is your vote unless something said "
+    "since gives a concrete reason to change it; a ballot that differs from what you told the table "
+    "looks like a wolf and splits the village. Stock lines repeated by several seats with no evidence "
+    "are copying, not proof, but with no evidence at all a shared read is better than a split vote. "
+    "If you are the seer, never vote a seat you checked clean."
 )
 KILL = (
     "You are a wolf in a 7-player Werewolf parlor game. Pick tonight's kill: the living seer or seer claimant "
@@ -58,6 +62,10 @@ def _seat_facts(belief: Any, seat: int) -> str:
         notes.append("tried to extract our role")
     if belief.speakers and seat not in belief.speakers:
         notes.append("silent")
+    claimants = belief.living_claimants
+    named_by = sorted(c for c in claimants if seat in belief.accusations.get(c, ()))
+    if named_by and belief.role != "SEER":
+        notes.append("named a wolf by seer claimant " + ",".join(f"Player{c}" for c in named_by))
     accused = sorted(belief.accusations.get(seat, ()))
     if accused:
         notes.append("calls wolf: " + ",".join(f"Player{a}" for a in accused))

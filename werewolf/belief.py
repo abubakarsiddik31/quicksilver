@@ -64,6 +64,9 @@ KNOWN_WOLF_SCORE = 100.0
 _ROLE = re.compile(r"Your role:\s*([A-Za-z]+)")
 _ALLY = re.compile(r"Your fellow wolves?:\s*(.+)")
 _INVESTIGATION = re.compile(r"(Player\d+)\s+is\s+(wolf|villager)", re.IGNORECASE)
+_WOLFISH = re.compile(r"\b(?:were)?wolf\b|\bwolves\b", re.IGNORECASE)
+_NEGATED = re.compile(r"\b(?:not|isn'?t|clean|innocent|villager|if|maybe|might)\b|n't", re.IGNORECASE)
+_SENTENCE = re.compile(r"[^.!?\n]+")
 _SEAT_LABEL = re.compile(r"Player(\d+)", re.IGNORECASE)
 _GAME_OVER = re.compile(r"Game over\s*[—\-]\s*(\w+)\s+win", re.IGNORECASE)
 _SEER_CLAIM = re.compile(r"\b(i\s*am|i'?m|im)\s+(the\s+)?seer\b", re.IGNORECASE)
@@ -115,6 +118,17 @@ def investigations_from_text(text: str) -> dict[int, str]:
         int(_SEAT_LABEL.search(seat).group(1)): verdict.lower()
         for seat, verdict in _INVESTIGATION.findall(text or "")
     }
+
+
+def wolf_calls(text: str) -> set[int]:
+    """Seats a message calls a wolf, however it is worded: "Player1 is a werewolf", "I checked Player1 ... they
+    came up as a wolf", "Player1 is definitely a wolf". One seat and one wolf word in a sentence, no negation."""
+    found: set[int] = set()
+    for sentence in _SENTENCE.findall(text or ""):
+        seats = {int(n) for n in _SEAT_LABEL.findall(sentence)}
+        if len(seats) == 1 and _WOLFISH.search(sentence) and not _NEGATED.search(sentence):
+            found |= seats
+    return found
 
 
 def game_over_winner(text: str) -> str | None:
@@ -275,9 +289,8 @@ class Belief:
             if isinstance(content, str):
                 if _SEER_CLAIM.search(content):
                     self.seer_claims.add(sender)
-                for t_str, verdict in _INVESTIGATION.findall(content):
-                    t_num = label_to_seat(t_str)
-                    if t_num is not None and verdict.lower() == "wolf" and t_num != sender:
+                for t_num in wolf_calls(content):
+                    if t_num != sender:
                         self.accusations.setdefault(sender, set()).add(t_num)
 
         for flagged in msg.flag_messages(window, our_position=seat):

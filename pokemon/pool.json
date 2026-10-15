@@ -481,6 +481,26 @@
       "species": "Iron Valiant"
     },
     {
+      "ability": "Supreme Overlord",
+      "card_id": "vgc-kingambit",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spe": 4
+      },
+      "item": "Black Glasses",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Sucker Punch",
+        "Iron Head",
+        "Kowtow Cleave",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Kingambit"
+    },
+    {
       "ability": "Prankster",
       "card_id": "vgc-klefki",
       "evs": {
@@ -923,6 +943,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 46,
+  "count": 47,
   "expected_size": 18
 }
