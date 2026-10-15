@@ -231,3 +231,12 @@ def test_the_battle_simulator_runs_a_match_end_to_end():
 
     out = play(lambda c: RedAlertAgent(Strategist(None), TacticalAdvisor(None), clock=c), 150.0)
     assert out["outcome"] == "timeout" and out["army_left"] >= 3 and out["timeline"]
+
+
+def test_the_home_line_grows_with_the_enemy_bodies_seen_but_never_past_half_the_army():
+    quiet = decide(army_n=20, enemy_types={})
+    seen = decide(army_n=20, enemy_types={"e1": 20})
+    assert seen.garrison > quiet.garrison
+    assert seen.garrison == 6  # 0.3 per body seen
+    assert decide(army_n=8, enemy_types={"e1": 40}).garrison == 4  # capped at half the army
+    assert decide(army_n=20, doctrine="all_in", enemy_types={"e1": 40}).garrison <= quiet.garrison

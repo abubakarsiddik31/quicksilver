@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -2448,3 +2449,88 @@ def test_a_model_move_stands_when_the_group_is_outweighed_or_nothing_is_near():
     assert not agent._winning_retreat(order, ours, {"visible_enemies": _foes(2, x=90, y=90)})
     small = {"cmd": "move", "units": [1, 2], "to": [10, 10]}
     assert not agent._winning_retreat(small, ours, {"visible_enemies": _foes(1)})
+
+
+def test_a_defence_outnumbered_in_bodies_fights_at_home_not_in_the_open():
+    combat = list(range(8))
+    units = [{"id": i, "type": "3tnk", "x": 21, "y": 21} for i in combat]  # costly units: worth more than the raiders
+    raiders = [{"id": 50 + k, "type": "e1", "x": 36, "y": 36} for k in range(14)]  # but far fewer bodies
+    state = make_state(
+        units=units, combat=combat, enemy_base=[80, 80], enemies=raiders,
+        attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]},
+    )
+    clock = Clock()
+    agent, _ = advised({}, plan=Plan(buildings=(), units=(), army_mode="attack", wave_min=20), clock=clock)
+    out = orders_of(agent.choose_action(state, CTX))
+    hit = [o for o in out if o["cmd"] == "attack_move" and len(o["units"]) >= 6]
+    assert hit and all(o["to"] == [21, 21] or math.dist(o["to"], [21, 21]) < 3 for o in hit)  # home, not [36,36]
+
+
+def _rebuild_orders(raiders):
+    buildings = [
+        {"id": 1, "type": "fact"},
+        {"id": 2, "type": "powr"},
+        {"id": 3, "type": "barr"},
+        {"id": 4, "type": "proc"},
+    ]
+    units = [{"id": 10 + i, "type": "e1", "x": 21, "y": 21} for i in range(2)]
+    foes = [{"id": 50 + k, "type": "e1", "x": 26, "y": 26} for k in range(raiders)]
+    state = make_state(
+        tick=9000,
+        cash=3000,
+        buildings=buildings,
+        units=units,
+        combat=[10, 11],
+        enemies=foes,
+        avail=("weap", "powr", "barr", "e1", "e3"),
+        enemy_base=[80, 80],
+    )
+    agent, _ = advised({}, plan=Plan(buildings=(("weap", 1),), units=(("e1", 10),)), clock=Clock())
+    return orders_of(agent.choose_action(state, CTX))
+
+
+def test_a_base_under_siege_does_not_rebuild_its_war_factory_before_units():
+    sieged = _rebuild_orders(8)
+    assert not any(o["cmd"] == "build" and o.get("item") == "weap" for o in sieged)
+    quiet = _rebuild_orders(0)
+    assert any(o["cmd"] == "build" and o.get("item") == "weap" for o in quiet)  # same wants, no siege: it builds
+
+
+def test_a_lone_intruder_is_met_at_the_edge_of_tower_cover_not_followed_out():
+    combat = list(range(6))
+    units = [{"id": i, "type": "e1", "x": 21, "y": 21} for i in combat]
+    state = make_state(
+        units=units, combat=combat, enemy_base=[80, 80],
+        enemies=[{"id": 50, "type": "2tnk", "x": 34, "y": 34}],  # 20 cells out: bait
+        attack_now={"cmd": "attack_move", "units": combat, "to": [60, 60]},
+    )
+    clock = Clock()
+    agent, _ = advised({}, plan=Plan(buildings=(), units=(), army_mode="attack", wave_min=20), clock=clock)
+    out = orders_of(agent.choose_action(state, CTX))
+    chase = [o for o in out if o["cmd"] == "attack_move"]
+    assert chase and all(math.dist(o["to"], [20, 20]) <= 13 for o in chase)
+
+
+def test_the_second_refinery_and_tech_wait_for_the_second_harvester():
+    def builds(harvesters):
+        base = [{"id": 1, "type": "powr"}, {"id": 2, "type": "proc"}, {"id": 3, "type": "weap"}]
+        base += [{"id": 10 + i, "type": "harv"} for i in range(harvesters)]
+        state = make_state(tick=2500, avail=["fix", "proc", "harv", "e1"], cash=5000, buildings=base)
+        agent, _ = advised({}, plan=Plan(buildings=(("fix", 1), ("proc", 2)), units=()), clock=Clock())
+        return [o["item"] for o in orders_of(agent.choose_action(state, CTX)) if o["cmd"] == "build"]
+
+    assert "fix" not in builds(1)  # one harvester: income first
+    assert "fix" in builds(2)
+
+
+def test_a_model_attack_move_of_a_slice_far_from_home_is_vetoed_but_the_whole_body_may_go():
+    agent = RedAlertAgent(Strategist(None))
+    ours = [{"id": i, "type": "e1", "x": 30, "y": 30} for i in range(1, 21)]
+    obs = {"base_center": [20, 20]}
+    slice_ = {"cmd": "attack_move", "units": [1, 2, 3, 4, 5], "to": [70, 60]}
+    body = {"cmd": "attack_move", "units": list(range(1, 17)), "to": [70, 60]}
+    near = {"cmd": "attack_move", "units": [1, 2, 3], "to": [30, 30]}
+    assert agent._split_push(slice_, ours, obs)
+    assert not agent._split_push(body, ours, obs)
+    assert not agent._split_push(near, ours, obs)  # near home it is just a defence reposition
+    assert not agent._split_push(slice_, ours[:6], obs)  # a tiny army has no body to keep together

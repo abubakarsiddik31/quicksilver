@@ -195,6 +195,9 @@ defend with; the opponent is another AI that may attack from about 5 minutes wit
 Do the arithmetic every time: (cash + income x seconds) against the total cost of what you want, and put
 cheap, effective defence (towers, rocket soldiers e3 against tanks) in place BEFORE the push you expect.
 Tanks beat infantry; rocket infantry/towers beat tanks; never buy anti-air without seeing aircraft.
+ONE BODY: the army fights as one group. Do not issue attack orders for slices of it into the open (a group of 3-10
+walking out alone is killed by an enemy that kept its force together, which can throw away a large lead); when ahead
+with a clear front, keep producing, regroup at a staging point and move out together, or leave it to the harness.
 COST EFFICIENCY: judge every purchase by the army it costs you. Towers cannot move and only help what walks into
 their range; cheap units can be everywhere, trade in the open and win the time-limit tiebreak. Keep static defence
 to a couple of towers until the army is at its floor, and spend the rest on units, workers and the power they need.

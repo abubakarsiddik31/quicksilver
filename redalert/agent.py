@@ -132,6 +132,7 @@ BUDGET_FACTOR = (
     1.5  # of measured income: queues may run slightly ahead of income, cash cushions the rest
 )
 CASH_MARGIN = 300
+UNIT_FLOOR = 100.0  # units may spend down to this; structures keep the larger floor
 CASH_FLOOR = 300.0  # below this only harvesters and power commit (the income comes first, always)
 BROKE_CANCEL_S = 10.0  # cash pinned at zero this long: cancel the worst non-essential commitment
 PRE_QUEUE_PROGRESS = 0.4  # queue the next structure once the current one is this far along
@@ -153,9 +154,14 @@ EARLY_GUARD = (
 )
 BARRACKS = ("barr", "tent")
 SECOND_BARRACKS_S = 200.0
+SPLIT_PUSH_SHARE = 0.5  # a model attack-move far from home must take at least this share of the strike force
+SPLIT_PUSH_MIN = 5
+SMALL_RAID_LEASH = 12.0  # how far from home a one- or two-unit raid is followed
+ECON_FIRST_UNTIL_S = 360.0
+LEAK_FROM_S = 150.0  # after the opening, a barracks that would idle while a structure is funded trains one cheap unit
 # Army floor: after this many seconds, combat value (credits) must keep pace with the clock or units go first
 # and non-essential structures (2nd refinery, radar, tech) wait.
-ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 20.0
+ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 30.0
 DEFEND_RADIUS = 24  # enemy units this close to the base centre (or 10 to any building) trigger the defence reflex
 DEFEND_EVERY_S = 1.5
 SIEGE_MIN = 4
@@ -1159,7 +1165,8 @@ class RedAlertAgent:
             outright. Below the floor only the economy (harvesters, power) commits; an emergency overrides the
             floor because surviving the next thirty seconds outranks solvency.
             """
-            if not floor_exempt and not emergency and cash < CASH_FLOOR:
+            floor = UNIT_FLOOR if (is_unit and owned.get("weap") and game_s >= LEAK_FROM_S) else CASH_FLOOR  # a tank at 1,100 cash waited for 1,250 while the army died
+            if not floor_exempt and not emergency and cash < floor:
                 return False
             # An army behind the clock outranks the structures in flight: in the battle sim, a refinery, a depot
             # and a tower together claimed the whole ledger and 1,700 cash sat idle for 60 s while the enemy
@@ -1169,7 +1176,7 @@ class RedAlertAgent:
             if budget_exempt or burn + rate + reserve <= budget:
                 return True
             return (
-                cash - (0.0 if floor_exempt else CASH_FLOOR)
+                cash - (0.0 if floor_exempt else floor)
                 >= (0.0 if first else committed_s) + committed_u + spent_s + spent_u + cost + reserve
             )
 
@@ -1205,6 +1212,18 @@ class RedAlertAgent:
                 continue  # a higher-priority want of this queue is waiting out its resend cooldown
             if q == "defense" and not owned.get("weap") and game_s < OPENING_S and not emergency:
                 continue  # towers must not compete with the opening for the war factory's 2,000
+            if (
+                owned.get("weap")
+                and owned.get("harv", 0) < 2
+                and ("harv" in avail or queued.get("harv"))
+                and game_s < ECON_FIRST_UNTIL_S
+                and not emergency
+                and item not in ("powr", "harv", "weap", *BARRACKS)
+                and not (item == "proc" and not owned.get("proc"))
+                and q != "defense"
+            ):
+                continue  # the 2nd harvester is the income: tech (1,200) and a 2nd refinery drew the same credits
+                # in parallel and the lone harvester's 1,100 crawled for 90 s
             if siege and item not in ("powr", *BARRACKS) and q != "defense":
                 continue  # the war factory, depot and radar wait; cheap units from the barracks come first
             if army_short and item not in essential and q != "defense":
@@ -1303,9 +1322,13 @@ class RedAlertAgent:
         waiting = any(
             short(i, c) and i in avail and i in essential and not queued.get(i) for i, c in wants
         )
-        if (
-            not saving_for and not waiting
-        ):  # an unfunded war factory / depot / barracks gets the money first
+        # An unfunded war factory / depot / barracks gets the money first - but that must not idle the barracks:
+        # saving for a 2,000 factory or a 950 tank kept cheap infantry out for ~100 s while cash sat at 1,000.
+        # While something is being saved for, an empty infantry queue still trains one cheap unit at a time.
+        held = bool(saving_for or waiting)
+        # (saving for a tank stays strict: the tank outranks infantry; only a waiting structure leaks to infantry)
+        leak = waiting and not saving_for and bool(owned.get("weap")) and game_s >= LEAK_FROM_S
+        if not held or leak:
             enemy_vehicles = sum(
                 1 for e in enemies if self.queue_of(str(e.get("type")).lower()) == "vehicle"
             )
@@ -1314,6 +1337,8 @@ class RedAlertAgent:
             )
             for q in ("infantry", "vehicle"):
                 if q in used or entries.get(q):
+                    continue
+                if held and q != "infantry":
                     continue
                 guard_left = EARLY_GUARD - sum(owned.get(i, 0) + queued.get(i, 0) for i in INFANTRY)
                 if not owned.get("weap") and guard_left <= 0:
@@ -1330,10 +1355,12 @@ class RedAlertAgent:
                     continue
                 unit_cost = max(1, self.cost_of(item))
                 n = min(3, max(1, int(spendable // unit_cost))) if q == "infantry" else 1
+                if held:
+                    n = 1
                 if not owned.get("weap"):
                     n = min(n, guard_left)
                 # Floating cash (or an army behind the clock) is what this spends; the plan's wants came first.
-                margin = 0 if (army_short or ore_full) else CASH_MARGIN
+                margin = 0 if (army_short or ore_full or held) else CASH_MARGIN
                 if (
                     spendable < unit_cost + margin
                     or not self._fresh(f"train:{item}", TTL["train"])
@@ -1929,6 +1956,16 @@ class RedAlertAgent:
             outnumbered = len(intruders) >= DEFEND_COUNT_RATIO * len(fighters)  # bodies decide a melee, not cost
             if len(intruders) > 2 and (theirs >= DEFEND_MASS_RATIO * mine or outnumbered):
                 target = home
+            elif small:
+                # A lone intruder may be bait: the home line meets it at the edge of tower cover and does not
+                # follow it into whatever is waiting behind (4 riflemen chased one tank 20 cells and met twelve).
+                gap = math.dist(target, home)
+                if gap > SMALL_RAID_LEASH:
+                    k = SMALL_RAID_LEASH / gap
+                    target = (
+                        home[0] + (target[0] - home[0]) * k,
+                        home[1] + (target[1] - home[1]) * k,
+                    )
             self._gathered.clear()  # after the fight, hold mode regroups everyone
             for i in range(0, min(len(fighters), 150), 50):
                 out.append(
@@ -2449,11 +2486,37 @@ class RedAlertAgent:
         for o in clean:
             if not o or (o["cmd"] == "sell" and o.get("building") in core_ids):
                 continue
+            if self._split_push(o, units, obs):
+                trace.write("veto", cmd=o["cmd"], n=len(o["units"]), to=o.get("to"), why="piece of the army sent forward")
+                continue
             if self._winning_retreat(o, units, obs):
                 trace.write("veto", cmd=o["cmd"], n=len(o["units"]), to=o.get("to"), why="retreat while winning")
                 continue
             out.append(o)
         return out
+
+    def _split_push(self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]) -> bool:
+        """A model ``attack_move`` that sends a small slice of the army far from home.
+
+        Groups of 3-10 walking out in turn were killed one by one by an enemy that kept its force together,
+        which threw away a lead of several thousand. The army moves as one body (the executor's waves), a
+        model order may reposition or finish what is in contact, but not feed a slice into the open.
+        """
+        ids = order.get("units")
+        home = _cell(obs.get("base_center"))
+        dest = _cell(order.get("to")) if order.get("to") else None
+        if order.get("cmd") != "attack_move" or not ids or home is None or dest is None:
+            return False
+        if math.dist(dest, home) <= FORWARD_RADIUS:
+            return False
+        fighters = [
+            u["id"]
+            for u in units
+            if isinstance(u.get("id"), int) and str(u.get("type")).lower() not in NON_COMBAT
+        ]
+        held = self._guard | set(self._flankers) | self._scouts
+        strike = [i for i in fighters if i not in held]
+        return len(ids) < SPLIT_PUSH_SHARE * len(strike) and len(strike) >= 2 * SPLIT_PUSH_MIN
 
     def _winning_retreat(self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]) -> bool:
         """A model ``move`` that walks a fighting group away from an enemy it is beating.

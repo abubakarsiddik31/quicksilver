@@ -16,6 +16,7 @@ Pure functions over plain data, so each decision is unit-testable.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -91,6 +92,9 @@ def profile(enemy_types: dict[str, int], enemy_towers: int = 0) -> str:
     return "mixed"
 
 
+HOME_VS_SEEN = 0.3  # home-line soldiers per enemy body seen (a third of what is coming, until the army is half home)
+
+
 class General:
     """Reads the battle and issues the :class:`Directive` every soldier takes its orders from."""
 
@@ -125,6 +129,11 @@ class General:
         garrison = round(army_n * share)
         if game_s >= 150 and army_n >= 6:
             garrison = max(garrison, 4)  # nobody home was how the early rushes killed us
+        # ...and sized to what the enemy has shown: a home line much thinner than the bodies seen coming is a
+        # line that dies first. Not for an all-in, and never more than half of what we have.
+        if doctrine != "all_in" and game_s >= 150:
+            seen = sum(n for n in enemy_types.values() if isinstance(n, int))
+            garrison = max(garrison, min(army_n // 2, math.ceil(HOME_VS_SEEN * seen)))
         garrison = min(garrison, army_n)
 
         # Raids need an army worth splitting and an enemy not already at our door.
