@@ -131,10 +131,10 @@ class General:
         raiders = (
             3
             if (
-                army_n >= 14
-                and game_s >= 300
+                army_n >= 12
+                and game_s >= 240
                 and doctrine not in self.HOMEBOUND
-                and not threatened
+                and enemy_near == 0  # a lone scout's "under attack" must not cancel every flank run
                 and doctrine != "all_in"
             )
             else 0

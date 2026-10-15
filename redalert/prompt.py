@@ -125,7 +125,7 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   two agreeing ones (emergencies skip the wait but not the agreement), and an all_in with no enemy army ever
   seen is refused - no information means assume the enemy is at least as strong as you.
 - BASE DEFENCE REFLEX: enemy units within 24 cells of the base (or 10 of a building) pull every fighter onto them
-  with attack-move, re-aimed every 1.5 s (a raid of 1-2 only pulls those at home). You do not need to order it.
+  with attack-move, re-aimed every 1.5 s (a raid of 1-2 is answered by the home line alone and never recalls the strike force: treat a lone intruder as a probe or a diversion). You do not need to order it.
 - BASELINE DEFENCE: one tower by 200 s and two by 300 s once a war factory exists, even if you do not list any.
 - ANTI-AIR-ONLY units (ftrk, sam, agun) are filtered out of your unit wants until enemy aircraft is seen.
 - SCOUT: at ~70 s ONE cheap fast unit is sent toward the enemy (via the midpoint, then their base); a second is
@@ -193,6 +193,12 @@ HOW TO DECIDE
 - Think about economy (income, harvesters), tech path, army composition against what the enemy actually has
   (visible_enemies, enemy_buildings), base defence, the clock (time.remaining_seconds) and the tiebreak. The
   rules table (costs, prerequisites, queues) is authoritative for this match; the guide is background.
+- The enemy AI wins by positioning: it keeps training, holds ground behind defences, baits with a lone unit,
+  then strikes from the hills with tanks and infantry together. Match that. Never attack a held position at
+  parity (the harness will not wave below 1.2x the army plus defences seen); send flank packs on the sides
+  while the main force fixes the front (a push that meets enemy units and towers worth as much as itself pulls
+  back to the staging point for 45 s: rebuild, then come back bigger); scout the base before committing a wave; keep one doctrine until the
+  numbers really change.
 - Don't feed the enemy: avoid small waves into a stronger army or defences; trading efficiently matters at the
   time limit. Keep units alive when a fight is lost (switch to "hold" and rebuild).
 - Look at `harness_diagnostics` and `refusals`: they say what is blocked and why. Fix the cause instead of

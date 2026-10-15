@@ -66,28 +66,28 @@ def test_apply_sets_army_and_money_rules_and_keeps_the_plan_lists():
 def test_switching_has_hysteresis():
     s = d.DoctrineState()
     s.since = 0.0
-    assert not s.update(3.0, "pressure", 0.95, "mass_army", answer_id=1)  # inside the 8 s dwell
+    assert not s.update(3.0, "pressure", 0.95, "mass_army", answer_id=1)  # inside the 20 s dwell
     assert (
-        s.update(9.0, "pressure", 0.95, "mass_army", answer_id=2)
+        s.update(21.0, "pressure", 0.95, "mass_army", answer_id=2)
         and s.name == "pressure"
         and s.source == "jev"
     )
     # a middling pick needs a second, different Jev answer
-    assert not s.update(20.0, "expand", 0.6, "pressure", answer_id=3)
+    assert not s.update(42.0, "expand", 0.6, "pressure", answer_id=3)
     assert not s.update(
-        20.2, "expand", 0.6, "pressure", answer_id=3
+        42.2, "expand", 0.6, "pressure", answer_id=3
     )  # the same answer read again at 5 Hz
-    assert s.update(21.0, "expand", 0.6, "pressure", answer_id=4) and s.name == "expand"
+    assert s.update(43.0, "expand", 0.6, "pressure", answer_id=4) and s.name == "expand"
     # an emergency skips the dwell but not the agreement: a single 0.6 pick must not flip the economy
     # (a lone 0.62 "defend" mid-opening once over-committed everything at once)
-    assert not s.update(22.0, "defend", 0.6, "expand", answer_id=5)
-    assert s.update(22.2, "defend", 0.6, "expand", answer_id=6) and s.name == "defend"
+    assert not s.update(44.0, "defend", 0.6, "expand", answer_id=5)
+    assert s.update(44.2, "defend", 0.6, "expand", answer_id=6) and s.name == "defend"
     # a sure emergency switches on the first answer
-    assert s.update(30.0, "rebuild", 0.9, "defend", answer_id=7) and s.name == "rebuild"
+    assert s.update(50.0, "rebuild", 0.9, "defend", answer_id=7) and s.name == "rebuild"
     # an unsure Jev hands over to the rules, which must hold for 2 s
-    assert not s.update(40.0, "all_in", 0.3, "mass_army")
+    assert not s.update(75.0, "all_in", 0.3, "mass_army")
     assert (
-        s.update(42.5, "all_in", 0.3, "mass_army") and s.name == "mass_army" and s.source == "rules"
+        s.update(77.5, "all_in", 0.3, "mass_army") and s.name == "mass_army" and s.source == "rules"
     )
 
 

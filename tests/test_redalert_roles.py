@@ -54,6 +54,8 @@ def test_raids_need_a_big_calm_army_and_scouts_double_when_blind():
         decide(army_n=16, enemy_near=3).raiders == 0
         and decide(army_n=16, doctrine="all_in").raiders == 0
     )
+    # a lone scout's recent "under attack" does not cancel the flank packs
+    assert decide(army_n=16, raided_recently=True).raiders == 3
     assert decide(blind_for_s=90).scouts == 2 and decide(blind_for_s=10).scouts == 1
 
 

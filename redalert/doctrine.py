@@ -25,7 +25,7 @@ from typing import Any
 
 from redalert.plan import Plan
 
-MIN_DWELL_S = 8.0
+MIN_DWELL_S = 20.0  # the last match flipped pressure/mass_army every 10-90 s and never committed
 SWITCH_CONFIDENCE = 0.55  # a pick at least this sure, seen twice in a row, switches
 SWITCH_NOW_CONFIDENCE = 0.8  # this sure: switch on the first answer
 RULE_CONFIRM_S = 2.0  # a rules pick must hold this long before it switches

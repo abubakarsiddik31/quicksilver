@@ -2402,3 +2402,22 @@ def test_a_second_scout_only_late_and_when_flush():
     assert not scouting(2, 200, cash=1000)  # too soon after the last one
     clock.t += 70
     assert scouting(3, 200)  # blind for over a minute: the General sends a replacement
+
+
+def test_a_push_that_meets_a_heavier_guard_is_overmatched():
+    agent = RedAlertAgent()
+    units = [{"id": i, "type": "e1", "x": 60, "y": 50} for i in range(1, 5)]
+    pos = {u["id"]: (60, 50) for u in units}
+    ids = [u["id"] for u in units]
+    guard = {
+        "visible_enemies": [{"id": 90 + i, "type": "3tnk", "x": 66, "y": 50} for i in range(2)],
+        "visible_enemy_buildings": [{"id": 99, "type": "tsla", "x": 68, "y": 52}],
+    }
+    assert agent._field_overmatched(ids, units, pos, guard)
+    # a lone rifleman across the field is no guard; a tower far away is not at this fight
+    light = {"visible_enemies": [{"id": 90, "type": "e1", "x": 66, "y": 50}]}
+    far = {"visible_enemy_buildings": [{"id": 99, "type": "tsla", "x": 120, "y": 120}]}
+    assert not agent._field_overmatched(ids, units, pos, light)
+    assert not agent._field_overmatched(ids, units, pos, far)
+    # too few in the field to judge
+    assert not agent._field_overmatched(ids[:2], units, pos, guard)

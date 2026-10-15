@@ -38,7 +38,7 @@ from common.llm import GeminiClient
 from redalert import doctrine as doctrines
 from redalert import roles, trace
 from redalert.econ import EconTracker, funds
-from redalert.intel import Intel
+from redalert.intel import TOWERS, Intel
 from redalert.plan import DEFAULT_PLAN, Plan, Reaction, sanitize_order
 from redalert.strategist import Strategist
 from redalert.tactics import ADVICE_TTL_S, ESCALATE_LEVEL, Candidates, TacticalAdvisor
@@ -195,6 +195,9 @@ FORWARD_MIN = (
 WAVE_COOLDOWN_S = (
     25.0  # after a wave leaves, the next one assembles at the muster point instead of trickling out
 )
+ABORT_RADIUS = 22.0  # enemy force this close to our field units is the one they are about to fight
+ABORT_RATIO = 1.0  # their value there (units plus towers) at or above ours: the push is overmatched, pull back
+ABORT_COOLDOWN_S = 45.0  # after pulling back, no wave and no pressing forward until the army is rebuilt
 WAVE_MUSTER_RADIUS = 8.0  # idle fighters within this of the muster point count as assembled
 FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
 OPENING_S = 150  # until then (or a war factory) defences wait unless there is an emergency
@@ -224,7 +227,8 @@ FINISH_AHEAD_RATIO = (
 )
 FINISH_MIN_SEEN = 1000.0
 FEED_BEHIND_RATIO = (
-    0.7  # below this against a big seen enemy, mid-game attacks just feed the tiebreak
+    1.2  # below this against a big seen enemy, mid-game attacks just feed the tiebreak: attacking a held
+    # position at parity lost 2:1 on value in the last match
 )
 FEED_MIN_SEEN = 2000.0
 AHEAD_COOLDOWN_S = (
@@ -330,6 +334,7 @@ class RedAlertAgent:
         self._attack_seq = -1
         self._attack_at = -1e9
         self._wave_until = -1e9
+        self._abort_until = -1e9  # a push met a held position and pulled back: no pressing until then
         self._guard: set[int] = set()  # the home defence line, sticky while its members live
         self._guard_stanced: set[int] = set()
         self._flankers: dict[
@@ -1835,15 +1840,24 @@ class RedAlertAgent:
         if not intruders:
             return None
         # A raid of one or two (a scout, a lone harasser) is handled by whoever is home; a push recalls everyone.
-        fighters = [
-            u["id"]
-            for u in army
-            if u["id"] not in self._scouts
-            and (
-                len(intruders) > 2
-                or (_cell(u) is not None and math.dist(_cell(u), home) <= 2 * DEFEND_RADIUS)
-            )
-        ]
+        # A lone poke every ~90 s recalled the whole army, wave and all, so no push ever finished: the home line
+        # takes small raids; only the line (or, with no line, the closest few) answers.
+        small = len(intruders) <= 2
+        line = [u for u in army if u["id"] in self._guard and u["id"] not in self._scouts]
+        near_home = sorted(
+            (
+                u
+                for u in army
+                if u["id"] not in self._scouts
+                and _cell(u) is not None
+                and math.dist(_cell(u), home) <= 2 * DEFEND_RADIUS
+            ),
+            key=lambda u: math.dist(_cell(u), home),
+        )
+        if small:
+            fighters = [u["id"] for u in (line or near_home[:4])]
+        else:
+            fighters = [u["id"] for u in army if u["id"] not in self._scouts]
         if not fighters:
             return None
         out: list[dict[str, Any]] = []
@@ -2083,6 +2097,32 @@ class RedAlertAgent:
         out.append({"cmd": "attack_move", "units": pack, "to": wp})
         return [u for u in idle if u not in self._flankers]
 
+    def _field_overmatched(
+        self,
+        field_ids: list[int],
+        units: list[dict[str, Any]],
+        pos: dict[Any, Any],
+        obs: dict[str, Any],
+    ) -> bool:
+        """Whether the enemy units and towers seen around our units in the field outweigh them."""
+        cells = [pos[u] for u in field_ids if pos.get(u)]
+        if len(cells) < FORWARD_MIN:
+            return False
+        cx = sum(c[0] for c in cells) / len(cells)
+        cy = sum(c[1] for c in cells) / len(cells)
+        type_of = {u.get("id"): str(u.get("type")).lower() for u in units}
+        mine = sum(self.cost_of(type_of.get(u, "")) for u in field_ids)
+        theirs = 0.0
+        for key in ("visible_enemies", "visible_enemy_buildings"):
+            for e in obs.get(key) or []:
+                c = _cell(e) if isinstance(e, dict) else None
+                kind = str(e.get("type")).lower() if isinstance(e, dict) else ""
+                if not c or e.get("wreck") or math.dist(c, (cx, cy)) > ABORT_RADIUS:
+                    continue
+                if (key == "visible_enemies" and kind not in NON_COMBAT) or kind in TOWERS:
+                    theirs += self.cost_of(kind)
+        return mine > 0 and theirs >= ABORT_RATIO * mine
+
     def _wave_target(
         self,
         plan: Plan,
@@ -2235,7 +2275,19 @@ class RedAlertAgent:
             and pos.get(u)
             and math.dist(pos[u], home_c) > FORWARD_RADIUS
         ]
-        if forward:
+        if forward and (
+            self._clock() < self._abort_until or self._field_overmatched(forward, units, pos, obs)
+        ):
+            # A real commander does not feed a held position: scouting showed a guard that outweighs the push,
+            # so it falls back to the staging point and the next wave waits for the army (and the numbers).
+            if self._clock() >= self._abort_until:
+                self._abort_until = self._clock() + ABORT_COOLDOWN_S
+                self._wave_until = max(self._wave_until, self._abort_until)
+                trace.write("abort", units=len(forward))
+            if self._fresh("abort_move", 3.0):
+                back = self._staging_cell(home_c, target, bounds) or home
+                out.append({"cmd": "move", "units": forward[:50], "to": back})
+        elif forward:
             if len(forward) >= FORWARD_MIN:
                 if self._fresh("forward", 2.0):
                     out.append({"cmd": "attack_move", "units": forward[:50], "to": target})

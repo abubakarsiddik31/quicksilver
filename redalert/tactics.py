@@ -338,7 +338,12 @@ class TacticalAdvisor:
             "values, the trade score and where my army sits (home or in the field), `my_army_detail` and "
             "`enemy_army_detail` have the per-type compositions. Which battle plan should my side follow for "
             "the next ten seconds? If the enemy army has not been seen, assume it is at least as strong as "
-            "mine.",
+            "mine. Commit: the last match lost 34 units for 91 because the plan flipped between attack and "
+            "build-up every few seconds, so change plan only for a real change in the numbers, not noise. "
+            "One or two enemy units at my base are a probe or a diversion, not a threat: defend only when a "
+            "real army is near. An attacker into a held position loses at parity (defenders have towers, "
+            "repairs and reinforcements), so choose an attacking plan only when my army is at least 1.2x "
+            "everything seen (army plus defences); otherwise mass_army or expand.",
             {name: d.when for name, d in DOCTRINES.items()},
         )
         choice(
@@ -386,7 +391,11 @@ class TacticalAdvisor:
             if "wave" in plan.jev_slots:
                 questions["wave_now"] = {
                     "type": "noul",
-                    "instructions": "Should I send my idle fighters as an attack wave right now?",
+                    "instructions": "Should I send my idle fighters as an attack wave right now? Waves that "
+                    "left in dribbles of 10-12 into the same unscouted point, one after another, died for "
+                    "nothing: say yes only if the whole idle force is assembled, is at least 1.2x the enemy "
+                    "army plus defences seen, and the target is scouted; say no right after a wave was lost "
+                    "at that target, and prefer waiting for the flank pack to move on the sides first.",
                     "criteria": {
                         "true": "The idle force is big enough to beat what defends the target, and the clock "
                         "(clock.remaining_s) makes attacking now worth more than saving the force",
