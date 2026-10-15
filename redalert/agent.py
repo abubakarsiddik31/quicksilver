@@ -152,11 +152,14 @@ EARLY_GUARD = (
     3  # infantry trained before the war factory; the rest of the money is the war factory's
 )
 BARRACKS = ("barr", "tent")
+SECOND_BARRACKS_S = 200.0
 # Army floor: after this many seconds, combat value (credits) must keep pace with the clock or units go first
 # and non-essential structures (2nd refinery, radar, tech) wait.
 ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 20.0
 DEFEND_RADIUS = 24  # enemy units this close to the base centre (or 10 to any building) trigger the defence reflex
 DEFEND_EVERY_S = 1.5
+SIEGE_MIN = 4
+DEFEND_COUNT_RATIO = 1.5  # more than this many times our fighters in bodies: fight under the towers, together
 DEFEND_MASS_RATIO = 0.8  # intruders worth this much of our fighters (and over two of them): mass at home, do not chase
 POWER_MARGIN = 40  # after the opening, keep this much spare power: low power slows every queue
 ORE_FULL = 0.75  # ore store this full: spend it now (a full store stops the harvesters unloading)
@@ -860,6 +863,24 @@ class RedAlertAgent:
             else (2 if refineries else 0)
         )
         army_short = bool(owned.get("weap")) and army_value < army_floor
+        base_c = _cell(obs.get("base_center"))
+        raiders_n = sum(
+            1
+            for e in (obs.get("visible_enemies") or [])
+            if isinstance(e, dict)
+            and not e.get("wreck")
+            and str(e.get("type")).lower() not in NON_COMBAT
+            and (c := _cell(e)) is not None
+            and base_c is not None
+            and math.dist(c, base_c) <= DEFEND_RADIUS
+        )
+        fighters_n = sum(
+            1
+            for u in units
+            if isinstance(u.get("id"), int) and str(u.get("type")).lower() not in NON_COMBAT
+        )
+        # A base under siege by more bodies than it has defenders rebuilds its army first, not its tech.
+        siege = raiders_n >= SIEGE_MIN and raiders_n > fighters_n
         if army_short and owned.get("harv", 0) >= refineries:
             # One per refinery keeps income alive; rebuying 1,100 harvesters with no army left lost a match.
             harv_goal = min(harv_goal, refineries)
@@ -1070,10 +1091,20 @@ class RedAlertAgent:
 
         # Money piling up means production is the bottleneck: a second war factory, then a second barracks.
         if owned.get("weap") and cash >= FLOAT_CASH:
-            for prod in ("weap", self._resolve("barracks", faction, avail, owned)):
+            for prod in (self._resolve("barracks", faction, avail, owned), "weap"):
                 if prod in avail and owned.get(prod, 0) + queued.get(prod, 0) < 2:
                     wants.append((prod, owned.get(prod, 0) + queued.get(prod, 0) + 1))
                     break
+        # Cheap infantry is the best trade per credit, and one barracks cannot produce enough of it: the second
+        # one (500) is part of the baseline once the war factory stands, not a float-cash luxury.
+        barracks = self._resolve("barracks", faction, avail, owned)
+        if (
+            owned.get("weap")
+            and game_s >= SECOND_BARRACKS_S
+            and barracks in avail
+            and owned.get(barracks, 0) + queued.get(barracks, 0) < 2
+        ):
+            wants.append((barracks, owned.get(barracks, 0) + queued.get(barracks, 0) + 1))
 
         # Army floor (computed above): once the war factory is up, an army that lags the clock gets the money first.
         essential: set[str] = {"powr", "weap", *BARRACKS}
@@ -1174,6 +1205,8 @@ class RedAlertAgent:
                 continue  # a higher-priority want of this queue is waiting out its resend cooldown
             if q == "defense" and not owned.get("weap") and game_s < OPENING_S and not emergency:
                 continue  # towers must not compete with the opening for the war factory's 2,000
+            if siege and item not in ("powr", *BARRACKS) and q != "defense":
+                continue  # the war factory, depot and radar wait; cheap units from the barracks come first
             if army_short and item not in essential and q != "defense":
                 continue  # 2nd refinery, radar, tech: after the army has caught up with the clock
             if (
@@ -1893,7 +1926,8 @@ class RedAlertAgent:
                 self.cost_of(str(u.get("type")).lower()) for u in army if u["id"] in set(fighters)
             )
             theirs = sum(self.cost_of(t) for _, t in raiders)
-            if len(intruders) > 2 and theirs >= DEFEND_MASS_RATIO * mine:
+            outnumbered = len(intruders) >= DEFEND_COUNT_RATIO * len(fighters)  # bodies decide a melee, not cost
+            if len(intruders) > 2 and (theirs >= DEFEND_MASS_RATIO * mine or outnumbered):
                 target = home
             self._gathered.clear()  # after the fight, hold mode regroups everyone
             for i in range(0, min(len(fighters), 150), 50):
