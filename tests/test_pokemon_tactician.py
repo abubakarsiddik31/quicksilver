@@ -58,7 +58,7 @@ def test_every_shrug_falls_back_to_none():
     low = tactician.Tactician(
         FakeJev({"pick": Answer("choice", choice="PLAN_B", confidence=0.3)}), log=lambda m: None
     )
-    assert low.choose(state={}, instructions="?", criteria=criteria) is None
+    assert low.choose(state={}, instructions="?", criteria=criteria) == "PLAN_B"
 
     off_menu = tactician.Tactician(
         FakeJev({"pick": Answer("choice", choice="PLAN_Z", confidence=0.99)}), log=lambda m: None
@@ -279,7 +279,7 @@ def test_slots_fallback_picks_one_action_per_slot():
     assert sorted(questions) == ["slot_0", "slot_1"]
 
 
-def test_slots_fallback_refuses_illegal_and_unconfident_pairs():
+def test_slots_fallback_refuses_illegal_pairs_and_ignores_low_confidence():
     duplicate = tactician.Tactician(
         FakeJev(
             {
@@ -303,10 +303,13 @@ def test_slots_fallback_refuses_illegal_and_unconfident_pairs():
         ),
         log=lambda m: None,
     )
-    assert (
-        tactician.slots_fallback(move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, shrug)
-        is None
-    )
+    assert tactician.slots_fallback(
+        move_template([move("Close Combat", [1, 2])], [SWITCH]), {}, shrug
+    ) == {
+        "type": "doubles_turn",
+        "slot_0": {"type": "move", "move_id": "Close Combat", "target": 2},
+        "slot_1": {"type": "switch", "species": "gholdengo"},
+    }
 
     assert (
         tactician.slots_fallback(
@@ -385,7 +388,6 @@ def test_the_agent_obeys_a_confident_jev_battle_plan(monkeypatch, tmp_path):
         [move("Close Combat", [1, 2]), move("Aqua Jet", [1, 2]), move("Surging Strikes", [1, 2])],
         [move("Aqua Jet", [1, 2])],
     )
-    monkeypatch.setattr(battle, "is_tactical_dilemma", lambda *a, **k: True)
 
     fake = FakeJev({"pick": Answer("choice", choice="PLAN_B", confidence=0.9)})
     agent = PokemonAgent(pool_path=tmp_path / "pool.json", jev_client=fake)

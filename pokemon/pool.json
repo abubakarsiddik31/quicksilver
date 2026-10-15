@@ -101,6 +101,26 @@
       "species": "Baxcalibur"
     },
     {
+      "ability": "Beads of Ruin",
+      "card_id": "vgc-chi-yu",
+      "evs": {
+        "hp": 4,
+        "spa": 252,
+        "spe": 252
+      },
+      "item": "Choice Specs",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Heat Wave",
+        "Dark Pulse",
+        "Overheat",
+        "Snarl"
+      ],
+      "nature": "Timid",
+      "species": "Chi-Yu"
+    },
+    {
       "ability": "Sword of Ruin",
       "card_id": "vgc-chien-pao",
       "evs": {
@@ -823,6 +843,26 @@
       "species": "Tyranitar"
     },
     {
+      "ability": "Guts",
+      "card_id": "vgc-ursaluna",
+      "evs": {
+        "atk": 252,
+        "hp": 252,
+        "spd": 4
+      },
+      "item": "Flame Orb",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Facade",
+        "Headlong Rush",
+        "Earthquake",
+        "Protect"
+      ],
+      "nature": "Adamant",
+      "species": "Ursaluna"
+    },
+    {
       "ability": "Unseen Fist",
       "card_id": "vgc-urshifu-rapid-strike",
       "evs": {
@@ -883,6 +923,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 44,
+  "count": 46,
   "expected_size": 18
 }

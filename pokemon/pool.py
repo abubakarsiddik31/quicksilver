@@ -131,9 +131,12 @@ class MatchCards:
     def _add(self, card: Any, owner: str | None) -> None:
         if not is_full_card(card):
             return
-        known = self._cards.get(card["card_id"])
-        owner = owner or (known or {}).get("_owner")
-        self._cards[card["card_id"]] = {**card, **({"_owner": owner} if owner else {})}
+        known = self._cards.get(card["card_id"]) or {}
+        owner = owner or known.get("_owner")
+        # A later sighting may carry only an id and a species (a roster entry);
+        # it must never wipe the moves, item and ability an earlier one showed.
+        filled = {k: v for k, v in card.items() if v not in (None, "", [], {})}
+        self._cards[card["card_id"]] = {**known, **filled, **({"_owner": owner} if owner else {})}
 
     def cards(self) -> list[dict]:
         return list(self._cards.values())

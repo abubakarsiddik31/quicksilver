@@ -13,8 +13,9 @@ Safety, in layers, mirroring Red Alert:
 
 - Jev only ever picks among candidates the engine itself built from the legal
   state; every plan is already a legal action the server will accept.
-- An answer is used only if its confidence reaches ``MIN_CONFIDENCE`` and the
-  decision clock affords the call. Otherwise the deterministic #1 plays.
+- Jev decides every turn the decision clock affords a call: its pick is played
+  whatever its confidence. The deterministic #1 plays only when Jev is
+  unavailable or out of time.
 - Only engine strings and numbers go out — species names, move ids, numbers,
   the rules. There is no chat in this game, so there is nothing to inject.
 - The client is total: on any failure the deterministic path answers with zero
@@ -35,8 +36,6 @@ from pokemon.damage import damage
 # A Pokémon decision happens once per turn, so unlike Red Alert's 5 Hz loop
 # there is nothing to background: ask, wait ~0.5 s, decide.
 JEV_TIMEOUT = 2.5
-# A Jev yes below this is a shrug, not a decision: play the math.
-MIN_CONFIDENCE = 0.6
 # A battle is at most ~25 decisions; the clock budget does the real limiting.
 MAX_CALLS_PER_MATCH = 60
 
@@ -470,8 +469,6 @@ def slots_fallback(template: Any, obs: dict, tactician: Tactician) -> dict | Non
         answer = answers.get(f"slot_{number}")
         if answer is None or answer.type != "choice" or answer.choice not in lookup[number]:
             return None
-        if answer.confidence is not None and answer.confidence < MIN_CONFIDENCE:
-            return None
         picks[number] = lookup[number][answer.choice]
     # The server's two structural rules, re-checked here like the executor does.
     if (
@@ -561,10 +558,5 @@ class Tactician:
         trace.write("jev", instructions=instructions, criteria=criteria, state=state, answer=answer)
         if answer is None or answer.type != "choice" or answer.choice not in criteria:
             self.errors += 1
-            return None
-        if answer.confidence is not None and answer.confidence < MIN_CONFIDENCE:
-            self._note(
-                f"low confidence ({answer.confidence:.2f}) on {answer.choice}; using the damage math"
-            )
             return None
         return answer.choice

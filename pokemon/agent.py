@@ -226,7 +226,7 @@ class PokemonAgent:
             template,
             obs,
             pool_cards=loaded_pool,
-            max_candidates=3,
+            max_candidates=len(tactician.LABELS),
             memory=self._memory,
             diverse=True,
         )
@@ -237,11 +237,6 @@ class PokemonAgent:
                 and self._jev.enabled
                 and self._jev_turns < tactician.MAX_CALLS_PER_MATCH
                 and budget.affords(obs, tactician.JEV_TIMEOUT)
-                and battle.is_tactical_dilemma(
-                    candidates,
-                    obs,
-                    danger=battle.make_ctx(obs, pool_cards=loaded_pool, memory=self._memory).danger,
-                )
             ):
                 ctx = battle.make_ctx(obs, pool_cards=loaded_pool, memory=self._memory)
                 request = tactician.battle_request(obs, candidates, ctx.ours, ctx.theirs, ctx=ctx)
@@ -254,7 +249,7 @@ class PokemonAgent:
                     self._jev_turns += 1
                     return candidates[tactician.INDEX[label]][0]
 
-            # Overwhelming math or no Jev: execute the top evaluated plan.
+            # No Jev (or no time for it): execute the top evaluated plan.
             return candidates[0][0]
 
         chosen = battle.choose_turn(template, obs, pool_cards=loaded_pool, memory=self._memory)

@@ -48,8 +48,6 @@ DOUBLE_PROTECT_PENALTY = 15.0
 SWITCH_RISK_WEIGHT = 35.0
 SWITCH_LOW_BONUS = 15.0
 REPLACEMENT_WEIGHT = 0.5     # forced replacements: matchup percent -> score
-DOMINANT_LEAD = 25.0  # Jev is skipped past this lead, unless we are threatened
-THREATENED_RISK = 0.5
 LOW_HP_FRACTION = 0.35
 SWITCH_BASE = 4.0
 SWITCH_WHEN_LOW = 30.0
@@ -986,28 +984,3 @@ def _describe_single_choice(choice: dict, score: float) -> str:
     if ctype == "switch":
         return f"Switch to {choice.get('species')}"
     return "Pass"
-
-
-def is_tactical_dilemma(
-    candidate_plans: list[tuple[dict, float, str]],
-    obs: dict,
-    *,
-    danger: threat.Danger | None = None,
-) -> bool:
-    """Whether this board is worth a Jev read.
-
-    Jev is skipped only when the engine's #1 is overwhelmingly ahead *and*
-    nothing of ours is under real threat — the engine's score only sees our
-    own damage, so a big lead on a board where we are about to lose a
-    Pokémon is exactly where a second opinion matters.
-    """
-    if len(candidate_plans) < 2:
-        return False
-
-    bank_left = (obs.get("clock") or {}).get("bank_seconds_left")
-    if bank_left is not None and bank_left < 90.0:
-        return False  # Preserve clock bank under time pressure
-
-    if candidate_plans[0][1] - candidate_plans[1][1] <= DOMINANT_LEAD:
-        return True
-    return danger is not None and max(danger.risk, default=0.0) >= THREATENED_RISK

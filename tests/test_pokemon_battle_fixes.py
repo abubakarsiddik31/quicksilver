@@ -275,15 +275,6 @@ def test_switching_needs_a_reason_and_a_resilient_target():
     assert cold < hot / 2
 
 
-def test_jev_is_not_skipped_on_a_lopsided_board_when_we_are_threatened():
-    plans = [({}, 90.0, ""), ({}, 20.0, "")]
-    calm = threat.Danger((0.1, 0.0), (False, False))
-    hot = threat.Danger((0.9, 0.0), (True, False))
-    assert not battle.is_tactical_dilemma(plans, {}, danger=calm)
-    assert battle.is_tactical_dilemma(plans, {}, danger=hot)
-    assert battle.is_tactical_dilemma([({}, 50.0, ""), ({}, 40.0, "")], {}, danger=calm)
-
-
 def test_choose_turn_uses_the_joint_overkill_logic():
     template = {
         "type": "doubles_turn",
@@ -506,3 +497,12 @@ def test_the_agent_uses_a_card_that_only_the_draft_showed():
     agent._agent_id = "me"
     agent._learn(Draft())
     assert agent._cards()[0]["moves"] == ["Fake Out", "Flare Blitz"]
+
+
+def test_a_slim_later_sighting_does_not_wipe_a_full_card():
+    match = pool.MatchCards()
+    match.observe({"available_cards": [_card("vgc-ironvaliant", "Iron Valiant", ["Close Combat"])]})
+    match.observe({"rosters": {"me": [{"card_id": "vgc-ironvaliant", "species": "Iron Valiant"}]}}, agent_id="me")
+    got = battle._find_in_pool("Iron Valiant", match.with_fallback(None), "ours")
+    assert got["moves"] == ["Close Combat"]
+    assert got["_owner"] == "ours"
