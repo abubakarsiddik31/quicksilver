@@ -79,7 +79,8 @@ class WerewolfAgent:
 
         engine = belief_mod.engine_phase(belief_mod.raw_of(state))
         client = self._client()
-        window = getattr(state, "new_messages", None)
+        self.belief.note_messages(getattr(state, "new_messages", None), our_position=self.belief.seat)
+        window = self.belief.chat[-30:]  # the whole conversation: the vote window itself only holds what is new
 
         source = "rules"
         target = None
@@ -182,7 +183,16 @@ class WerewolfAgent:
             self._said_day, self._said = self.belief.day, set()
 
         if not self.belief.eliminated and self.quota.can_send():
-            composed = speech.compose(self.belief, already_sent=self._said)
+            # Say what we will vote: Jev's read of the table so far, so the words and the ballot agree.
+            read = jev.choose_seat(
+                self._jev,
+                self.belief,
+                self.belief.chat[-30:],
+                self._vote_candidates(),
+                jev.VOTE,
+                what="speech_target",
+            )
+            composed = speech.compose(self.belief, already_sent=self._said, vote=read)
             if composed is not None:
                 kind, text = composed
                 text = speech.phrase(

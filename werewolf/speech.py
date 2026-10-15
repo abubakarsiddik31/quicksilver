@@ -92,7 +92,9 @@ def accusation_text(belief: Any, vote: int | None) -> str:
     return msg.shorten(f"{seat_label(vote)} is my top suspect.{reason} Vote {seat_label(vote)}.")
 
 
-def compose(belief: Any, *, already_sent: Any = None) -> tuple[str, str] | None:
+def compose(
+    belief: Any, *, already_sent: Any = None, vote: int | None = None
+) -> tuple[str, str] | None:
     """The one message to send this window, as ``(kind, text)``, or ``None``.
 
     ``already_sent`` is the set of kinds already used in this game, so a claim
@@ -104,8 +106,10 @@ def compose(belief: Any, *, already_sent: Any = None) -> tuple[str, str] | None:
     only draws attention, so silence is the better move.
     """
     sent = already_sent if isinstance(already_sent, set) else set()
-    vote = _best_vote(belief)
     role = getattr(belief, "role", None)
+    proven = [s for s in getattr(belief, "known_wolves", ()) if s in getattr(belief, "alive", ())]
+    # A proven wolf is the vote; otherwise the caller's read (Jev's), then the rule score.
+    vote = min(proven) if proven else (vote if vote is not None else _best_vote(belief))
 
     # No concrete target means no concrete claim. Babbling is worse than quiet.
     if vote is None:
@@ -114,7 +118,9 @@ def compose(belief: Any, *, already_sent: Any = None) -> tuple[str, str] | None:
     if role == "SEER":
         # A claim with no results just paints a target on the seer; one with
         # results is the strongest information in the game.
-        if not getattr(belief, "investigations", None):
+        # Claim only with a wolf in hand: a day-1 "Player0 is clean" paints a target on the seer and hands the
+        # wolves their night kill (the last game voted its own seer out on exactly that claim).
+        if "wolf" not in (getattr(belief, "investigations", None) or {}).values():
             return None
         if SEER_CLAIM in sent:
             return None

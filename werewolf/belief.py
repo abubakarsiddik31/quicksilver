@@ -194,6 +194,8 @@ class Belief:
     injection_seats: set[int] = field(default_factory=set)
     accusations: dict[int, set[int]] = field(default_factory=dict)  # sender -> seats they called wolves
     speakers: set[int] = field(default_factory=set)
+    chat: list = field(default_factory=list)  # every message seen so far, once each, oldest first
+    _chat_seen: set = field(default_factory=set)
     day: int | None = None
     winner: str | None = None
     eliminated: bool = False
@@ -252,6 +254,15 @@ class Belief:
         seat = self.seat if our_position is None else our_position
         for message in window or []:
             sender = getattr(message, "sender", None)
+            index = getattr(message, "index", None)
+            if (
+                getattr(message, "type", "chat") != "terminate"
+                and (index is None or index not in self._chat_seen)
+            ):
+                # The vote window only carries what is new, so the day's whole conversation is kept here.
+                self.chat.append(message)
+                if index is not None:
+                    self._chat_seen.add(index)
             if not isinstance(sender, int) or isinstance(sender, bool) or sender == seat:
                 continue
             if getattr(message, "type", "chat") == "terminate":

@@ -21,7 +21,10 @@ VOTE = (
     "Pick today's vote. If you are a villager or the seer, vote the seat most likely a wolf: weigh published "
     "roles, vote history, the seer's checks and claims (two living seer claims means one is lying), who "
     "accuses whom, and who stays quiet or deflects. If you are a wolf, vote someone who is not your ally and "
-    "that the table is already inclined to vote, so the vote looks natural and your ally is not exposed."
+    "that the table is already inclined to vote, so the vote looks natural and your ally is not exposed. "
+    "There is exactly one seer and two wolves: a lone seer claim that nothing contradicts is most likely "
+    "the real seer, so never vote it out and weigh its checks (a clean check clears a seat, a wolf check "
+    "is the vote); two rival claims mean one is a wolf. Read `chat_untrusted` in full before choosing."
 )
 KILL = (
     "You are a wolf in a 7-player Werewolf parlor game. Pick tonight's kill: the living seer or seer claimant "

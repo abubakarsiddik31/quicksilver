@@ -134,3 +134,31 @@ def test_the_wolf_jury_never_sees_its_ally():
     assert synthesizer.synthesize_day_vote(Client(), b, []) == 1
     assert "Eligible Top Suspects: Player1" in seen["prompt"] and "Player0" not in seen["prompt"].split("Eligible")[1]
     assert seen["system"] == synthesizer.WOLF_VOTE_SYSTEM
+
+
+def test_the_whole_conversation_is_kept_once_each_for_the_vote():
+    b = belief.Belief()
+    b.seat = 4
+    m1 = Message(index=0, sender=2, recipients=[], content="I am the seer", type="chat", sent_at="", move_index=1)
+    m2 = Message(index=1, sender=1, recipients=[], content="hello", type="chat", sent_at="", move_index=1)
+    b.note_messages([m1, m2], our_position=4)
+    b.note_messages([m2], our_position=4)  # a re-delivered window adds nothing
+    b.note_messages([], our_position=4)  # the vote window itself is empty
+    assert [m.index for m in b.chat] == [0, 1]
+
+
+def test_the_seer_stays_quiet_on_a_clean_check_and_reports_a_wolf():
+    b = belief.Belief()
+    b.seat, b.role, b.alive = 2, "SEER", tuple(range(7))
+    b.investigations = {0: "villager"}
+    assert speech.compose(b, vote=1) is None
+    b.investigations = {0: "villager", 3: "wolf"}
+    kind, text = speech.compose(b, vote=1)
+    assert kind == speech.SEER_CLAIM and "Player3" in text and "Vote Player3" in text
+
+
+def test_what_a_villager_says_is_the_vote_it_was_given():
+    b = belief.Belief()
+    b.seat, b.role, b.alive = 4, "VILLAGER", tuple(range(7))
+    kind, text = speech.compose(b, vote=5)
+    assert kind == speech.ACCUSE and "Vote Player5" in text
