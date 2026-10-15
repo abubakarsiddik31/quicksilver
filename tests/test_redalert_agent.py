@@ -2421,3 +2421,29 @@ def test_a_push_that_meets_a_heavier_guard_is_overmatched():
     assert not agent._field_overmatched(ids, units, pos, far)
     # too few in the field to judge
     assert not agent._field_overmatched(ids[:2], units, pos, guard)
+
+
+def _group(n, x=40, y=40, kind="3tnk"):
+    return [{"id": i, "type": kind, "x": x, "y": y} for i in range(1, n + 1)]
+
+
+def _foes(n, x=44, y=40, kind="e1"):
+    return [{"id": 100 + i, "type": kind, "x": x, "y": y} for i in range(n)]
+
+
+def test_a_model_move_is_vetoed_when_it_pulls_a_winning_group_out_of_contact():
+    agent = RedAlertAgent(Strategist(None))
+    ours = _group(8)
+    order = {"cmd": "move", "units": [u["id"] for u in ours], "to": [10, 10]}
+    assert agent._winning_retreat(order, ours, {"visible_enemies": _foes(2)})
+
+
+def test_a_model_move_stands_when_the_group_is_outweighed_or_nothing_is_near():
+    agent = RedAlertAgent(Strategist(None))
+    ours = _group(4, kind="e1")
+    order = {"cmd": "move", "units": [u["id"] for u in ours], "to": [10, 10]}
+    assert not agent._winning_retreat(order, ours, {"visible_enemies": _foes(12, kind="3tnk")})
+    assert not agent._winning_retreat(order, ours, {"visible_enemies": []})
+    assert not agent._winning_retreat(order, ours, {"visible_enemies": _foes(2, x=90, y=90)})
+    small = {"cmd": "move", "units": [1, 2], "to": [10, 10]}
+    assert not agent._winning_retreat(small, ours, {"visible_enemies": _foes(1)})

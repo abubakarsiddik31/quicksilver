@@ -409,7 +409,8 @@ class TacticalAdvisor:
                 "army_focus",
                 "focus",
                 "Which of my buildable unit types should dominate my army, given what the enemy fields and the "
-                "clock? Composition beats count.",
+                "clock? Composition beats count: tanks and e1 against mostly infantry, e3 only against mostly vehicles "
+                "(a mass of e3 into an infantry blob is the classic way to lose a fight).",
                 {i: cands.describe.get(i) for i in cands.combat_roster},
             )
         if cands.has_harvester_item and "harvester" in plan.jev_slots:

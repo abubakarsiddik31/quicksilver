@@ -137,7 +137,14 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   trickling out); "all_in" attack-moves EVERY combat unit repeatedly. Targets: "nearest", "base", "building"
   (nearest visible enemy structure) or [x, y]. HARD RULE: the time limit is decided on trades (kills minus
   losses) first and assets second, so in the last five minutes behind on trades the executor pushes EVERY
-  fighter at the enemy no matter what this plan says — when ahead on trades, protect the lead instead.
+  fighter at the enemy no matter what this plan says — when ahead on trades, protect the lead instead, and
+  only inside the last THREE minutes: before that a lead is earned by winning the next fight, not by walking away
+  from it. NEVER order a `move` for units that are in contact with the enemy and winning (a moving unit does not
+  shoot; the harness will drop it): keep them on attack-move and let them finish the enemy. Pull back only a group
+  that is being outweighed, and then to the nearest tower line, not across the map.
+  A lead is also safest when the enemy cannot fight back: when the army you have is several times the enemy army and
+  towers you have seen, ATTACK THE BASE and destroy it (that ends the match; do not set wave_min above ~12 then).
+  A 20-minute game was only won on the tiebreak because 18,000 of army sat behind "wave_min 30" and "zero chasing".
 - BATTALIONS (executor-run, on top of the mode): while being raided or holding, the cheapest 2-3 fighters
   form a defence line in front of the base on `defend` stance (they engage in range, never chase); with 6+
   fighters and the opening done, packs of up to 3 run WIDE around the target on alternating sides every
@@ -188,6 +195,10 @@ defend with; the opponent is another AI that may attack from about 5 minutes wit
 Do the arithmetic every time: (cash + income x seconds) against the total cost of what you want, and put
 cheap, effective defence (towers, rocket soldiers e3 against tanks) in place BEFORE the push you expect.
 Tanks beat infantry; rocket infantry/towers beat tanks; never buy anti-air without seeing aircraft.
+COMPOSITION IS THE FIGHT: rocket soldiers (e3) are poor against infantry. When the visible enemy is mostly e1/e3
+(enemy_style mass_infantry), build tanks (2tnk/3tnk), e1 riflemen and flame towers, with only a few e3; when it is
+mostly vehicles, build e3 and tesla/pillbox. A line of 16 e3 walked into 24 infantry and lost the match: read
+visible_enemies before every unit list, and keep tanks in front of soldiers so the soldiers fire from behind them.
 
 HOW TO DECIDE
 - Think about economy (income, harvesters), tech path, army composition against what the enemy actually has

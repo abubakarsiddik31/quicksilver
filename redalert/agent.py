@@ -197,6 +197,7 @@ WAVE_COOLDOWN_S = (
 )
 ABORT_RADIUS = 22.0  # enemy force this close to our field units is the one they are about to fight
 ABORT_RATIO = 1.0  # their value there (units plus towers) at or above ours: the push is overmatched, pull back
+RAW_MOVE_VETO_MIN = 4  # a model "move" of this many fighters that are in contact is a retreat, judged like any other
 ABORT_COOLDOWN_S = 45.0  # after pulling back, no wave and no pressing forward until the army is rebuilt
 WAVE_MUSTER_RADIUS = 8.0  # idle fighters within this of the muster point count as assembled
 FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
@@ -226,6 +227,9 @@ FINISH_AHEAD_RATIO = (
     1.5  # army worth this much more than the strongest enemy seen: press to finish them
 )
 FINISH_MIN_SEEN = 1000.0
+CRUSH_RATIO = 3.0  # an army this many times what we have seen of the enemy (units plus towers) does not turtle
+WAVE_MIN_CAP = 12  # ... and a plan's wave_min above this stops holding it back: a full match was won on the
+# tiebreak with 18,000 of army idle behind "wave_min 30" against an enemy with one unit left
 FEED_BEHIND_RATIO = (
     1.2  # below this against a big seen enemy, mid-game attacks just feed the tiebreak: attacking a held
     # position at parity lost 2:1 on value in the last match
@@ -2161,6 +2165,8 @@ class RedAlertAgent:
             self._stanced.update(fresh[:20])
             out.append({"cmd": "set_stance", "units": fresh[:20], "stance": "attack_anything"})
 
+        opposition_now = enemy_seen + enemy_defence
+        crushing = opposition_now >= FINISH_MIN_SEEN and army_value >= CRUSH_RATIO * opposition_now
         # Reactions and Jev may move the army between hold / attack / retreat, never out of a committed all-in.
         mode = plan.army_mode
         now0 = self._clock()
@@ -2180,7 +2186,7 @@ class RedAlertAgent:
                 and army_value >= ATTACK_VALUE
                 and army_value >= 1.5 * enemy_seen
                 and forced_mode is None
-                and not defend
+                and (not defend or crushing)
             ):
                 mode = "attack"  # a big army sitting at home is wasted: one match was lost with 8,800 of it idle
             # One goal at a time: a posture flap must not pull half the army home mid-fight. Emergencies
@@ -2304,16 +2310,17 @@ class RedAlertAgent:
         ahead = opposition >= FINISH_MIN_SEEN and army_value >= FINISH_AHEAD_RATIO * opposition
         behind = opposition >= FEED_MIN_SEEN and army_value < FEED_BEHIND_RATIO * opposition
         wave_ok = adv("wave")
+        wave_min = min(plan.wave_min, WAVE_MIN_CAP) if ahead else plan.wave_min
         if ahead:
             go = (
-                n >= plan.wave_min
+                n >= wave_min
             )  # clearly stronger: finish them; a "wait" answer cannot hold the wave home
         elif isinstance(wave_ok, float):
             # Jev judges the moment, but a wave is the whole idle army: approval never halves it.
             go = n >= plan.wave_min and (wave_ok >= WAVE_YES or n >= max(20, 2 * plan.wave_min))
         else:
             go = n >= plan.wave_min
-        if not go and army_value >= ATTACK_VALUE and n >= plan.wave_min:
+        if not go and army_value >= ATTACK_VALUE and n >= wave_min:
             go = True  # a big army must not sit home all match - but it attacks as a whole wave, never a piece
         if behind and not (isinstance(remaining, (int, float)) and remaining <= ENDGAME_PUSH_S):
             go = False  # feeding a clearly stronger enemy loses the tiebreak: assemble instead (the closing
@@ -2378,9 +2385,37 @@ class RedAlertAgent:
             sanitize_order(o, unit_ids, building_ids, enemy_ids, bounds_t, avail)
             for o in plan.orders
         )  # type: ignore[arg-type]
-        return [
-            o for o in clean if o and not (o["cmd"] == "sell" and o.get("building") in core_ids)
-        ]
+        out = []
+        for o in clean:
+            if not o or (o["cmd"] == "sell" and o.get("building") in core_ids):
+                continue
+            if self._winning_retreat(o, units, obs):
+                trace.write("veto", cmd=o["cmd"], n=len(o["units"]), to=o.get("to"), why="retreat while winning")
+                continue
+            out.append(o)
+        return out
+
+    def _winning_retreat(self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]) -> bool:
+        """A model ``move`` that walks a fighting group away from an enemy it is beating.
+
+        A ``move`` unit does not shoot back, so ordering it mid-fight loses units and the fight (the model did it
+        while 6 minutes ahead, pulling a whole winning army out of contact). It stays legal when nothing is near,
+        and when the group is outweighed: then the retreat is right and the executor's own judgement agrees.
+        """
+        ids = order.get("units")
+        if order.get("cmd") != "move" or not ids or len(ids) < RAW_MOVE_VETO_MIN:
+            return False
+        pos = {u.get("id"): _cell(u) for u in units}
+        cells = [pos[i] for i in ids if pos.get(i)]
+        if not cells:
+            return False
+        cx, cy = sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells)
+        contact = any(
+            (c := _cell(e)) and not e.get("wreck") and math.dist(c, (cx, cy)) <= ABORT_RADIUS
+            for e in obs.get("visible_enemies") or []
+            if isinstance(e, dict) and str(e.get("type")).lower() not in NON_COMBAT
+        )
+        return contact and not self._field_overmatched(list(ids), units, pos, obs)
 
 
 def create_agent():
