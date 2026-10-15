@@ -2032,11 +2032,11 @@ def test_only_one_scout_per_match():
         clock=clock,
     )
 
-    def scouting(uid):
+    def scouting(uid, game_s=120):
         state = make_state(units=[{"id": uid, "type": "e1", "x": 20, "y": 20}], enemy_base=[80, 80])
         state.raw["observation"]["units"][0]["x"] = 20
         state.raw["legal_actions"]["idle_units"] = [uid]
-        state.raw["time"]["game_seconds"] = 120
+        state.raw["time"]["game_seconds"] = game_s
         out = agent.choose_action(state, CTX)
         return out is not WAIT and any(o["cmd"] == "move" for o in orders_of(out))
 
@@ -2044,8 +2044,9 @@ def test_only_one_scout_per_match():
     clock.t += 30
     assert not scouting(2)  # the first scout just died: no instant second sacrifice
     clock.t += 70
+    assert not scouting(3)  # in the opening the last riflemen are the army, not a second sacrifice
     assert scouting(
-        3
+        3, 300
     )  # but a blind match is replaced after SCOUT_RESEND_S: fighting blind cost whole matches
 
 
@@ -2401,7 +2402,7 @@ def test_a_second_scout_only_late_and_when_flush():
     clock.t += 30
     assert not scouting(2, 200, cash=1000)  # too soon after the last one
     clock.t += 70
-    assert scouting(3, 200)  # blind for over a minute: the General sends a replacement
+    assert scouting(3, 260)  # blind for over a minute: the General sends a replacement
 
 
 def test_a_push_that_meets_a_heavier_guard_is_overmatched():

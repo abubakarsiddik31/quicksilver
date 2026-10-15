@@ -136,6 +136,8 @@ CASH_FLOOR = 300.0  # below this only harvesters and power commit (the income co
 BROKE_CANCEL_S = 10.0  # cash pinned at zero this long: cancel the worst non-essential commitment
 PRE_QUEUE_PROGRESS = 0.4  # queue the next structure once the current one is this far along
 SCOUT_AT_S = 70
+SCOUT_MIN_FIGHTERS = 6  # in the opening a replacement scout must not be one of fewer than this many fighters
+SCOUT_REPLACE_S = 240.0
 SCOUT_MAX = 1  # one scout early: re-sending lone scouts fed the enemy five free kills
 SCOUT_RESEND_S = (
     90.0  # a dead scout is replaced after this long: a match played blind is a match played wrong
@@ -215,7 +217,7 @@ FLANK_SIZE = 3
 FLANK_LIFE_S = 50.0  # a run ends after this; its units rejoin the main force where they stand
 FLANK_OFFSET = 14.0  # how wide: perpendicular offset from the target's center, sides alternate
 FLANK_FROM_S = 150.0  # no flank runs while the opening is still forming
-FLANK_MIN_ARMY = 6
+FLANK_MIN_ARMY = 10  # packs of three peel off only from an army big enough that the main body is still a body
 STYLE_FLANK_CD_S = {
     "turtle": 40.0,
     "mass_infantry": 40.0,
@@ -228,6 +230,7 @@ FINISH_AHEAD_RATIO = (
 )
 FINISH_MIN_SEEN = 1000.0
 CRUSH_RATIO = 3.0  # an army this many times what we have seen of the enemy (units plus towers) does not turtle
+WAVE_SHARE = 0.6  # a wave takes at least this share of the strike force: trickles of 7 and 12 fed the enemy
 WAVE_MIN_CAP = 12  # ... and a plan's wave_min above this stops holding it back: a full match was won on the
 # tiebreak with 18,000 of army idle behind "wave_min 30" against an enemy with one unit left
 FEED_BEHIND_RATIO = (
@@ -1173,6 +1176,15 @@ class RedAlertAgent:
                 continue  # towers must not compete with the opening for the war factory's 2,000
             if army_short and item not in essential and q != "defense":
                 continue  # 2nd refinery, radar, tech: after the army has caught up with the clock
+            if (
+                army_short
+                and q == "defense"
+                and item not in essential
+                and sum(owned.get(d, 0) + queued.get(d, 0) for d in DEFENSE_ORDER)
+                >= (2 if emergency else 1)
+            ):
+                continue  # one tower is the baseline; the second (a 1,500 tesla) waits for the army: three of them
+                # left a match with 4,500 in coils and half the army of the side that bought riflemen
             rate = self.rate_of(item)
             if not affordable(
                 cost, rate, floor_exempt=(item == "powr" and drained > provided), reserve=army_claim
@@ -1662,6 +1674,9 @@ class RedAlertAgent:
             return []
         idle = set(legal.get("idle_units") or [])
         kinds = {u["id"]: str(u.get("type")).lower() for u in units if isinstance(u.get("id"), int)}
+        fighters = sum(1 for k in kinds.values() if k not in NON_COMBAT)
+        if self._scouts_sent and fighters < SCOUT_MIN_FIGHTERS and game_s < SCOUT_REPLACE_S:
+            return []  # the scouts were the whole army: four riflemen walked into the enemy base one by one
         for kind in SCOUT_PREF:
             for uid, k in kinds.items():
                 if k == kind and uid in idle and self._fresh("scout", 40.0):
@@ -2311,6 +2326,17 @@ class RedAlertAgent:
         behind = opposition >= FEED_MIN_SEEN and army_value < FEED_BEHIND_RATIO * opposition
         wave_ok = adv("wave")
         wave_min = min(plan.wave_min, WAVE_MIN_CAP) if ahead else plan.wave_min
+        # "Most of its resources": the strike force is every fighter that is not the home line, a flank pack or a
+        # scout. A wave of the few that happen to be idle leaves a second wave to arrive later, alone.
+        held = self._guard | set(self._flankers) | self._scouts
+        strike = sum(
+            1
+            for u in units
+            if isinstance(u.get("id"), int)
+            and str(u.get("type")).lower() not in NON_COMBAT
+            and u["id"] not in held
+        )
+        wave_min = max(wave_min, math.ceil(WAVE_SHARE * strike))
         if ahead:
             go = (
                 n >= wave_min

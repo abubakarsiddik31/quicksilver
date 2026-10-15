@@ -110,7 +110,7 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   Below that cash floor only harvesters and power commit (income is rebuilt first, always); if cash pins at zero
   the harness cancels the worst non-essential queued item itself so the queues can drain. Income is the real
   limit: look at `harness_measurements.measured_income_per_s`. Several expensive items at once do NOT go faster,
-  they all starve (one match was lost with cash at 0 for two minutes).
+  they all starve (a long stretch at cash 0 stalls the whole build).
 - ALIASES you may use as item names: "barracks" (your faction's tent/barr), "tower" (cheapest defensive tower
   you can build; its count is the TOTAL of towers of any kind), "aa" (anti-air site; total of AA sites).
 - ARMY FLOOR: from 100 s, combat value must be at least 20 credits per second of game time (4,000 at 300 s).
@@ -144,7 +144,7 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   that is being outweighed, and then to the nearest tower line, not across the map.
   A lead is also safest when the enemy cannot fight back: when the army you have is several times the enemy army and
   towers you have seen, ATTACK THE BASE and destroy it (that ends the match; do not set wave_min above ~12 then).
-  A 20-minute game was only won on the tiebreak because 18,000 of army sat behind "wave_min 30" and "zero chasing".
+  A big army idling behind a large wave_min, while the enemy has almost nothing left, only wins on the tiebreak.
 - BATTALIONS (executor-run, on top of the mode): while being raided or holding, the cheapest 2-3 fighters
   form a defence line in front of the base on `defend` stance (they engage in range, never chase); with 6+
   fighters and the opening done, packs of up to 3 run WIDE around the target on alternating sides every
@@ -195,10 +195,12 @@ defend with; the opponent is another AI that may attack from about 5 minutes wit
 Do the arithmetic every time: (cash + income x seconds) against the total cost of what you want, and put
 cheap, effective defence (towers, rocket soldiers e3 against tanks) in place BEFORE the push you expect.
 Tanks beat infantry; rocket infantry/towers beat tanks; never buy anti-air without seeing aircraft.
-COMPOSITION IS THE FIGHT: rocket soldiers (e3) are poor against infantry. When the visible enemy is mostly e1/e3
-(enemy_style mass_infantry), build tanks (2tnk/3tnk), e1 riflemen and flame towers, with only a few e3; when it is
-mostly vehicles, build e3 and tesla/pillbox. A line of 16 e3 walked into 24 infantry and lost the match: read
-visible_enemies before every unit list, and keep tanks in front of soldiers so the soldiers fire from behind them.
+COST EFFICIENCY: judge every purchase by the army it costs you. Towers cannot move and only help what walks into
+their range; cheap units can be everywhere, trade in the open and win the time-limit tiebreak. Keep static defence
+to a couple of towers until the army is at its floor, and spend the rest on units, workers and the power they need.
+COMPOSITION IS THE FIGHT: pick units that counter what the enemy actually fields (read visible_enemies before every
+unit list): anti-armour infantry is poor against infantry, tanks and flame are strong against it, and vehicles are
+best answered by anti-armour infantry and towers. Keep tanks in front of soldiers so the soldiers fire from behind them.
 
 HOW TO DECIDE
 - Think about economy (income, harvesters), tech path, army composition against what the enemy actually has
