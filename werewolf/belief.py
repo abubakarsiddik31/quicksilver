@@ -45,6 +45,12 @@ W_FALSE_SEER_CLAIM = 5.0
 W_INJECTION_ATTEMPT = 1.0
 W_ACCUSED_BY_DEAD_SEER = 4.0
 W_ATTACKED_CLEAN_VILLAGER = 1.5
+# A living seer claim is unverified, but it is the only hard information the table has. A lone claimant's
+# accusation counts; two claimants mean one of them is a wolf lying, so both are suspect and neither is believed.
+W_ACCUSED_BY_LONE_CLAIMANT = 3.0
+W_LONE_CLAIMANT = -1.5
+W_RIVAL_CLAIMANT = 2.0
+W_SILENT = 0.5  # said nothing while the table talked: a small tell, and it breaks day-1 ties off Player0
 # Applied once for anything we know is not a wolf — a published role, our own
 # investigation, or (for the seer) ourselves. It must not be summed per source:
 # an investigated villager is one fact, not two.
@@ -186,6 +192,9 @@ class Belief:
     seer_claims: set[int] = field(default_factory=set)
     accused_by_seer: set[int] = field(default_factory=set)
     injection_seats: set[int] = field(default_factory=set)
+    accusations: dict[int, set[int]] = field(default_factory=dict)  # sender -> seats they called wolves
+    speakers: set[int] = field(default_factory=set)
+    day: int | None = None
     winner: str | None = None
     eliminated: bool = False
 
@@ -223,6 +232,14 @@ class Belief:
             if seat is not None and isinstance(cause, str):
                 self.dead_causes[seat] = cause
         self.vote_history = vote_history(raw)
+        self.day = day_of(raw)
+        # Only the published seer's own accusations are evidence: anyone can type "PlayerN is wolf".
+        self.accused_by_seer = {
+            target
+            for seat, role in self.dead_roles.items()
+            if role == "SEER"
+            for target in self.accusations.get(seat, ())
+        }
         return self
 
     def note_messages(self, window: Any, *, our_position: int | None = None) -> Belief:
@@ -239,16 +256,15 @@ class Belief:
                 continue
             if getattr(message, "type", "chat") == "terminate":
                 continue
+            self.speakers.add(sender)
             content = getattr(message, "content", None)
             if isinstance(content, str):
                 if _SEER_CLAIM.search(content):
                     self.seer_claims.add(sender)
-                # Check if claimant accused a specific player as wolf
-                for target_match in _INVESTIGATION.finditer(content):
-                    t_str, verdict = target_match.group(1), target_match.group(2).lower()
+                for t_str, verdict in _INVESTIGATION.findall(content):
                     t_num = label_to_seat(t_str)
-                    if t_num is not None and verdict == "wolf":
-                        self.accused_by_seer.add(t_num)
+                    if t_num is not None and verdict.lower() == "wolf" and t_num != sender:
+                        self.accusations.setdefault(sender, set()).add(t_num)
 
         for flagged in msg.flag_messages(window, our_position=seat):
             sender = flagged.get("sender")
@@ -290,10 +306,21 @@ class Belief:
         return any(role == "SEER" for role in self.dead_roles.values())
 
     @property
+    def living_claimants(self) -> set[int]:
+        """Living players claiming the seer that nothing has disproved yet."""
+        return {
+            seat
+            for seat in self.seer_claims
+            if seat not in self.dead_roles and seat != self.seat and (not self.alive or seat in self.alive)
+        }
+
+    @property
     def false_seer_claimants(self) -> set[int]:
         """Living players claiming the seer after the real seer's role was
         published. The dead role list is truth, so those claims cannot be
         honest — this is a hard deduction, not a hunch."""
+        if self.role == "SEER":
+            return self.living_claimants  # we are the seer: every other claim is a wolf's
         if not self.seer_is_dead:
             return set()
         return {seat for seat in self.seer_claims if seat not in self.dead_roles}
@@ -322,6 +349,24 @@ class Belief:
         # If a confirmed dead seer pointed out this seat before dying
         if self.seer_is_dead and seat in self.accused_by_seer:
             score += W_ACCUSED_BY_DEAD_SEER
+
+        claimants = self.living_claimants
+        if not self.seer_is_dead and self.role != "SEER":
+            if len(claimants) == 1:
+                (only,) = claimants
+                if seat == only:
+                    score += W_LONE_CLAIMANT
+                elif seat in self.accusations.get(only, ()):
+                    score += W_ACCUSED_BY_LONE_CLAIMANT
+            elif len(claimants) > 1 and seat in claimants:
+                score += W_RIVAL_CLAIMANT
+        if (
+            seat != self.seat
+            and seat not in self.speakers
+            and len(self.speakers) >= 2
+            and seat in self.alive
+        ):
+            score += W_SILENT
 
         by_name = {name: s for s, name in self.seats.items()}
         for record in self.vote_history:
@@ -362,7 +407,11 @@ class Belief:
         """Living seats, most suspicious first. Excludes ourselves, anyone
         already dead, and anyone we know to be a villager."""
         candidates = [
-            seat for seat in self.alive if seat != self.seat and seat not in self.known_villagers
+            seat
+            for seat in self.alive
+            if seat != self.seat
+            and seat not in self.known_villagers
+            and seat not in (self.allies if self.role == "WOLF" else ())
         ]
         return sorted(
             ((seat, self.suspicion(seat)) for seat in candidates),

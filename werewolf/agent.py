@@ -35,10 +35,10 @@ are the seer) into a suspicion ranking, then picks by which side we are on.
 from __future__ import annotations
 
 from altruagent import TERMINATE_MESSAGING, DecisionContext, GameState, SendMessage
-from common import llm
+from common import llm, trace
 from werewolf import belief as belief_mod
 from werewolf import messages as msg
-from werewolf import speech, synthesizer
+from werewolf import jev, speech, synthesizer
 
 
 def _seat_from_action_id(action_id: object) -> int | None:
@@ -62,6 +62,8 @@ class WerewolfAgent:
         self.quota = msg.Quota()
         self._last_phase: str | None = None
         self._said: set[str] = set()
+        self._said_day: int | None = None
+        self._jev = jev.from_env()
         # Built lazily: no key configured means no model is ever constructed.
         self._llm = None
         self._llm_checked = False
@@ -79,28 +81,48 @@ class WerewolfAgent:
         client = self._client()
         window = getattr(state, "new_messages", None)
 
+        source = "rules"
+        target = None
         if engine == "day_vote":
-            # 1. Try Rule-Scored LLM Synthesis (if client configured and not an absolute blowout)
-            target = None
-            if client is not None:
-                target = synthesizer.synthesize_day_vote(client, self.belief, window)
-            # 2. Fall back to pure mathematical rule score
-            if target is None:
-                target = self.belief.best_vote()
+            candidates = self._vote_candidates()
+            ranked = self.belief.ranked_suspects()
+            if ranked and ranked[0][1] >= belief_mod.KNOWN_WOLF_SCORE:
+                target, source = self.belief.best_vote(), "proof"  # a proven wolf needs no second opinion
+            else:
+                # Jev decides; the Gemini jury and then the rule score only catch a failure.
+                target = jev.choose_seat(
+                    self._jev, self.belief, window, candidates, jev.VOTE, what="day_vote"
+                )
+                source = "jev"
+                if target is None and client is not None:
+                    target = synthesizer.synthesize_day_vote(client, self.belief, window)
+                    source = "gemini"
+                if target is None:
+                    target, source = self.belief.best_vote(), "rules"
 
         elif engine == "night_wolf":
-            # 1. Try strategic threat evaluation with LLM
-            target = None
-            if client is not None:
+            candidates = [
+                s
+                for s in self.belief.alive
+                if s != self.belief.seat and s not in self.belief.allies and s not in self.belief.known_wolves
+            ]
+            target = jev.choose_seat(self._jev, self.belief, window, candidates, jev.KILL, what="night_kill")
+            source = "jev"
+            if target is None and client is not None:
                 target = synthesizer.synthesize_night_kill(client, self.belief, window)
-            # 2. Fall back to rule score
+                source = "gemini"
             if target is None:
-                target = self.belief.best_kill()
+                target, source = self.belief.best_kill(), "rules"
 
         elif engine == "night_seer":
-            target = self._investigation_target()
-        else:
-            target = None
+            unchecked = self._unchecked()
+            target = jev.choose_seat(
+                self._jev, self.belief, window, unchecked, jev.INVESTIGATE, what="investigate"
+            )
+            source = "jev"
+            if target is None:
+                target, source = self._investigation_target(), "rules"
+        trace.write("werewolf", engine=engine, day=self.belief.day, role=self.belief.role, target=target, source=source)
 
         if target is not None:
             match = next((a for a in legal if _seat_from_action_id(a.action_id) == target), None)
@@ -111,18 +133,25 @@ class WerewolfAgent:
         # because a raised decision stops this match's worker.
         return legal[0]
 
-    def _investigation_target(self) -> int | None:
-        """Who to inspect: an unchecked player, most suspicious first. The
-        seer's checks are its only private information, so a wasted one is
-        expensive."""
+    def _vote_candidates(self) -> list[int]:
+        """Seats a day vote may name: never ourselves, an ally, or someone already cleared."""
+        return [seat for seat, _ in self.belief.ranked_suspects()]
+
+    def _unchecked(self) -> list[int]:
         checked = set(self.belief.investigations)
-        unchecked = [
+        return [
             seat
             for seat in self.belief.alive
             if seat != self.belief.seat
             and seat not in checked
             and seat not in self.belief.known_wolves
         ]
+
+    def _investigation_target(self) -> int | None:
+        """Who to inspect: an unchecked player, most suspicious first. The
+        seer's checks are its only private information, so a wasted one is
+        expensive."""
+        unchecked = self._unchecked()
         if not unchecked:
             return None
         return max(unchecked, key=lambda seat: (self.belief.suspicion(seat), -seat))
@@ -148,6 +177,9 @@ class WerewolfAgent:
             return TERMINATE_MESSAGING
 
         self._observe_window(state)
+        if self.belief.day != self._said_day:
+            # A new day is a new table: the seer reports tonight's check, everyone gives a fresh read.
+            self._said_day, self._said = self.belief.day, set()
 
         if not self.belief.eliminated and self.quota.can_send():
             composed = speech.compose(self.belief, already_sent=self._said)

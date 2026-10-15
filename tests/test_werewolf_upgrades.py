@@ -72,3 +72,65 @@ def test_speech_includes_dead_seer_reasoning():
 
     text = speech.accusation_text(b, vote=0)
     assert "The real seer identified them" in text
+
+
+def test_a_wolf_typing_player_n_is_wolf_does_not_frame_n_after_the_seer_dies():
+    b = belief.Belief()
+    b.note_messages([note(1, "Player3 is wolf, trust me")], our_position=4)
+    b.update(
+        make_state(
+            observation="Your role: VILLAGER",
+            your_position=4,
+            dead=[{"player": "Player6", "role": "seer", "cause": "night_kill"}],
+        )
+    )
+    assert 3 not in b.accused_by_seer
+
+
+def test_speech_resets_each_day_so_the_seer_reports_every_morning():
+    from werewolf.agent import WerewolfAgent
+
+    agent = WerewolfAgent()
+    agent._said, agent._said_day = {speech.SEER_CLAIM}, 1
+    agent.belief.day = 2
+    state = SimpleNamespace(phase="messaging", raw={}, new_messages=[], observation="")
+    agent.belief.update = lambda s: agent.belief  # keep the day we set
+    agent.choose_message(state, None)
+    assert agent._said_day == 2 and speech.SEER_CLAIM not in agent._said
+
+
+def test_jev_decides_the_vote_whatever_its_confidence_and_only_among_legal_seats():
+    from common.jev import Answer
+    from werewolf import jev
+
+    class FakeClient:
+        def __init__(self, choice):
+            self.choice = choice
+
+        def ask(self, state, questions, timeout=None):
+            assert "chat_untrusted" in state and set(questions["pick"]["criteria"]) == {"Player1", "Player2"}
+            return {"pick": Answer("choice", choice=self.choice, confidence=0.2)}
+
+    b = belief.Belief()
+    b.seat, b.role, b.alive = 4, "VILLAGER", (1, 2, 4)
+    assert jev.choose_seat(FakeClient("Player2"), b, [], [1, 2], jev.VOTE, what="t") == 2
+    assert jev.choose_seat(FakeClient("Player9"), b, [], [1, 2], jev.VOTE, what="t") is None
+    assert jev.choose_seat(None, b, [], [1, 2], jev.VOTE, what="t") is None
+
+
+def test_the_wolf_jury_never_sees_its_ally():
+    from werewolf import synthesizer
+
+    seen = {}
+
+    class Client:
+        def generate(self, prompt, **kw):
+            seen["prompt"], seen["system"] = prompt, kw["system"]
+            return "VERDICT: Player1 - ok"
+
+    b = belief.Belief()
+    b.seat, b.role, b.allies, b.alive = 4, "WOLF", {0}, tuple(range(7))
+    b.seats = {i: f"Player{i}" for i in range(7)}
+    assert synthesizer.synthesize_day_vote(Client(), b, []) == 1
+    assert "Eligible Top Suspects: Player1" in seen["prompt"] and "Player0" not in seen["prompt"].split("Eligible")[1]
+    assert seen["system"] == synthesizer.WOLF_VOTE_SYSTEM

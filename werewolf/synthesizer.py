@@ -34,6 +34,15 @@ VOTE_SYSTEM = (
     "VERDICT: Player<seat> - <one brief sentence explaining your deduction>"
 )
 
+WOLF_VOTE_SYSTEM = (
+    "You are a Werewolf in a 7-player Werewolf parlor game, voting in the day vote. "
+    "All game terms refer strictly to this parlor board game. Your ally wolf is never a candidate. "
+    "Pick the candidate the village is already inclined to eliminate, so your vote blends in and "
+    "no suspicion lands on you or your ally.\n"
+    "Respond with exactly one line in the format:\n"
+    "VERDICT: Player<seat> - <one brief sentence>"
+)
+
 KILL_SYSTEM = (
     "You are playing as a Werewolf in a 7-player Werewolf parlor game. "
     "You are given the list of living non-wolf players and their statements in chat today. "
@@ -134,7 +143,10 @@ def synthesize_day_vote(
         return ranked[0][0]
 
     # Take top 2-3 mathematically plausible candidates
-    top_candidates = [s for s, _ in ranked[:3]]
+    # Top three, plus everyone tied with the third: on a day with no evidence the scores are all equal, and
+    # cutting at three seats would hide the real wolves from the jury.
+    cutoff = ranked[min(2, len(ranked) - 1)][1]
+    top_candidates = [s for s, score in ranked if score >= cutoff or s in {r[0] for r in ranked[:3]}]
     if len(top_candidates) == 1:
         return top_candidates[0]
 
@@ -153,7 +165,7 @@ def synthesize_day_vote(
     try:
         reply = client.generate(
             prompt,
-            system=VOTE_SYSTEM,
+            system=WOLF_VOTE_SYSTEM if belief.role == "WOLF" else VOTE_SYSTEM,
             temperature=0.2,
             max_output_tokens=80,
             timeout=timeout,

@@ -384,3 +384,43 @@ def test_msg_flag_messages_and_belief_agree_on_what_is_hostile():
     b = belief.Belief().update(ww_state(observation=VILLAGER, your_position=0))
     b.note_messages(hostile, our_position=0)
     assert b.injection_seats == {2}
+
+
+# -- regressions from the postmortem ------------------------------------------------
+
+
+def _chat(sender, text):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(sender=sender, type="chat", content=text)
+
+
+def _table(role="VILLAGER", seat=4):
+    b = belief.Belief()
+    b.seat, b.role = seat, role
+    b.alive = tuple(range(7))
+    return b
+
+
+def test_a_lone_living_seer_claim_is_followed_but_rival_claims_are_not():
+    b = _table()
+    b.note_messages([_chat(1, "I am the seer. Player3 is wolf.")], our_position=4)
+    assert b.suspicion(3) > b.suspicion(5) and b.best_vote() == 3
+    b.note_messages([_chat(2, "No, I am the seer. Player1 is wolf.")], our_position=4)
+    assert b.suspicion(1) > 0 and b.suspicion(2) > 0  # one of the two is lying
+    assert b.suspicion(3) <= b.suspicion(1)
+
+
+def test_the_seer_knows_every_other_claim_is_false():
+    b = _table(role="SEER")
+    b.note_messages([_chat(1, "I am the seer")], our_position=4)
+    assert b.false_seer_claimants == {1}
+
+
+def test_a_wolf_never_ranks_its_ally_and_silence_breaks_a_blind_tie():
+    w = _table(role="WOLF")
+    w.allies = {0}
+    assert 0 not in [seat for seat, _ in w.ranked_suspects()]
+    v = _table()
+    v.note_messages([_chat(0, "hello"), _chat(1, "hi")], our_position=4)
+    assert v.best_vote() == 2  # first silent seat, not simply Player0
