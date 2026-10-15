@@ -370,6 +370,13 @@ def battle_request(
     terrain = obs.get("terrain")
     if isinstance(terrain, str) and terrain and terrain != "none":
         state["terrain"] = terrain
+    if fld.terrain:
+        state["terrain"] = (
+            f"{fld.terrain} terrain is up (priority moves such as Sucker Punch, Fake Out and Aqua Jet "
+            "cannot hit grounded Pokémon while it lasts)"
+            if fld.terrain == "psychic"
+            else f"{fld.terrain} terrain is up"
+        )
     return Request(state=state, criteria=criteria, instructions=BATTLE_INSTRUCTIONS)
 
 

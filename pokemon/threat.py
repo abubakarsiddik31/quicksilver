@@ -7,6 +7,7 @@ exception, because a raised error here kills that match's worker.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,10 +39,26 @@ def _flat(value: Any) -> str:
     return "".join(ch for ch in text.lower() if ch.isalnum())
 
 
+TERRAINS = ("psychic", "electric", "grassy", "misty")
+TERRAIN_BOOST = 1.3  # a grounded user's move of the terrain's type
+TERRAIN_TYPE = {"psychic": "psychic", "electric": "electric", "grassy": "grass"}
+
+
+def is_grounded(card: Any) -> bool:
+    """Whether terrain touches this Pokémon: not a Flying type and not floating."""
+    types = {str(t).lower() for t in getattr(card, "types", ())}
+    return not (
+        "flying" in types
+        or getattr(card, "ability", None) == "Levitate"
+        or getattr(card, "item", None) == "Air Balloon"
+    )
+
+
 @dataclass(frozen=True)
 class Field:
     weather: str | None = None
     trick_room: bool = False
+    terrain: str | None = None  # "psychic" | "electric" | "grassy" | "misty": read from ``fields``
     tailwind_us: bool = False
     tailwind_them: bool = False
     reflect_us: bool = False
@@ -62,6 +79,9 @@ def field_of(obs: dict) -> Field:
         if isinstance(weather, str) and weather and weather.lower() != "none"
         else None,
         trick_room="trickroom" in _flat(obs.get("fields")),
+        terrain=next(
+            (t for t in TERRAINS if f"{t}terrain" in _flat(obs.get("fields"))), None
+        ),
         tailwind_us="tailwind" in ours,
         tailwind_them="tailwind" in theirs,
         reflect_us="reflect" in ours or "auroraveil" in ours,
@@ -113,8 +133,27 @@ def calc(
     if getattr(attacker, "card", None) is None or getattr(defender, "card", None) is None:
         return None
     status = str(attacker.summary.get("status") or "").lower()
+    if (
+        fld.terrain == "psychic"
+        and dex.move_priority(move_id) > 0
+        and is_grounded(defender.card)
+        and dex.is_damaging(move_id)
+    ):
+        # Psychic Terrain stops priority moves (Sucker Punch, Aqua Jet, Extreme Speed...) on grounded targets
+        # from either side: a last match kept scoring Sucker Punch as a guaranteed KO under our own terrain.
+        return DamageResult(
+            move=move_id,
+            move_type=dex.move_type(move_id),
+            category=dex.move_category(move_id),
+            power=dex.move_power(move_id),
+            effectiveness=0.0,
+            min_damage=0,
+            max_damage=0,
+            defender_max_hp=getattr(defender.card, "max_hp", 0),
+            unmodelled=("blocked by Psychic Terrain",),
+        )
     try:
-        return damage(
+        result = damage(
             attacker.card,
             defender.card,
             move_id,
@@ -129,6 +168,18 @@ def calc(
         )
     except Exception:  # noqa: BLE001 - scoring must never break a decision
         return None
+    if (
+        fld.terrain
+        and result is not None
+        and str(result.move_type or "").lower() == TERRAIN_TYPE.get(fld.terrain)
+        and is_grounded(attacker.card)
+    ):
+        result = dataclasses.replace(
+            result,
+            min_damage=int(result.min_damage * TERRAIN_BOOST),
+            max_damage=int(result.max_damage * TERRAIN_BOOST),
+        )
+    return result
 
 
 def best_hit(

@@ -506,3 +506,23 @@ def test_a_slim_later_sighting_does_not_wipe_a_full_card():
     got = battle._find_in_pool("Iron Valiant", match.with_fallback(None), "ours")
     assert got["moves"] == ["Close Combat"]
     assert got["_owner"] == "ours"
+
+
+def test_psychic_terrain_blocks_priority_moves_and_boosts_psychic():
+    ctx = ctx_for(
+        [mon("Chien-Pao", moves=["Sucker Punch"]), mon("Indeedee-F", moves=["Psychic"])],
+        [mon("Basculegion", moves=["Wave Crash"]), mon("Tornadus", moves=["Bleakwind Storm"])],
+        fields={"PSYCHIC_TERRAIN": 2},
+    )
+    fld = ctx.field
+    assert fld.terrain == "psychic"
+    pao, indeedee = ctx.ours
+    basc, torn = ctx.theirs
+    blocked = threat.calc(pao, basc, "Sucker Punch", fld, defender_is_ours=False)
+    assert blocked.max_damage == 0 and blocked.immune
+    assert threat.calc(pao, basc, "Sucker Punch", threat.Field(), defender_is_ours=False).max_damage > 0
+    # a Flying target is not grounded, so the terrain does not protect it
+    assert threat.calc(pao, torn, "Sucker Punch", fld, defender_is_ours=False).max_damage > 0
+    boosted = threat.calc(indeedee, basc, "Psychic", fld, defender_is_ours=False)
+    plain = threat.calc(indeedee, basc, "Psychic", threat.Field(), defender_is_ours=False)
+    assert boosted.max_damage > plain.max_damage
