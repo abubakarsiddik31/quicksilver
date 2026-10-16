@@ -125,7 +125,10 @@ class PokemonAgent:
         onto the server's own action list, with Jev reading the full draft
         (rules, both rosters, the top cards' swing math) when time allows."""
         obs = observation.observation_of(state)
-        top = draft.top_cards(obs, agent_id=context.agent_id)
+        # The observation's rosters are species-only stubs; the swing math wants
+        # every picked card's real moves, so score against the full card sets.
+        loaded_pool = self._cards()
+        top = draft.top_cards(obs, agent_id=context.agent_id, pool_cards=loaded_pool)
 
         if len(top) >= 2 and self._jev.enabled and budget.affords(obs, tactician.JEV_TIMEOUT):
             request = tactician.draft_request(obs, context.agent_id, top)
@@ -139,7 +142,9 @@ class PokemonAgent:
                     if isinstance(action_id, str) and action_id == f"draft_pick:{card_id}":
                         return action
 
-        chosen = draft.choose_from_actions(obs, agent_id=context.agent_id, legal_actions=legal)
+        chosen = draft.choose_from_actions(
+            obs, agent_id=context.agent_id, legal_actions=legal, pool_cards=loaded_pool
+        )
         return chosen if chosen is not None else legal[0]
 
     def _learn(self, state: GameState, template: dict | None = None) -> None:
@@ -288,6 +293,9 @@ class PokemonAgent:
             obs, list(loaded_pool) + list(pool.load_pool(self._pool_path) or [])
         )
         if state is None:
+            # A board the search cannot rebuild silently degrades the whole
+            # battle to heuristics; record it so the fallback cannot hide.
+            trace.write("sim", ok=False, error="board rebuild failed", turn=turn)
             return None
         result = self._sim.search(state, int(seconds * 1000))
         if not result or not result.get("ranked"):
@@ -308,6 +316,9 @@ class PokemonAgent:
                     top=[(r["choice"], round(r["value"], 3)) for r in result["ranked"][:5]],
                 )
                 return plan
+        # The engine ranked plans but none mapped onto the server's legal actions:
+        # like an unreadable board, this silently degrades the turn — record it.
+        trace.write("sim", ok=False, error="no ranked plan was legal", turn=turn)
         return None
 
     def _plan_turn(self, template: dict, obs: dict, loaded_pool) -> dict:

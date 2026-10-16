@@ -153,6 +153,9 @@ class MatchMemory:
         self.buildings: dict[int, Sighting] = {}
         self.peak_army: dict[str, int] = {}
         self.peak_value = 0.0
+        self._peak_at = 0.0
+        self._income_cum_at_peak = 0.0
+        self._kills_at_peak = 0.0
         self.harvesters_seen = 0
         self.last_combat_seen = -1e9
         self.enemy_base: tuple[float, float] | None = None
@@ -363,6 +366,8 @@ class MatchMemory:
         value = sum(self.cost_of(k) * n for k, n in now_army.items())
         if value > self.peak_value:
             self.peak_value, self.peak_army = value, dict(now_army)
+            self._peak_at, self._income_cum_at_peak = game_s, self.income_cum
+            self._kills_at_peak = (self._counters or (0.0,))[0]
         self.harvesters_seen = max(
             self.harvesters_seen,
             sum(1 for s in self.units.values() if s.kind == "harv" and game_s - s.last <= 30.0),
@@ -559,6 +564,19 @@ class MatchMemory:
         remembered = sum(self.cost_of(s.kind) * 0.6 for s in gone.values())
         sighted = visible_value + remembered
         economic = self._raw_army_estimate(game_s) * self._bias
+        # The economy's estimate integrates their WHOLE income history, so in silence it silently
+        # counts force we have already seen and killed - the phantom that priced every late push at
+        # 0.4-to-1 while the enemy fielded a fraction of it. What they can still have is capped by
+        # the largest army ever seen in the field, plus what their economy could have built since
+        # that sighting, less what we killed since.
+        ceiling = max(
+            0.0,
+            self.peak_value
+            + (self.income_cum - self._income_cum_at_peak) * self._my_efficiency()
+            - ((self._counters or (0.0,))[0] - self._kills_at_peak),
+        )
+        if self.peak_value:
+            economic = min(economic, ceiling)
         since = game_s - self.last_combat_seen if self.last_combat_seen > -1e8 else game_s
         # What is in view is a floor, never the whole: units we cannot see are still there. Where we can see their
         # base the economy's estimate counts for less (we would see the army if it were home), elsewhere in full.
@@ -685,7 +703,7 @@ class MatchMemory:
                 "income_change": round(now_state["income"] - last.start["income"], 1),
             }
         self._plan_version = version
-        self.plans.append(PlanRecord(version, game_s, str(assessment)[:300], missions, now_state))
+        self.plans.append(PlanRecord(version, game_s, str(assessment), missions, now_state))
 
     # -- what the General reads -------------------------------------------------------------------------------
 
@@ -716,6 +734,16 @@ class MatchMemory:
         if self._open:
             fights.append({**self._open.as_brief(), "result": "in progress"})
         recent = self.realised_exchange(120.0, game_s)
+        # The last two plans in your own words; the older ones as what they achieved (measured,
+        # and worth more than stale prose). Everything ever planned is in the trace.
+        all_plans = list(self.plans)
+        plans_brief = [
+            {"v": p.version, "t": round(p.t), "assessment": p.assessment, "result": p.outcome}
+            for p in all_plans[-2:]
+        ]
+        plans_brief += [
+            {"v": p.version, "t": round(p.t), "result": p.outcome} for p in all_plans[-7:-2]
+        ]
         standing = list(self.standing)
         trend = None
         if len(standing) >= 5:
@@ -768,10 +796,7 @@ class MatchMemory:
                 "model_calibration": round(self.exchange_calibration, 2),
                 "total": len(self.fights),
             },
-            "plans_so_far": [
-                {"v": p.version, "t": round(p.t), "assessment": p.assessment, "result": p.outcome}
-                for p in list(self.plans)[-5:]
-            ],
+            "plans_so_far": {"total": len(all_plans), "recent": plans_brief},
             "trend": trend,
             "our_economy": self.economy_picture(obs, game_s),
         }

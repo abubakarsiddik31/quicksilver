@@ -79,6 +79,13 @@ ALLIED_FACTIONS = {"allies", "allied", "england", "france", "germany"}
 SOVIET_FACTIONS = {"soviet", "soviets", "russia", "ukraine"}
 TOWER_ORDER = ("pbox", "ftur", "gun", "tsla")  # cheapest first
 AA_ORDER = ("agun", "sam")
+# tank1 = light, tank2 = the faction's main battle tank, tank3 = heavy: Allies field 1tnk/2tnk,
+# Soviets 3tnk/4tnk, and a plan naming the other side's tank burned consults all match
+TANK_ORDERS = {
+    "tank1": ("1tnk", "2tnk", "3tnk"),
+    "tank2": ("2tnk", "3tnk"),
+    "tank3": ("3tnk", "4tnk", "2tnk"),
+}
 SCOUT_PREF = ("dog", "jeep", "e1")
 FALLBACK_SECS = {
     "powr": 14,
@@ -304,7 +311,7 @@ ENEMY_TECH = {
     "fix",
     "proc",
 }  # new enemy production structures: vehicles, heavy tanks, or an expansion
-ALIAS_ITEMS = {"barracks", "tower", "aa"}
+ALIAS_ITEMS = {"barracks", "tower", "aa", "tank1", "tank2", "tank3"}
 
 
 def _cell(value: Any) -> tuple[int, int] | None:
@@ -541,15 +548,23 @@ class RedAlertAgent:
         return order[0]
 
     def _resolve(self, item: str, faction: str, avail: set[str], owned: dict[str, int]) -> str:
-        """Aliases -> this faction's real item: barracks, tower (cheapest defence), aa."""
+        """Aliases -> this faction's real item: barracks, tower (cheapest defence), aa, tank1/2/3."""
         if item == "barracks":
             return self._barracks(item, faction, avail, owned)
-        group = TOWER_ORDER if item == "tower" else AA_ORDER if item == "aa" else None
+        group = (
+            TOWER_ORDER
+            if item == "tower"
+            else AA_ORDER
+            if item == "aa"
+            else TANK_ORDERS.get(item)
+        )
         if group is None:
             return item
         for name in group:
             if name in avail:
                 return name
+        if item in TANK_ORDERS:
+            return next((t for t in ("1tnk", "2tnk", "3tnk") if t in avail), item)
         soviet = faction in SOVIET_FACTIONS
         return ("ftur" if soviet else "pbox") if item == "tower" else ("sam" if soviet else "agun")
 
@@ -1375,7 +1390,14 @@ class RedAlertAgent:
                 # left a match with 4,500 in coils and half the army of the side that bought riflemen
             rate = self.rate_of(item)
             if not affordable(
-                cost, rate, floor_exempt=(item == "powr" and drained > provided), reserve=army_claim
+                cost,
+                rate,
+                # the lights-out plant and the FIRST refinery commit below the floor: without a
+                # refinery no ore ever becomes cash, so income-restoring items are the floor's own
+                # purpose (the lost match's proc starved at 88% while full harvesters waited)
+                floor_exempt=(item == "powr" and drained > provided)
+                or (item == "proc" and not owned.get("proc")),
+                reserve=army_claim,
             ):
                 continue
             if self._cooling(f"build:{item}"):
@@ -1590,9 +1612,11 @@ class RedAlertAgent:
                     kinds_owned.setdefault(str(b.get("type")).lower(), []).append(b)
             # What the income needs, followed back through the rules' own prerequisites (refinery <- power,
             # harvester <- war factory, ...): selling the last of any of it trades the recovery for the cash.
+            # The last WAR FACTORY is protected outright, not by derivation: the derived chain missed it and
+            # a match died having sold its only weap at cash 0 - rifles to the end.
             chain = self._chain(("proc", "harv"))
             for kind in REFINERY_SELL_ORDER:
-                keep = 1 if (kind in BARRACKS or kind in chain) else 0
+                keep = 1 if (kind in BARRACKS or kind in ("weap", "proc") or kind in chain) else 0
                 if len(kinds_owned.get(kind, [])) > keep:
                     victim = kinds_owned[kind][-1]
                     orders.append({"cmd": "sell", "building": victim["id"]})
@@ -2092,8 +2116,23 @@ class RedAlertAgent:
         mem = self._memory_view
         if mem:
             out["match_memory"] = {
-                k: mem.get(k) for k in ("our_economy", "assault_option", "clock") if mem.get(k)
+                k: mem.get(k)
+                for k in ("our_economy", "assault_option", "clock", "fights_so_far", "trend")
+                if mem.get(k)
             }
+            enemy = mem.get("enemy") or {}
+            belief = {
+                k: enemy.get(k)
+                for k in (
+                    "army_belief_value",
+                    "army_belief_range",
+                    "unseen_estimate",
+                    "income_estimate_per_s",
+                )
+                if enemy.get(k) is not None
+            }
+            if belief:
+                out["match_memory"]["enemy_belief"] = belief
         self._battle = out
         return out
 

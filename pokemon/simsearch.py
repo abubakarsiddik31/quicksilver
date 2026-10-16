@@ -175,7 +175,22 @@ def _set_of(card: dict) -> dict:
         "evs": dict(card.get("evs") or {}),
         "ivs": dict(card.get("ivs") or {}),
         "level": int(card.get("level") or 50),
+        "teraType": card.get("tera_type") or None,
     }
+
+
+def _tera_type(value: dict) -> str | None:
+    """The Tera type the observation says this Pokémon has, or ``None``.
+
+    A terastallized Pokémon's ``types`` list collapses to the Tera type alone;
+    the engine otherwise defaults to the species' first type, which is what an
+    un-terastallized board should stay on."""
+    if not value.get("is_terastallized"):
+        return None
+    types = [t for t in (value.get("types") or []) if isinstance(t, str)]
+    if len(types) == 1:
+        return str(types[0]).title()
+    return None
 
 
 class LogFacts:
@@ -333,6 +348,7 @@ def build_state(obs: dict, cards: list[dict], *, seed: int | None = None) -> dic
             "species": _norm(value.get("species")),
             "key": key,
             "wasActive": bool(value.get("active")),
+            "terastallized": _tera_type(value),
         }
 
     def side_mons(
@@ -384,6 +400,7 @@ def build_state(obs: dict, cards: list[dict], *, seed: int | None = None) -> dic
                         "volatiles": [],
                         "species": _norm(name),
                         "key": f"{prefix}: {name}",
+                        "terastallized": None,
                     }
                 )
         mons = ordered + rest

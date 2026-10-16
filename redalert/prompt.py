@@ -157,8 +157,51 @@ the deficit and empties the base; fighting at home with your towers and reinforc
 exchange. If you are ahead, protect it by winning the fights that come to you, not by hiding. Assets count too:
 keep what you have alive.
 
+READ THE STANDING, THEN CHOOSE THE POSTURE. The standing is the trade balance and the honest army comparison
+(`clock.trade_balance`, `enemy.army_belief_*`), never the raw asset pile - assets cannot rescue a negative
+deficit. When you are AHEAD, hold your ground: a lead is defended at home, where towers and reinforcements
+trade in your favour; take the fights that come to you and do not gamble the army on their walls. When you are
+BEHIND, fortifying is the one unacceptable answer - every minute entrenched deepens a deficit the clock will
+make permanent. Shift the weight into the attack division (grow the strike's share, keep the guard the base
+truly needs), keep training to the last safe moment, and pick the moment on INFORMATION: while blind, fast units
+sent to their base come back with their true numbers, their composition and the direction they are moving. If
+that recon shows them marching on you, meet them at home - their losses are your trades. If it shows them
+sitting behind defences, push everything at their base before the clock closes: killing buildings is the only
+line that can still flip a losing score. Decide from what the recon sees, not from fear of what it might.
+
 ECONOMY IS THE ARMY. Income pays for every unit, so protect your harvesters and raid theirs. Spend what you earn
 on what the fight needs; money held back is army you do not have, money spent on the wrong things is the same.
+Economy lost is the emergency above all others: a match was lost with 1,400 credits of ore sitting in full
+harvesters because their only refinery died and the replacement starved at 88% for three minutes. Two income
+paths before serious army spending, the defence line shields the refinery and the ore field (not just the base
+centre), and when income dies, rebuilding it comes before everything else in your lists. If income AND cash are
+both dead, selling redundant structures to restart income is correct; selling your last refinery, war factory or
+barracks is how a live player disarms itself - never.
+
+KNOW THE WHOLE SPECTRUM OF ATTACKS. What they can do is written in what you have seen of their buildings and
+tech (`enemy.buildings_known`, `tech_seen`): an airfield or helipad means aircraft are coming (anti-air only
+then); a tech centre means long-range artillery and special weapons; a naval yard on a water map means ships;
+engineers (e6) near your base mean building capture - guard what matters. Read what they CAN field, keep one
+answer ready for each, and expect the attack that is not the one you are watching for: a raid that dies cheaply
+was often the diversion.
+
+UNORTHODOX PLAYS (opportunities, never the plan: each needs its precondition, and the fight model's expected
+exchange is the price of admission - if the precondition fails, the play is a donation)
+- COUNTER-RAID: while their army is committed at YOUR base, their base is naked. A fast detachment on their
+  harvesters and refineries breaks the siege (their army must walk home) and wins the trade. Needs their home
+  defence weak and the walk not too long.
+- HARVESTER CRUSH: an overrun base trades its own harvesters for clumped enemy infantry - a loaded harvester
+  costs 1,100 and can flatten a swarm worth several times that. A dying trade, but it can be the best trade on
+  the board.
+- POWER STRIKE: their power plants are the softest valuable target. Killing one drops their advanced defences
+  offline and slows their training to a crawl (low power halves production speed). A raid that ends a tesla's
+  reign is worth more than three tanks.
+- FEINT: the flank packs already swing on alternating axes; use one to PULL their guard line before the main
+  body arrives, not only to raid. Needs the front held.
+- RAIDER HUNT: their harassers are pure profit - cheap fast units that kill them pay double (their kill income
+  denied, yours defended). Cheap units on this job, never the strike force.
+- DENY VALUE: a building that is certainly lost can be sold so their kill earns nothing - but only redundant or
+  defensive ones, never the last of what produces or earns.
 
 ADAPT. If the same approach has failed twice, it is the wrong approach: change something real (composition, where
 you fight, how you scout, whether you attack) rather than repeating it with a bigger number. Say in your
@@ -178,8 +221,9 @@ The harness keeps the whole game for you and never resets it. It is the long-run
 - `fights_so_far`: every engagement: what you had, what they had at its peak, what each side lost, the exchange
   (their value destroyed per value you lost), the exchange the fight model EXPECTED beforehand, and how it ended.
   `model_calibration` below 1 means fights have gone worse than the model said: trust a plan less, not more.
-- `plans_so_far`: your own earlier plans and what each achieved (exchange gained, army and income change). If a
-  plan's result was poor, do not restate it with a bigger number: find out why from the fights and change it.
+- `plans_so_far`: your own recent plans in your own words and, for the older ones, what each achieved (exchange
+  gained, army and income change). If a plan's result was poor, do not restate it with a bigger number: find out
+  why from the fights and change it.
 - `trend`: where economy, your army and their estimated army are heading.
 - `our_economy`: your own income as measurements - what each harvester is doing (`harvesters_by_activity`, idle
   ones, their hp), whether enemy combat units are near them, where and with what nearby the last ones died
@@ -409,6 +453,61 @@ def build_system(config: dict[str, Any] | None, map_id: str | None) -> str:
     return "\n\n".join(parts)
 
 
+def state_signature(raw: dict[str, Any]) -> tuple:
+    """A cheap fingerprint for 'has the battle changed since the last ask?'.
+
+    Deliberately coarse - money in buckets, hp in quarters - so a quiet match holds one signature
+    for seconds at a stretch while a fight, a finished build, a power change or a new sighting
+    changes it at once. Production *progress* is excluded on purpose: a structure going from 41%
+    to 43% built is not news the advisors need.
+    """
+    obs = _dict(raw.get("observation"))
+    econ = _dict(obs.get("economy"))
+    mil = _dict(obs.get("military"))
+    cash = econ.get("cash")
+    provided, drained = econ.get("power_provided"), econ.get("power_drained")
+    return (
+        tuple(
+            sorted(
+                (str(u.get("type")).lower(), int(float(u.get("hp") or 0) // 25), bool(u.get("idle")))
+                for u in (obs.get("units") or [])
+                if isinstance(u, dict) and isinstance(u.get("hp"), (int, float))
+            )
+        ),
+        tuple(
+            sorted(
+                (e.get("id"), str(e.get("type")).lower(), int(float(e.get("hp") or 0) // 25))
+                for e in (obs.get("visible_enemies") or [])
+                if isinstance(e, dict)
+            )
+        ),
+        tuple(
+            sorted(
+                (str(b.get("type")).lower(), int(float(b.get("hp") or 0) // 25), bool(b.get("powered")))
+                for b in (obs.get("buildings") or [])
+                if isinstance(b, dict)
+            )
+        ),
+        tuple(
+            (str(p.get("item")), str(p.get("queue")), bool(p.get("ready")))
+            for p in (obs.get("production") or [])
+            if isinstance(p, dict)
+        ),
+        int(float(cash) // 200) if isinstance(cash, (int, float)) else -1,
+        int(float(provided) - float(drained)) // 100
+        if isinstance(provided, (int, float)) and isinstance(drained, (int, float))
+        else -1,
+        (
+            int(float(mil.get("kills_cost") or 0)),
+            int(float(mil.get("deaths_cost") or 0)),
+        ),
+        max(
+            (e.get("seq") for e in (obs.get("events") or []) if isinstance(e.get("seq"), int)),
+            default=-1,
+        ),
+    )
+
+
 def _units(obs: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for u in (obs.get("units") or [])[:MAX_UNITS]:
@@ -482,12 +581,23 @@ def build_user(
         "harness_measurements": extra,
     }
     text = json.dumps(state, separators=(",", ":"), default=str)
-    if len(text) > MAX_USER_CHARS:  # shrink the biggest lists before giving up detail
-        for key in ("units", "visible_enemies", "events", "last_orders"):
-            state[key] = (
-                (state[key] or [])[: max(10, len(state[key] or []) // 3)]
-                if isinstance(state[key], list)
-                else None
-            )
-        text = json.dumps(state, separators=(",", ":"), default=str)[:MAX_USER_CHARS]
+    if len(text) > MAX_USER_CHARS:
+        # Shrink whole items, most-recent-first in what is kept, before giving up any detail:
+        # your old assessments go first (the trace keeps every one), then the big lists.
+        # Only an absolute last resort cuts text mid-way.
+        hist = state.get("your_previous_assessments")
+        while isinstance(hist, list) and hist and len(text) > MAX_USER_CHARS:
+            hist = hist[1:]
+            state["your_previous_assessments"] = hist
+            text = json.dumps(state, separators=(",", ":"), default=str)
+        rounds = 0
+        while len(text) > MAX_USER_CHARS and rounds < 3:
+            rounds += 1
+            for key in ("units", "visible_enemies", "events", "last_orders", "buildings"):
+                value = state.get(key)
+                if isinstance(value, list) and value:
+                    state[key] = value[: max(8, len(value) // (2 * rounds))]
+            text = json.dumps(state, separators=(",", ":"), default=str)
+        if len(text) > MAX_USER_CHARS:
+            text = text[:MAX_USER_CHARS]
     return "CURRENT STATE (answer with your plan JSON):\n" + text

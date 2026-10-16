@@ -2,16 +2,23 @@
 
 ``economy.cash`` + ``economy.ore`` only show money after spending, so income is recovered as
 (change in cash + what the queues drew in the same window) / seconds, using each
-queue entry's ``progress`` times its cost. Smoothed with an EMA so a single
-refinery drop-off doesn't whipsaw it. Used by the LLM and Jev prompts.
+queue entry's ``progress`` times its cost.
+
+Ore arrives as LUMPS: a refinery drop-off lands hundreds of credits in one tick, so a
+fast average whipsaws between single digits and hundreds and every consumer of the
+number (the spending governor's budget, the prompts' money arithmetic, the memory's
+income integral and through it the enemy-strength estimate) makes its decisions on a
+spike. The honest rate is the integral over several drop-off periods: a trailing window
+wide enough that one dump moves it by roughly its share of the window.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
-WINDOW_S = 1.0
+WINDOW_S = 20.0
 
 
 def funds(econ: Any) -> float:
@@ -30,16 +37,14 @@ def funds(econ: Any) -> float:
     return total
 
 
-ALPHA = 0.25
-
-
 class EconTracker:
     def __init__(self) -> None:
-        self.income = 0.0  # credits per second, smoothed
+        self.income = 0.0  # credits per second, trailing-window rate
         self._cash: float | None = None
         self._t: float | None = None
         self._spend = 0.0
         self._prog: dict[tuple[str, int], float] = {}
+        self._samples: deque[tuple[float, float]] = deque()  # (window start, credits gained in it)
 
     def update(self, obs: dict[str, Any], cost_of: Callable[[str], int], now: float) -> float:
         econ = obs.get("economy") or {}
@@ -67,10 +72,16 @@ class EconTracker:
             self._cash, self._t, self._spend = float(cash), now, 0.0
             return self.income
         dt = now - self._t
-        if dt >= WINDOW_S:
-            gained = max(0.0, (float(cash) - self._cash + self._spend) / dt)
-            self.income = (
-                gained if self.income == 0.0 else ALPHA * gained + (1 - ALPHA) * self.income
-            )
+        if dt >= 1.0:
+            gained = max(0.0, float(cash) - self._cash + self._spend)
+            self._samples.append((self._t, gained))
+            horizon = now - WINDOW_S
+            while self._samples and self._samples[0][0] < horizon:
+                self._samples.popleft()
+            if self._samples:
+                span = now - self._samples[0][0]
+                self.income = sum(g for _, g in self._samples) / span if span > 0.5 else 0.0
+            else:
+                self.income = 0.0
             self._cash, self._t, self._spend = float(cash), now, 0.0
         return self.income

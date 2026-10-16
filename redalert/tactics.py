@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from common.jev import Answer, JevClient
+from redalert.prompt import state_signature
 from redalert import trace
 from redalert.doctrine import DOCTRINES
 from redalert.intel import NON_COMBAT
@@ -45,6 +46,7 @@ from redalert.plan import Plan
 
 REFRESH_S = 0.6
 REFRESH_URGENT_S = 0.4
+QUIET_REFRESH_S = 5.0  # re-ask an unchanged battle at most this often (the last answers stay in force)
 ADVICE_TTL_S = 3.0
 MAX_CALLS = 4000
 BACKOFF_FIRST_S, BACKOFF_MAX_S = 2.0, 20.0
@@ -157,6 +159,9 @@ class TacticalAdvisor:
         self._backoff_until = 0.0
         self._last_seq = -1
         self._urgent = False
+        self._sig: tuple | None = None
+        self._asked_sig: tuple | None = None
+        self._sig_at = -1e9
         self._escalations: list[str] = []
         self._esc_at: dict[str, float] = {}
         self._style_last = ""
@@ -244,7 +249,7 @@ class TacticalAdvisor:
                 "draw_budget_per_s": round(cands.budget, 1),
             },
             "production_detail": [
-                {k: p.get(k) for k in ("item", "queue", "progress", "remaining_s", "ready")}
+                [p.get("item"), p.get("queue"), p.get("progress"), p.get("remaining_s"), bool(p.get("ready"))]
                 for p in production
             ],
             "ready_to_place": [
@@ -269,7 +274,6 @@ class TacticalAdvisor:
                 cands.costs,
             ),
             "enemy_army_detail": self._detail(obs.get("visible_enemies"), set(), cands.costs),
-            "enemy_units_seen": self._counts(obs.get("visible_enemies")),
             "enemy_buildings_seen": self._counts(obs.get("visible_enemy_buildings")),
             "recent_event_counts": kinds,
             "recent_events": [
@@ -296,17 +300,14 @@ class TacticalAdvisor:
             # composition of a fight matters more than the size of the army left standing at home.
             "rules": {
                 "win": "Destroy every enemy building and the MCV before the time limit.",
-                "time_limit": "At the limit the higher (kills value - losses value) wins; if tied, the higher "
-                "assets value wins. Check clock.remaining_s. A big army sitting at home earns "
-                "nothing: it must either win trades or destroy buildings.",
-                "trades": "Every fight should cost the enemy more than it costs us: feeding units piecemeal into "
-                "a stronger army or into defences loses the match even with more units and more assets. "
-                "A wave should leave only when it can beat what defends the target.",
-                "closing": "With under five minutes left and negative trades the executor attacks with "
-                "everything; when ahead on trades it protects the lead instead.",
-                "economy": "Income is only harvesters on ore. At cash 0 the engine draws credits across ALL "
-                "production queues at once, so overcommitting crawls everything; low power halves "
-                "production speed.",
+                "time_limit": "At the limit the higher (kills value - losses value) wins, ties -> higher assets. "
+                "Check clock.remaining_s: an idle home army earns nothing.",
+                "trades": "Every fight must cost the enemy more than it costs us; piecemeal feeding loses even "
+                "with more units and assets. A wave leaves only when it beats what defends the target.",
+                "closing": "Under five minutes left and negative trades -> the executor attacks with everything; "
+                "ahead on trades -> it protects the lead.",
+                "economy": "Income = harvesters on ore. At cash 0 the engine draws from ALL queues at once, so "
+                "overcommitting crawls everything; low power halves production speed.",
             },
         }
         if plan.tactics_hint:
@@ -453,12 +454,15 @@ class TacticalAdvisor:
             return
         now = self._clock()
         events = [e for e in (raw["observation"].get("events") or []) if isinstance(e, dict)]
+        sig = state_signature(raw)
         with self._lock:
             if not self._announced:
                 self._announced = True
                 self._log(
                     "[jev] tactical advisor on: Jev decides fast tactics, the LLM sets the strategy"
                 )
+            if sig != self._sig:
+                self._sig, self._sig_at = sig, now
             seqs = [e["seq"] for e in events if isinstance(e.get("seq"), int)]
             if seqs:
                 fresh = [
@@ -475,10 +479,13 @@ class TacticalAdvisor:
                 or now - self._last_start < gap
             ):
                 return
+            if sig == self._asked_sig and now - self._sig_at < QUIET_REFRESH_S:
+                return  # nothing material has changed since the answer in force; it still stands
             request, meta = self.build_request(raw, plan, cands)
             if not request["questions"]:
                 return
             self._busy, self._urgent = True, False
+            self._asked_sig = sig
             self._last_start = now
             self._calls += 1
         tick = raw["observation"].get("tick")

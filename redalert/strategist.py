@@ -29,14 +29,14 @@ from typing import Any
 from common.llm import GeminiClient
 from redalert import trace
 from redalert.plan import DEFAULT_PLAN, Plan, parse_plan
-from redalert.prompt import build_system, build_user
+from redalert.prompt import build_system, build_user, state_signature
 
 MIN_GAP_S = 1.5
 MODEL_TIMEOUT_S = 20.0
 MAX_CALLS = 800
 BACKOFF_FIRST_S, BACKOFF_MAX_S = 5.0, 60.0
 ENDGAME_S = 150
-HISTORY = 5
+HISTORY = 3  # full recent assessments in the prompt; the trace keeps every one ever made
 
 # Per-kind cooldown before the same kind of event can trigger again.
 EVENT_COOLDOWN_S = {
@@ -71,6 +71,7 @@ class Strategist:
         self._plan_at = clock()
         self._busy = False
         self._last_start = -1e9
+        self._last_sig: tuple | None = None
         self._calls = 0
         self._errors = 0
         self._backoff_until = 0.0
@@ -162,7 +163,10 @@ class Strategist:
             self._endgame_sent = True
             self._add(f"endgame:{int(remaining)}s_left")
         if not self._busy and now >= self._plan_at + self._plan.review_in_s:
-            self._add("scheduled_review")
+            # a scheduled review is for noticing change; if nothing has changed since the last
+            # consult started, the plan in force is the answer - event triggers still wake us
+            if state_signature(raw) != self._last_sig:
+                self._add("scheduled_review")
 
     # -- consult -----------------------------------------------------------------
 
@@ -208,6 +212,7 @@ class Strategist:
         try:
             if self._system is None:
                 self._system = build_system(config, (raw.get("map") or {}).get("id"))
+            self._last_sig = state_signature(raw)
             user = build_user(
                 raw,
                 triggers=triggers,
@@ -269,12 +274,13 @@ class Strategist:
             triggers=triggers,
             latency_s=self._latency,
             version=self.version,
+            user_chars=len(user),
             plan=parsed.as_json() if parsed else None,
         )
         if parsed is not None:
             self._log(
-                f"[strategist] plan v{self.version} ({self._latency}s, {','.join(triggers)[:80]}): "
-                f"{parsed.assessment[:200]}"
+                f"[strategist] plan v{self.version} ({self._latency}s, {','.join(triggers)}): "
+                f"{parsed.assessment}"
             )
         else:
             self._log(

@@ -40,6 +40,9 @@ function toSet(m) {
     evs: s.evs || {},
     ivs: s.ivs || {},
     level: s.level || 50,
+    // the sim defaults an unset Tera type to the species' first type, which is
+    // also the right guess for a card that lists none
+    teraType: s.teraType || undefined,
   };
 }
 
@@ -93,6 +96,12 @@ function injectSide(b, side, spec) {
     if (m.itemConsumed) {
       p.item = '';
       p.itemState = { id: '', target: p };
+    }
+    if (m.terastallized) {
+      // the live board says this Pokémon has already Terastallized: adopt that
+      // type so typing, STAB and damage match what the opponent actually has
+      p.teraType = m.terastallized;
+      p.terastallized = m.terastallized;
     }
     p.activeMoveActions = m.moveActions || 0;
     p.activeTurns = m.moveActions || 0;
@@ -195,7 +204,12 @@ function slotOptions(b, sideIdx, slot) {
     }
     const foes = [1, 2];
     const ally = slot === 0 ? -2 : -1;
-    const targets = mv.target === 'adjacentAlly' ? [ally] : mv.target === 'adjacentAllyOrSelf' ? [ally, -(slot + 1)] : [...foes, ally];
+    // Every adverse status move in the pool (Taunt, Thunder Wave, Spore, Encore, ...) only
+    // makes sense aimed at a foe, and a status aimed at our ally is strictly a wasted move —
+    // one that rollouts can rank #1 in a doomed slot. Beneficial ally moves are either a
+    // different target class (Helping Hand) or damage (Pollen Puff), which keep the ally target.
+    const statusOnly = Dex.moves.get(mv.id).category === 'Status';
+    const targets = mv.target === 'adjacentAlly' ? [ally] : mv.target === 'adjacentAllyOrSelf' ? [ally, -(slot + 1)] : statusOnly ? foes : [...foes, ally];
     for (const t of targets) {
       out.push({ kind: 'move', id: mv.id, str: `move ${idx} ${t}`, target: t });
     }
@@ -583,7 +597,11 @@ function search(state, budgetMs, opts) {
       worst = Math.min(worst, v);
     });
     mix = seen ? mix / seen : 0.5;
-    return { mix, worst, value: 0.65 * mix + 0.35 * worst };
+    // weight the foe's best reply as much as its average: a plan whose known-bad branch loses
+    // hard must not rank #1 on a nice mean (it fed a one-shot-able mon into Overheat in a
+    // recorded loss). Replay guard: winning positions pick identical plans at 0.35 and 0.5.
+    const wWorst = opts.worstWeight !== undefined ? opts.worstWeight : 0.5;
+    return { mix, worst, value: (1 - wWorst) * mix + wWorst * worst };
   };
 
   // A: screen every plan against sampled replies

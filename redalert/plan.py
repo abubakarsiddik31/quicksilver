@@ -85,7 +85,7 @@ BUILDING_ORDERS = {"sell", "repair", "power_toggle", "set_primary", "rally"}
 ITEM_ORDERS = {"build", "train", "place", "cancel"}
 
 
-ALIASES = ("barracks", "tower", "aa")  # resolved to this faction's real item by the executor
+ALIASES = ("barracks", "tower", "aa", "tank1", "tank2", "tank3")  # resolved to this faction's real item by the executor
 REACTION_ARMY = ("hold", "retreat", "attack")
 COND_BOOLS = ("under_attack", "power_low", "enemy_air")
 COND_INTS = {
@@ -270,9 +270,9 @@ DEFAULT_PLAN = Plan(
         ("harv", 3),
         ("e3", 4),
         ("e1", 3),
-        ("1tnk", 4),
-        ("3tnk", 8),
-        ("2tnk", 4),
+        ("tank1", 4),  # tank1/2/3 resolve per faction: this side once wanted 3tnk it could not build
+        ("tank2", 8),
+        ("tank3", 4),
         ("e3", 8),
         ("e1", 6),
     ),
@@ -379,7 +379,7 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         jev_slots = base.jev_slots
     return Plan(
         reactions=parse_reactions(data.get("reactions"), base.reactions),
-        assessment=" ".join(note.split())[:400] if isinstance(note, str) else "",
+        assessment=" ".join(note.split()) if isinstance(note, str) else "",
         buildings=_wants(data.get("buildings"), base.buildings),
         units=_wants(data.get("units"), base.units),
         army_mode=mode if mode in ARMY_MODES else base.army_mode,
@@ -389,7 +389,7 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
         army_first=army_first if isinstance(army_first, bool) else base.army_first,
         orders=orders,
         review_in_s=_clamp(data.get("review_in_s"), REVIEW_MIN_S, REVIEW_MAX_S, base.review_in_s),
-        tactics_hint=" ".join(hint.split())[:300] if isinstance(hint, str) else base.tactics_hint,
+        tactics_hint=" ".join(hint.split()) if isinstance(hint, str) else base.tactics_hint,
         min_confidence=(
             max(0.5, min(0.95, float(conf)))
             if isinstance(conf, (int, float)) and not isinstance(conf, bool)

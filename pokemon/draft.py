@@ -168,6 +168,26 @@ def card_quality(card: dict) -> float:
 # -- team evaluation --------------------------------------------------------
 
 
+def with_card_sets(roster: list[dict], pool_cards: Any) -> list[dict]:
+    """Roster entries arrive as species-only stubs; the team maths wants each
+    card's real moves, items and roles. Join on species against the captured
+    pool, keeping the stub when the species is unknown."""
+    if not pool_cards:
+        return list(roster)
+    by_species: dict[str, dict] = {}
+    for card in pool_cards:
+        if not isinstance(card, dict) or not card.get("moves"):
+            continue
+        species = card_species(card)
+        if species:
+            by_species.setdefault(species.casefold(), card)
+    out = []
+    for entry in roster:
+        species = card_species(entry) if isinstance(entry, dict) else ""
+        out.append(by_species.get(species.casefold(), entry) if species else entry)
+    return out
+
+
 def role_bonus(roster: list[dict]) -> float:
     """Reward a roster that can attack from both sides, so a single
     high-Defence or high-SpDef wall cannot blank the whole team."""
@@ -284,6 +304,7 @@ def choose_card(
     obs: dict,
     *,
     agent_id: str | None,
+    pool_cards: Any = None,
 ) -> str | None:
     """The ``card_id`` to take, or ``None`` when nothing is on offer.
 
@@ -295,8 +316,11 @@ def choose_card(
         return None
 
     rosters = observation.rosters(obs)
-    our_roster = rosters.get(agent_id or "", [])
-    theirs = [entry for key, entries in rosters.items() if key != agent_id for entry in entries]
+    our_roster = with_card_sets(rosters.get(agent_id or "", []), pool_cards)
+    theirs = with_card_sets(
+        [entry for key, entries in rosters.items() if key != agent_id for entry in entries],
+        pool_cards,
+    )
     denial = denial_weight(obs, agent_id)
 
     scored = [
@@ -311,14 +335,14 @@ def choose_card(
     return best["card_id"]
 
 
-def choose_from_actions(obs: dict, *, agent_id: str | None, legal_actions: Any) -> Any:
+def choose_from_actions(obs: dict, *, agent_id: str | None, legal_actions: Any, pool_cards: Any = None) -> Any:
     """The legal action matching our chosen card, or ``None`` if unavailable.
 
     Draft picks arrive as enumerated actions (``draft_pick:<card_id>``), so the
     decision has to be mapped back onto the server's own list rather than
     constructed — anything else is refused as ``INVALID_ACTION``.
     """
-    chosen = choose_card(obs, agent_id=agent_id)
+    chosen = choose_card(obs, agent_id=agent_id, pool_cards=pool_cards)
     if chosen is None:
         return None
     for action in legal_actions or []:
@@ -331,7 +355,13 @@ def choose_from_actions(obs: dict, *, agent_id: str | None, legal_actions: Any) 
 # -- ranked candidates -------------------------------------------------------
 
 
-def top_cards(obs: dict, *, agent_id: str | None, k: int = 3) -> list[tuple[str, float, dict]]:
+def top_cards(
+    obs: dict,
+    *,
+    agent_id: str | None,
+    k: int = 3,
+    pool_cards: Any = None,
+) -> list[tuple[str, float, dict]]:
     """The ``k`` best cards on offer by swing score, best first.
 
     ``[(card_id, score, card)]`` — the same math ``choose_card`` runs, kept
@@ -343,8 +373,11 @@ def top_cards(obs: dict, *, agent_id: str | None, k: int = 3) -> list[tuple[str,
     if not cards:
         return []
     rosters = observation.rosters(obs)
-    our_roster = rosters.get(agent_id or "", [])
-    theirs = [entry for key, entries in rosters.items() if key != agent_id for entry in entries]
+    our_roster = with_card_sets(rosters.get(agent_id or "", []), pool_cards)
+    theirs = with_card_sets(
+        [entry for key, entries in rosters.items() if key != agent_id for entry in entries],
+        pool_cards,
+    )
     denial = denial_weight(obs, agent_id)
     scored = [
         (score_card(card, our_roster=our_roster, their_roster=theirs, denial=denial), card)

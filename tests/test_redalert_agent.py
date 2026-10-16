@@ -144,7 +144,7 @@ def test_parse_plan_validates_and_clamps():
             }
         )
     )
-    assert len(plan.assessment) == 400
+    assert len(plan.assessment) == 900  # the model's words are never clipped
     assert plan.buildings == (("powr", 2), ("proc", 40))
     assert plan.units == (("3tnk", 5),)
     assert plan.army_mode == DEFAULT_PLAN.army_mode and plan.wave_min == 30
@@ -402,7 +402,10 @@ def test_consults_at_match_start_then_stays_quiet_until_something_happens():
     assert client.calls == 1  # nothing new, review not due
     clock.t += 30
     consult(s, state)
-    assert client.calls == 2  # the model's own review time
+    assert client.calls == 1  # the review time passed but NOTHING changed: the plan still holds
+    clock.t += 5
+    consult(s, make_state(cash=4300))
+    assert client.calls == 2  # something changed: the model's review fires
 
 
 def test_events_trigger_with_gap_and_cooldown():
@@ -461,9 +464,9 @@ def test_failures_keep_plan_back_off_and_keep_reasons():
 
 def test_call_cap_and_no_client():
     s, client, clock = harness('{"assessment":"ok","review_in_s":4}', max_calls=2)
-    for _ in range(5):
+    for i in range(5):
         clock.t += 10
-        consult(s, make_state())
+        consult(s, make_state(cash=5000 - i * 200))  # each review has something new to see
     assert client.calls == 2
     Strategist(None).maybe_update(make_state().raw, None, sync=True)
 
@@ -827,7 +830,7 @@ def test_advisor_refresh_roundtrip_escalation_and_backoff():
     advisor.maybe_refresh(state.raw, Plan(), cands, sync=True)
     assert fake.calls == 1  # too soon
     fake.answers = None
-    clock.t += 2
+    clock.t += QUIET_REFRESH_S  # unchanged battle: not re-asked until the freshness cap
     advisor.maybe_refresh(state.raw, Plan(), cands, sync=True)
     assert fake.calls == 2 and advisor._errors == 1
     clock.t += 1.5
@@ -1157,13 +1160,13 @@ def test_jev_seeing_a_style_change_wakes_the_general():
     state = make_state(enemies=[{"id": 9, "type": "e1"}]).raw
     advisor.maybe_refresh(state, Plan(), cands, sync=True)
     assert advisor._escalations == ["enemy_style:turtle"]
-    clock.t += 1
+    clock.t += QUIET_REFRESH_S  # an unchanged battle is not re-asked until the freshness cap
     advisor.maybe_refresh(state, Plan(), cands, sync=True)
     assert advisor._escalations == [
         "enemy_style:turtle",
         "enemy_style:harass",
     ]  # enemy switched: re-plan
-    clock.t += 1
+    clock.t += QUIET_REFRESH_S
     advisor.maybe_refresh(state, Plan(), cands, sync=True)
     assert advisor._escalations == [
         "enemy_style:turtle",
@@ -1511,7 +1514,7 @@ def test_jev_escalations_wake_the_strategist_and_llm_controls_jev():
     assert (
         plan.jev_slots == ("posture", "threat")
         and plan.min_confidence == 0.95
-        and len(plan.tactics_hint) == 300
+        and plan.tactics_hint == " ".join(["hold the line"] * 50)  # never clipped
     )
     assert parse_plan('{"assessment":"x"}', plan).jev_slots == ("posture", "threat")  # inherited
     s, client, _ = harness('{"assessment":"ok"}')
@@ -1554,6 +1557,7 @@ def test_trace_writes_one_jsonl_file_and_never_raises(tmp_path, monkeypatch):
 
 from redalert.econ import EconTracker
 from redalert.plan import Reaction, parse_reactions
+from redalert.tactics import QUIET_REFRESH_S
 from redalert.score import report
 from redalert.score import score as score_trace
 

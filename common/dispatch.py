@@ -52,6 +52,51 @@ def _create_delegate(game_type: str | None):
     return module
 
 
+def _trace_game_end(final_state: Any, context: DecisionContext) -> None:
+    """Record how a finished game ended, so traces carry the one thing they
+    otherwise never show: the result. Total — a failure here must never
+    matter to the match."""
+    try:
+        from altruagent.worker import _score, game_outcome
+
+        agent_id = getattr(context, "agent_id", None)
+        outcome = game_outcome(final_state, agent_id)
+        trace.write(
+            "final",
+            session=getattr(context, "session_id", None),
+            agent=agent_id,
+            outcome=outcome,
+            score=_score(final_state, agent_id),
+            termination_reason=getattr(final_state, "termination_reason", None),
+        )
+    except Exception:  # noqa: BLE001 - bookkeeping must never cost a match
+        pass
+
+
+def _trace_runner_game_ends() -> None:
+    """Wrap ``altruagent.runner.run_game`` so every finished match leaves a
+    ``final`` record in its trace. The terminal state reaches the runner as a
+    *read*, which ``on_action_result`` never sees — this is the only hook that
+    does see it. Applies per worker process (the runtime builds a fresh agent,
+    and re-imports this module, for each match)."""
+    try:
+        from altruagent import runner as _runner
+
+        original = _runner.run_game
+
+        def run_game_traced(game, context, choose_action, **kwargs):
+            final_state = original(game, context, choose_action, **kwargs)
+            _trace_game_end(final_state, context)
+            return final_state
+
+        _runner.run_game = run_game_traced
+    except Exception:  # noqa: BLE001 - tracing must never break the runtime
+        pass
+
+
+_trace_runner_game_ends()
+
+
 def _call(delegate: Any, method_name: str, state: GameState, context: DecisionContext):
     """Mirror the runtime's own resolution rules (``altruagent.runner``): a
     plain callable is called directly, otherwise its named method is used."""
@@ -98,14 +143,6 @@ class QuicksilverAgent:
         """Forward the runner's per-move answer to a delegate that wants it (Red Alert)."""
         if self._traced():
             trace.write("result", result=result)
-            # A trace otherwise ends at our last move: say plainly that the game finished and how.
-            if isinstance(result, dict) and str(result.get("status")) in ("completed", "finished", "game_over"):
-                inner = result.get("state") if isinstance(result.get("state"), dict) else {}
-                trace.write(
-                    "final",
-                    status=result.get("status"),
-                    **{k: v for k, v in {**inner, **result}.items() if k in ("winner", "outcome", "result", "scores", "reward", "message")},
-                )
         hook = getattr(self._delegate, "on_action_result", None)
         if callable(hook):
             hook(result, context)
