@@ -69,3 +69,16 @@ off against speed, and do not wait to be reminded.
   for validation instead. Keep existing tests passing when a change touches them, but do not build new test
   suites as a substitute for checking behaviour on real games.
 - Keep replies short and plain. Say what is wrong, what you changed and why, and what is not verified.
+
+## 8. Running the agent
+
+- Always start the runner with the Red Alert strategist on, or Red Alert silently plays the old built-in playbook
+  with no General and no match memory:
+
+  ```bash
+  RA_LLM=1 uv run python -m agent --match
+  ```
+
+- Check the first lines of the log for "playing the built-in playbook"; if it appears, `RA_LLM=1` was missing.
+- Only one runtime may hold a seat: before starting, check that no other `python -m agent` process is running, and
+  never kill a runner you did not start.

@@ -136,6 +136,7 @@ BUDGET_FACTOR = (
 CASH_MARGIN = 300
 UNIT_FLOOR = 100.0  # units may spend down to this; structures keep the larger floor
 CASH_FLOOR = 300.0  # below this only harvesters and power commit (the income comes first, always)
+MEMORY_VIEW_S = 2.0  # the memory's briefing is rebuilt this often; the General and Jev read the same one
 REFINERY_SELL_AFTER_S = (
     8.0  # no refinery and too poor to rebuild one for this long: sell structures to fund it
 )
@@ -359,6 +360,8 @@ class RedAlertAgent:
         self.intel = Intel()
         self.doctrines = doctrines.DoctrineState()
         self._battle: dict[str, Any] = {}
+        self._memory_view: dict[str, Any] | None = None  # the memory as the General and Jev read it
+        self._memory_view_at = -1e9
         self._scouts: set[int] = set()
         self._scouts_sent = 0
         self._enemy_building_seen = (
@@ -456,6 +459,17 @@ class RedAlertAgent:
                     self._secs[key] = float(info["build_time_s"])
                 if isinstance(info.get("prerequisites"), list):
                     self._needs[key] = [str(p).lower() for p in info["prerequisites"]]
+
+    def _chain(self, items: tuple[str, ...]) -> set[str]:
+        """Everything ``items`` depend on, transitively, by the rules' prerequisite lists."""
+        seen: set[str] = set()
+        todo = list(items)
+        while todo:
+            for need in self._needs.get(todo.pop(), ()):
+                if need not in seen:
+                    seen.add(need)
+                    todo.append(need)
+        return seen
 
     def queue_of(self, item: str) -> str:
         if item in self._queue:
@@ -737,6 +751,9 @@ class RedAlertAgent:
             ),
             None,
         )
+        if mono - self._memory_view_at >= MEMORY_VIEW_S:
+            self._memory_view_at = mono
+            self._memory_view = self._memory_brief(game_s, obs, raw, all_combat)
         self._safe(
             "memory",
             lambda: self.memory.note_plan(
@@ -981,6 +998,16 @@ class RedAlertAgent:
         harvs = owned.get("harv", 0) + queued.get("harv", 0)
         if harv_goal and harvs < harv_goal and "harv" in avail:
             unit_wants.insert(0, ("harv", harv_goal))
+        # The builder is the root of every other structure: without it nothing can be rebuilt, and its replacement
+        # is the factory's MCV (the deploy reflex below plants it).
+        if (
+            not owned.get("fact")
+            and not queued.get("fact")
+            and not owned.get("mcv")
+            and not queued.get("mcv")
+            and "mcv" in avail
+        ):
+            unit_wants.insert(0, ("mcv", 1))
 
         def short(item: str, count: int) -> bool:
             return owned.get(item, 0) + queued.get(item, 0) < count
@@ -1494,9 +1521,11 @@ class RedAlertAgent:
             self._broke_since = self._broke_since if self._broke_since is not None else mono
         else:
             self._broke_since = None
+        # No emergency exemption: cash pinned at zero with the draw above the income means nothing is finishing, so
+        # the spending an emergency would justify is not buying anything - a flame tower and the rebuilt refinery
+        # shared an income of 0.8/s for 200 s while the base fell. The refund of the cancelled one funds the other.
         if (
             owned.get("weap")
-            and not emergency
             and self._broke_since is not None
             and mono - self._broke_since >= BROKE_CANCEL_S
             and burn_struct + burn_units > 2.0 * max(income, 1.0)
@@ -1534,7 +1563,17 @@ class RedAlertAgent:
         # No refinery and no cash is a dead end: income is zero, so nothing can ever be bought. A rush that kills the
         # only refinery at 200 s left a live match at $0 for four minutes with one harvester. Sell the least useful
         # structure, one at a time, until a new refinery is affordable.
-        if not owned.get("proc") and not queued.get("proc") and game_s > 60:
+        # The income needs a refinery and a harvester. The missing one that is queued but cannot be paid for is the
+        # same dead end as not having it at all: what it still owes is compared with the cash, not whether it is
+        # queued. (The self-play trace: a harvester sat at 68% with cash 0 for two minutes, the refinery intact.)
+        missing = "proc" if not owned.get("proc") else ("harv" if not owned.get("harv") else None)
+        owed = float(self.cost_of(missing)) if missing else 0.0
+        for p in production:
+            if missing and str(p.get("item")).lower() == missing and not p.get("ready"):
+                prog = p.get("progress")
+                if isinstance(prog, (int, float)):
+                    owed = float(self.cost_of(missing)) * (1.0 - prog)
+        if missing and cash < owed and game_s > 60:
             self._no_refinery_since = (
                 self._no_refinery_since if self._no_refinery_since is not None else mono
             )
@@ -1543,15 +1582,17 @@ class RedAlertAgent:
         if (
             self._no_refinery_since is not None
             and mono - self._no_refinery_since >= REFINERY_SELL_AFTER_S
-            and cash < self.cost_of("proc")
             and self._fresh("sell_for_refinery", 6.0)
         ):
             kinds_owned: dict[str, list[dict[str, Any]]] = {}
             for b in buildings:
                 if isinstance(b.get("id"), int):
                     kinds_owned.setdefault(str(b.get("type")).lower(), []).append(b)
+            # What the income needs, followed back through the rules' own prerequisites (refinery <- power,
+            # harvester <- war factory, ...): selling the last of any of it trades the recovery for the cash.
+            chain = self._chain(("proc", "harv"))
             for kind in REFINERY_SELL_ORDER:
-                keep = 1 if kind in BARRACKS else 0
+                keep = 1 if (kind in BARRACKS or kind in chain) else 0
                 if len(kinds_owned.get(kind, [])) > keep:
                     victim = kinds_owned[kind][-1]
                     orders.append({"cmd": "sell", "building": victim["id"]})
@@ -1700,6 +1741,8 @@ class RedAlertAgent:
                 extra={
                     "game_seconds": round(game_s),
                     "measured_income_per_s": round(income, 1),
+                    "cash": round(cash),
+                    "queue_draw_per_s": round(burn_struct + burn_units, 1),
                     "harvesters": owned.get("harv", 0),
                     "refineries": refineries,
                     "queue_eta_s": [
@@ -1709,13 +1752,7 @@ class RedAlertAgent:
                     "reactions_fired": [r.name for r in fired],
                     "scout_alive": bool(self._scouts),
                     "officers": self._officer_reports,
-                    "match_memory": self._safe(
-                        "memory",
-                        lambda: self.memory.briefing(
-                            game_s, obs, (raw.get("time") or {}).get("remaining_seconds")
-                        ),
-                        None,
-                    ),
+                    "match_memory": self._memory_view,
                     "anti_air_filtered_until_air_seen": sorted(AA_ONLY) if not air_seen else [],
                 },
             )
@@ -1723,13 +1760,7 @@ class RedAlertAgent:
         self._decisions += 1
         if now - self._memory_trace_at >= 30.0:
             self._memory_trace_at = now
-            brief = self._safe(
-                "memory",
-                lambda: self.memory.briefing(
-                    game_s, obs, (raw.get("time") or {}).get("remaining_seconds")
-                ),
-                None,
-            )
+            brief = self._memory_view
             if brief:
                 trace.write("memory", **brief)
         if now - self._state_at >= 5.0:
@@ -2013,6 +2044,29 @@ class RedAlertAgent:
             applied = dataclasses.replace(applied, army_mode="hold")
         return applied
 
+    def _memory_brief(
+        self, game_s: float, obs: dict[str, Any], raw: dict[str, Any], fighters: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """The match memory, with the fight model's reading of finishing the enemy base beside it."""
+        remaining = (raw.get("time") or {}).get("remaining_seconds")
+        brief = self._safe("memory", lambda: self.memory.briefing(game_s, obs, remaining), None)
+        if not brief:
+            return brief
+        ours = [
+            (str(u.get("type")).lower(), max(0.1, min(1.0, float(u.get("hp") or 100) / 100.0)))
+            for u in fighters
+        ]
+        cells = [c for u in fighters if (c := _cell(u))]
+        centre = (
+            (sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
+            if cells
+            else None
+        )
+        brief["assault_option"] = self._safe(
+            "judge", lambda: self.judge.assault(ours, centre, remaining), None
+        )
+        return brief
+
     def _battle_summary(
         self,
         obs: dict[str, Any],
@@ -2035,6 +2089,11 @@ class RedAlertAgent:
             {},
         )
         out["key_numbers"] = numbers
+        mem = self._memory_view
+        if mem:
+            out["match_memory"] = {
+                k: mem.get(k) for k in ("our_economy", "assault_option", "clock") if mem.get(k)
+            }
         self._battle = out
         return out
 

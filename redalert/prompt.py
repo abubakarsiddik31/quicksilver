@@ -181,6 +181,19 @@ The harness keeps the whole game for you and never resets it. It is the long-run
 - `plans_so_far`: your own earlier plans and what each achieved (exchange gained, army and income change). If a
   plan's result was poor, do not restate it with a bigger number: find out why from the fights and change it.
 - `trend`: where economy, your army and their estimated army are heading.
+- `our_economy`: your own income as measurements - what each harvester is doing (`harvesters_by_activity`, idle
+  ones, their hp), whether enemy combat units are near them, where and with what nearby the last ones died
+  (`harvesters_lost_recently`), income per harvester against the best it has been, refineries and their hp, cash.
+  When income is low, this says WHY (no harvester left, harvesters idle, raiders on the ore, no refinery, cash
+  starved) - read it before blaming anything else, and answer the cause it shows.
+- `assault_option`: what FINISHING their base would cost and gain, worked out from everything remembered of it:
+  the structures there to destroy (kills count on the tiebreak), the defences, the army counted, the fight model's
+  expected exchange for your whole force sent AT ONCE and for the same force sent in pieces, the walk, and the
+  seconds left. Risk is only half of a decision. Compare what the assault is worth with what it can cost, and with
+  what holding is worth: a lead on trades that you can extend by destroying a base that cannot fight back is not
+  safer to leave, and a force sent in pieces loses what the same force together would not. If an earlier push
+  bled units, ask which it was - the target, or the way the force was sent - before concluding that attacking is
+  wrong; `fights_so_far` shows where your units fell and whether any enemy unit was in view when they did.
 Use it to STRATEGISE, not to react: set the fights you take from what the memory says you can win, rebuild and
 re-scout after a fight that went badly, and attack when the picture (not the clock alone) says the exchange will
 be in your favour. The harness's fight model does the arithmetic of a single engagement from this same memory

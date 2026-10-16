@@ -84,6 +84,7 @@ class Fight:
     buildings_killed: int = 0
     predicted_ratio: float | None = None  # what the fight model expected this exchange to be
     result: str = "open"
+    deaths: list[tuple[float, float]] = field(default_factory=list)  # where our units actually fell
 
     @property
     def ratio(self) -> float:
@@ -103,6 +104,10 @@ class Fight:
             "exchange": round(self.ratio, 2),
             "expected_exchange": round(self.predicted_ratio, 2) if self.predicted_ratio else None,
             "result": self.result,
+            "our_units_fell_at": (
+                [round(c[0]), round(c[1])] if (c := _centroid(self.deaths)) else None
+            ),
+            "no_enemy_unit_in_view_while_we_lost": bool(self.our_lost > 0 and not self.theirs_peak_value),
         }
 
 
@@ -160,6 +165,8 @@ class MatchMemory:
         self._my_army_value = 0.0
         self._my_losses = 0.0
         self._base_view_at = -1e9
+        self._mine_prev: dict[int, tuple[str, tuple[float, float] | None, float | None]] = {}
+        self.harv_lost: deque[dict[str, Any]] = deque(maxlen=12)
         # the fights
         self.fights: deque[Fight] = deque(maxlen=MAX_FIGHTS)
         self._open: Fight | None = None
@@ -205,13 +212,14 @@ class MatchMemory:
         if enemy_base:
             self.enemy_base = (float(enemy_base[0]), float(enemy_base[1]))
         visible = self._see(obs, game_s)
+        died = self._casualties(obs, game_s)
         if self.enemy_base and any(
             (c := _cell(u)) and math.dist(c, self.enemy_base) <= 15.0
             for u in (obs.get("units") or [])
             if isinstance(u, dict)
         ):
             self._base_view_at = game_s
-        self._fights(obs, game_s, fighters, visible)
+        self._fights(obs, game_s, fighters, visible, died)
         if game_s - self._snap_at >= SNAPSHOT_EVERY_S:
             self._snap_at = game_s
             m = obs.get("military") or {}
@@ -229,6 +237,77 @@ class MatchMemory:
                     "enemy_army_est": round(b.army_value),
                 }
             )
+
+    def _casualties(self, obs: dict[str, Any], game_s: float) -> list[tuple[str, tuple[float, float]]]:
+        """Our units that were here a moment ago and are gone: where they fell, and for harvesters, what was near."""
+        now: dict[int, tuple[str, tuple[float, float] | None, float | None]] = {}
+        for u in obs.get("units") or []:
+            if isinstance(u, dict) and isinstance(u.get("id"), int) and not u.get("wreck"):
+                now[u["id"]] = (str(u.get("type")).lower(), _cell(u), u.get("hp"))
+        died: list[tuple[str, tuple[float, float]]] = []
+        if self._mine_prev:
+            enemies = [
+                (str(e.get("type")).lower(), c)
+                for e in obs.get("visible_enemies") or []
+                if isinstance(e, dict) and not e.get("wreck") and (c := _cell(e))
+            ]
+            for uid, (kind, cell, hp) in self._mine_prev.items():
+                if uid in now or cell is None:
+                    continue
+                died.append((kind, cell))
+                if kind == "harv":
+                    near = sorted(
+                        {k for k, c in enemies if math.dist(c, cell) <= 12.0 and k not in self.non_combat}
+                    )
+                    self.harv_lost.append(
+                        {
+                            "t": round(game_s),
+                            "where": [round(cell[0]), round(cell[1])],
+                            "hp_before": hp,
+                            "enemy_units_near": near,
+                        }
+                    )
+        self._mine_prev = now
+        return died
+
+    def economy_picture(self, obs: dict[str, Any], game_s: float) -> dict[str, Any]:
+        """Our own economy as measurements: what the harvesters are doing, what has killed them, what the income is."""
+        units = [u for u in obs.get("units") or [] if isinstance(u, dict) and not u.get("wreck")]
+        harv = [u for u in units if str(u.get("type")).lower() == "harv"]
+        acts: dict[str, int] = {}
+        for u in harv:
+            key = str(u.get("act") or ("idle" if u.get("idle") else "none"))
+            acts[key] = acts.get(key, 0) + 1
+        cells = [c for u in harv if (c := _cell(u))]
+        hostile = [
+            str(e.get("type")).lower()
+            for e in obs.get("visible_enemies") or []
+            if isinstance(e, dict)
+            and not e.get("wreck")
+            and str(e.get("type")).lower() not in self.non_combat
+            and (c := _cell(e))
+            and any(math.dist(c, h) <= 14.0 for h in cells)
+        ]
+        refineries = [
+            b for b in obs.get("buildings") or [] if isinstance(b, dict) and str(b.get("type")).lower() == "proc"
+        ]
+        econ = obs.get("economy") or {}
+        y = self.harvester_yield()
+        return {
+            "income_per_s": round(self._income_now, 1),
+            "income_per_harvester_per_s": round(self._income_now / len(harv), 1) if harv else None,
+            "best_income_per_harvester_so_far": round(y[1], 1) if y else None,
+            "harvesters_alive": len(harv),
+            "harvesters_by_activity": acts,
+            "harvesters_idle": sum(1 for u in harv if u.get("idle")),
+            "harvester_hp_pct": [u.get("hp") for u in harv][:8],
+            "enemy_combat_units_within_14_of_a_harvester": hostile,
+            "harvesters_lost_recently": list(self.harv_lost)[-4:],
+            "refineries": len(refineries),
+            "refinery_hp_pct": [b.get("hp") for b in refineries][:4],
+            "cash": econ.get("cash"),
+            "ore_in_silos": econ.get("ore"),
+        }
 
     def _see(
         self, obs: dict[str, Any], game_s: float
@@ -302,6 +381,7 @@ class MatchMemory:
         game_s: float,
         fighters: list[dict[str, Any]],
         visible: list[tuple[str, tuple[float, float] | None]],
+        died: list[tuple[str, tuple[float, float]]] | None = None,
     ) -> None:
         m = obs.get("military") or {}
         counters = (
@@ -346,23 +426,31 @@ class MatchMemory:
         fight.buildings_killed += int(delta[4])
         fight.buildings_lost += int(delta[5])
         centre = _centroid([c for _, c in mine]) or fight.where
+        fight.deaths += [c for k, c in (died or []) if k not in self.non_combat]
+        # A stretched-out group's centre is not where the fight is: losses fell where the enemy was. The enemy and
+        # the defences count around both the group and the places our units fell.
+        spots = [c for c in (centre, _centroid(fight.deaths[-8:])) if c]
         around: dict[str, int] = {}
         for kind, cell in visible:
-            if kind in self.non_combat or not cell or not centre:
+            if kind in self.non_combat or not cell or not spots:
                 continue
-            if math.dist(cell, centre) <= FIGHT_RADIUS * 1.5:
+            if any(math.dist(cell, c) <= FIGHT_RADIUS * 1.5 for c in spots):
                 around[kind] = around.get(kind, 0) + 1
         value = sum(self.cost_of(k) * n for k, n in around.items())
         if value > fight.theirs_peak_value:
             fight.theirs_peak_value, fight.theirs_peak = value, around
         if centre:
             fight.where = centre
+        if spots:
             fight.towers_near = max(
                 fight.towers_near,
-                sum(
-                    1
-                    for s in self.buildings.values()
-                    if s.kind in self.tower_types and s.cell and math.dist(s.cell, centre) <= 16
+                max(
+                    sum(
+                        1
+                        for s in self.buildings.values()
+                        if s.kind in self.tower_types and s.cell and math.dist(s.cell, c) <= 16
+                    )
+                    for c in spots
                 ),
             )
         if changed or contact:
@@ -685,4 +773,5 @@ class MatchMemory:
                 for p in list(self.plans)[-5:]
             ],
             "trend": trend,
+            "our_economy": self.economy_picture(obs, game_s),
         }

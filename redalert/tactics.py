@@ -342,8 +342,12 @@ class TacticalAdvisor:
             "build-up every few seconds feeds units away, so change plan only for a real change in the numbers, not noise. "
             "One or two enemy units at my base are a probe or a diversion, not a threat: defend only when a "
             "real army is near. An attacker into a held position loses at parity (defenders have towers, "
-            "repairs and reinforcements), so choose an attacking plan only when my army is at least 1.2x "
-            "everything seen (army plus defences); otherwise mass_army or expand.",
+            "repairs and reinforcements). `battle.match_memory.assault_option` is the fight model's reading "
+            "of sending my whole force at their base: its expected exchange, what the base is worth to destroy "
+            "and the seconds left. Choose an attacking plan when that reading is favourable and the payoff "
+            "(structures to destroy, trade swing) outweighs the risk; otherwise mass_army or expand. "
+            "`battle.match_memory.our_economy` says why income is low (dead or idle harvesters, raiders on the "
+            "ore, no refinery): answer that cause.",
             {name: d.when for name, d in DOCTRINES.items()},
         )
         choice(
@@ -392,10 +396,11 @@ class TacticalAdvisor:
                 questions["wave_now"] = {
                     "type": "noul",
                     "instructions": "Should I send my idle fighters as an attack wave right now? Waves that "
-                    "left in dribbles of 10-12 into the same unscouted point, one after another, died for "
-                    "nothing: say yes only if the whole idle force is assembled, is at least 1.2x the enemy "
-                    "army plus defences seen, and the target is scouted; say no right after a wave was lost "
-                    "at that target, and prefer waiting for the flank pack to move on the sides first.",
+                    "left in dribbles into the same point, one after another, died for nothing "
+                    "(`assault_option.sent_in_pieces_of_a_fifth` shows why). Say yes when the whole idle "
+                    "force is assembled and `battle.match_memory.assault_option.whole_force_at_once` shows an "
+                    "exchange that the target's value and the clock justify; say no while the force is "
+                    "still arriving in pieces, or when the reading is unfavourable.",
                     "criteria": {
                         "true": "The idle force is big enough to beat what defends the target, and the clock "
                         "(clock.remaining_s) makes attacking now worth more than saving the force",

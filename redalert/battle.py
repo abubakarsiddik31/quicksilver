@@ -360,6 +360,58 @@ class Judge:
         leave_loss = sum(v.a0.values()) - sum(a_end.values())
         return leave_loss < 0.85 * v.our_loss, v
 
+    def assault(
+        self,
+        ours: list[tuple[str, float]],
+        centre: tuple[float, float] | None,
+        remaining_s: float | None,
+    ) -> dict[str, Any] | None:
+        """What a finished assault would cost and gain, against everything the memory knows of their base.
+
+        The fight model prices the risk of a fight; this puts the payoff next to it: the structures that are there to
+        destroy (kills count on the tiebreak), what it takes to break the known defences with the whole force at
+        once and with it sent in pieces, and whether the clock leaves time for it."""
+        base = self.memory.enemy_base
+        game_s = self.memory._last_t or 0.0
+        if not ours or base is None:
+            return None
+        structures = [
+            s for s in self.memory.buildings.values() if s.kind not in self.tower_types
+        ]
+        defences = self.known_towers(base, 18.0, [])
+        belief = self.memory.belief(game_s)
+        remembered = [
+            (k, 1.0) for k, n in belief.composition.items() for _ in range(int(n))
+        ]
+        def read(force: list[tuple[str, float]]) -> Verdict:
+            return self.assess(force, remembered, defences, reach=0.9, attacking=True)
+
+        whole = read(ours)
+        fifth = max(1, len(ours) // 5)
+        piece = read(ours[:fifth])
+        distance = math.dist(centre, base) if centre else None
+        walk_s = distance / SPEED if distance is not None else None
+        structure_value = sum(float(self.memory.cost_of(s.kind)) for s in structures)
+        defence_value = sum(float(self.memory.cost_of(k)) for k in defences)
+        return {
+            "about": "what finishing the enemy base would cost and gain, from everything remembered of it",
+            "enemy_structures_known": len(structures),
+            "enemy_structure_value": round(structure_value),
+            "enemy_defences_known": {k: defences.count(k) for k in set(defences)},
+            "enemy_defence_value": round(defence_value),
+            "enemy_army_counted_value": round(sum(float(self.memory.cost_of(k)) for k, _ in remembered)),
+            "whole_force_at_once": {**whole.as_report(), "our_force_value": round(whole.our_value)},
+            "sent_in_pieces_of_a_fifth": {
+                "expected_exchange": round(piece.ratio, 2),
+                "each_piece_loses": round(piece.our_loss),
+                "each_piece_destroys": round(piece.their_loss),
+            },
+            "walk_to_their_base_s": round(walk_s) if walk_s is not None else None,
+            "seconds_left": round(remaining_s) if isinstance(remaining_s, (int, float)) else None,
+            "trade_swing_if_it_succeeds": round(structure_value + whole.their_loss - whole.our_loss),
+            "worst_case_loses_the_whole_force": round(-whole.our_value),
+        }
+
     def going_badly(self, abort_ratio: float) -> bool:
         """The feedback: the real exchange over the last 15 seconds of this fight against the line the General set."""
         fight = self.memory.open_fight
