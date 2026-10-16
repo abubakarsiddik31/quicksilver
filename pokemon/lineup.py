@@ -327,3 +327,77 @@ def generate_candidate_lineups(
             break
 
     return candidates
+
+
+def engine_lineups(
+    template: Any,
+    obs: dict,
+    *,
+    pool_cards: Any = None,
+    max_ours: int = 12,
+    max_theirs: int = 6,
+) -> tuple[list[tuple[dict, list[str]]], list[tuple[list[str], float]]] | None:
+    """Lineups for the rules engine to play out: ``(ours, theirs)``.
+
+    ``ours`` is ``[(select_lineup dict, species with the leads first)]`` from the heuristic's best combos, each tried
+    with each plausible lead pair. ``theirs`` is the foe's likely four-and-leads as ``([species], weight)``, weighted
+    by how well the heuristic thinks each beats our six."""
+    roster = actions.roster_of(template)
+    ours = _cards_for_roster(roster, _summaries(observation.your_roster(obs)), pool_cards)
+    if len(ours) < BRING:
+        return None
+    theirs: list[Card] = []
+    for summary in _summaries(observation.opponent_roster(obs)).values():
+        card = card_for_summary(summary, pool_cards, "theirs")
+        if card is not None:
+            theirs.append(card)
+    if len(theirs) < BRING:
+        return None
+    our_cards = [card for _, card in ours]
+
+    def ranked(side: list, opponents: list) -> list:
+        # A foe Spore or Sleep Powder wins games on its own; a Grass-type (immune) is worth bringing against it.
+        powder = any({"spore", "sleeppowder"} & set(card.moves) for card in opponents if card is not None)
+        combos = [
+            (
+                lineup_score([card for _, card in combo], opponents)
+                + (3.0 if powder and any("grass" in [t.lower() for t in card.types] for _, card in combo) else 0.0),
+                combo,
+            )
+            for combo in itertools.combinations(side, BRING)
+        ]
+        combos.sort(key=lambda item: item[0], reverse=True)
+        return combos
+
+    mine: list[tuple[dict, list[str]]] = []
+    for _, combo in ranked(ours, theirs)[: max(2, max_ours // 2)]:
+        lead_pairs = [pick_leads(list(combo), theirs)]
+        for pair in itertools.combinations(combo, 2):
+            ids = [rid for rid, _ in pair]
+            if ids not in [[rid for rid, _ in lp] for lp in lead_pairs]:
+                lead_pairs.append(list(pair))
+        for leads in lead_pairs[:2]:
+            lead_ids = [rid for rid, _ in leads]
+            back = [(rid, card) for rid, card in combo if rid not in lead_ids]
+            order = list(leads) + back
+            mine.append(
+                (
+                    {"type": "select_lineup", "bring": [rid for rid, _ in combo], "leads": lead_ids},
+                    [card.species for _, card in order],
+                )
+            )
+    mine = mine[:max_ours]
+
+    their_ranked = ranked([(card.species, card) for card in theirs], our_cards)[:max_theirs]
+    if not their_ranked:
+        return None
+    top = their_ranked[0][0]
+    weights = [2.718281828 ** ((score - top) / 4.0) for score, _ in their_ranked]
+    total = sum(weights)
+    foes: list[tuple[list[str], float]] = []
+    for (_, combo), weight in zip(their_ranked, weights):
+        leads = pick_leads(list(combo), our_cards)
+        lead_ids = [rid for rid, _ in leads]
+        order = list(leads) + [(rid, card) for rid, card in combo if rid not in lead_ids]
+        foes.append(([card.species for _, card in order], weight / total))
+    return mine, foes

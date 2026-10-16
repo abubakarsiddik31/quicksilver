@@ -1670,7 +1670,9 @@ def test_scout_is_sent_once_via_the_midpoint_and_kept_out_of_waves():
     agent = stub_agent(plan)
     out = orders_of(agent.choose_action(state, CTX))
     moves = [o for o in out if o["cmd"] == "move" and o["units"] == [5]]
-    assert len(moves) == 2 and moves[1].get("queued") is True and moves[1]["to"] == [68, 68]  # 80% of the way: short of the enemy base
+    # 60% of the way: short of the enemy base; then it walks back to the midpoint alive
+    assert len(moves) == 3 and moves[1].get("queued") is True and moves[1]["to"] == [56, 56]
+    assert moves[2].get("queued") is True and moves[2]["to"] == moves[0]["to"]
     wave = [o for o in out if o["cmd"] == "attack_move"]
     assert wave and 5 not in wave[0]["units"]
     assert agent.choose_action(state, CTX) is not None and 5 in agent._scouts
@@ -2033,6 +2035,7 @@ def test_only_one_scout_per_match():
     assert not scouting(2)  # the first scout just died: no instant second sacrifice
     clock.t += 70
     assert not scouting(3)  # in the opening the last riflemen are the army, not a second sacrifice
+    clock.t += 150
     assert scouting(
         3, 300
     )  # but a blind match is replaced after SCOUT_RESEND_S: fighting blind cost whole matches
@@ -2401,7 +2404,7 @@ def test_a_second_scout_only_late_and_when_flush():
     assert scouting(1, 120)
     clock.t += 30
     assert not scouting(2, 200, cash=1000)  # too soon after the last one
-    clock.t += 70
+    clock.t += 170
     assert scouting(3, 260)  # blind for over a minute: the General sends a replacement
 
 

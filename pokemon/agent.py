@@ -24,6 +24,7 @@ spent, not free.
 from __future__ import annotations
 
 import traceback
+from typing import Any
 
 from altruagent import DecisionContext, GameState
 from common import trace
@@ -37,6 +38,7 @@ from pokemon import (
     lineup,
     observation,
     pool,
+    simsearch,
     tactician,
     threat,
 )
@@ -62,6 +64,8 @@ class PokemonAgent:
         # banked file is only the fallback for what this match never showed.
         self._match_cards = pool.MatchCards()
         self._agent_id: str | None = None
+        # The rules engine: searches the turn on Showdown's own simulator (None-safe when Node is absent).
+        self._sim = simsearch.Engine()
 
     def choose_action(self, state: GameState, context: DecisionContext):
         """Decide, and never raise: a raised error kills this match's worker, so any
@@ -170,6 +174,10 @@ class PokemonAgent:
         obs = observation.observation_of(state)
         loaded_pool = self._cards()
 
+        searched = self._search_lineup(template, obs, loaded_pool)
+        if searched is not None:
+            return searched
+
         candidates = lineup.generate_candidate_lineups(
             template, obs, pool_cards=loaded_pool, max_candidates=3
         )
@@ -199,6 +207,45 @@ class PokemonAgent:
         bring = roster[:4]
         return {"type": "select_lineup", "bring": bring, "leads": bring[:2]}
 
+    def _search_lineup(self, template: dict, obs: dict, loaded_pool: Any) -> dict | None:
+        """Play each candidate lineup out against the foe's likely ones on the rules engine; the best plays.
+        ``None`` (heuristics take over) whenever the engine is absent, a set is missing or the time is short."""
+        try:
+            if not self._sim.usable or not budget.affords(obs, 35):
+                return None
+            picked = lineup.engine_lineups(template, obs, pool_cards=loaded_pool)
+            if picked is None:
+                return None
+            ours, foes = picked
+            cards = list(loaded_pool or []) + list(pool.load_pool(self._pool_path) or [])
+            request = simsearch.lineup_request(
+                [[{"species": sp} for sp in species] for _, species in ours],
+                [([{"species": sp} for sp in species], weight) for species, weight in foes],
+                cards,
+            )
+            if request is None:
+                return None
+            result = self._sim.lineups(request, 25000)
+            if not result:
+                trace.write("sim", ok=False, error=self._sim.last_error, phase="lineup")
+                return None
+            values, worst = result["values"], result["worst"]
+            scores = [0.65 * v + 0.35 * w for v, w in zip(values, worst)]
+            best = max(range(len(ours)), key=lambda i: scores[i])
+            trace.write(
+                "sim",
+                ok=True,
+                phase="lineup",
+                rollouts=result.get("rollouts"),
+                ms=result.get("ms"),
+                best=[ours[best][0], round(scores[best], 3)],
+                all=[[o[1][:2], round(x, 3)] for (o, x) in zip(ours, scores)],
+            )
+            return ours[best][0]
+        except Exception as exc:  # noqa: BLE001 - never cost a match
+            trace.write("sim", ok=False, error=str(exc)[:300], phase="lineup")
+            return None
+
     # -- Doubles turn ----------------------------------------------------
 
     def _doubles_turn(self, template: dict, state: GameState) -> dict:
@@ -223,7 +270,51 @@ class PokemonAgent:
         self._memory.record(observation.active_pokemon(obs), plan)
         return plan
 
+    SEARCH_SECONDS = 6.0
+    SEARCH_FIRST_TURN_SECONDS = 8.0
+
+    def _search_turn(self, template: dict, obs: dict, loaded_pool) -> dict | None:
+        """The best plan the rules engine finds, or ``None`` to let the heuristic planner answer."""
+        if not self._sim.usable or not loaded_pool:
+            return None
+        available = budget.budget_of(obs).affordable - 2.0
+        if available < 1.5:
+            return None
+        turn = observation.turn(obs) or 1
+        seconds = min(available, self.SEARCH_FIRST_TURN_SECONDS if turn <= 1 else self.SEARCH_SECONDS)
+        if any(observation.force_switch(obs) or []):
+            seconds = min(seconds, 3.0)  # only a replacement to choose
+        state = simsearch.build_state(
+            obs, list(loaded_pool) + list(pool.load_pool(self._pool_path) or [])
+        )
+        if state is None:
+            return None
+        result = self._sim.search(state, int(seconds * 1000))
+        if not result or not result.get("ranked"):
+            trace.write("sim", ok=False, error=self._sim.last_error)
+            return None
+        for best in result["ranked"][:3]:
+            plan = simsearch.to_action(best, template)
+            if plan is not None:
+                trace.write(
+                    "sim",
+                    ok=True,
+                    turn=turn,
+                    rollouts=result.get("rollouts"),
+                    ms=result.get("ms"),
+                    value=round(best["value"], 3),
+                    worst=round(best["worst"], 3),
+                    plan=plan,
+                    top=[(r["choice"], round(r["value"], 3)) for r in result["ranked"][:5]],
+                )
+                return plan
+        return None
+
     def _plan_turn(self, template: dict, obs: dict, loaded_pool) -> dict:
+        searched = self._search_turn(template, obs, loaded_pool)
+        if searched is not None:
+            return searched
+
         candidates = battle.generate_candidate_plans(
             template,
             obs,

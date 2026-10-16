@@ -579,3 +579,16 @@ def test_a_replacement_chosen_in_a_forced_switch_first_acts_next_turn():
     assert mem.fake_out_ok("Gyarados", 4) and not mem.fake_out_ok("Gyarados", 3)
     mem.observe_foes([{"species": "Incineroar"}], 3, forced=True)
     assert mem.foe_fake_out_ok("Incineroar", 4)
+
+
+def test_a_choice_holder_does_not_open_with_protect():
+    """Choice Scarf Landorus Protected on switch-in and was locked into Protect for the rest of a lost game."""
+    lando = {"species": "Landorus-Therian", "item": "Choice Scarf", "max_hp": 164, "current_hp": 164}
+    card = battle.card_for_summary(lando, None, "ours")
+    attacker = battle.Active(card=card, summary=lando)
+    card_plain = battle.card_for_summary(dict(lando, item="Leftovers"), None, "ours")
+    plain = battle.Active(card=card_plain, summary=dict(lando, item="Leftovers"))
+    kw = dict(defenders=[], targets=[], turn=3)
+    locked, _ = battle.move_score("protect", attacker=attacker, **kw)
+    free, _ = battle.move_score("protect", attacker=plain, **kw)
+    assert locked < 0 < free

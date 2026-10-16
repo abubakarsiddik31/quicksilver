@@ -50,6 +50,9 @@ DEFAULT_ENGAGE_RATIO = (
 )
 DEFAULT_ABORT_RATIO = 0.7  # ...and breaks off in contact below this multiple of the enemy around it
 DEFAULT_REGROUP_S = 30.0  # how long a broken group stays back before it may advance again
+MIN_ADVANCE_UNITS = 5  # a strike advances with at least this many bodies: one rifleman 'advancing' at 137 s died alone
+BLIND_ADVANCE_MIN = 9000.0  # a strike that has never seen what guards its target advances blind only when this strong
+SIGHTING_MEMORY_S = 150.0  # a sighting at the target still counts this long after the scout lost sight of it
 DEFAULT_RAID_S = 50.0  # a flank or raid run ends this long after it leaves
 DEFAULT_LEASH = 22.0  # how far from home a screen or the line stands
 LOCAL_RADIUS = 16.0  # enemies this close to a group count as the fight it is in
@@ -313,6 +316,7 @@ class Fleet:
         self.state: dict[str, str] = {}
         self._since: dict[str, float] = {}
         self._until: dict[str, float] = {}  # broken / run-ends-at timers
+        self._target_seen: tuple[float, float] | None = None  # (enemy value seen at a strike target, when)
         self._last_order: dict[str, float] = {}
         self._stance: dict[str, str] = {}
         self._stanced: dict[str, set[int]] = {}
@@ -661,8 +665,15 @@ class Fleet:
                 "advancing",
                 "engaged",
             )
+        if near_target > 0:
+            self._target_seen = (near_target, now)
+        elif self._target_seen and now - self._target_seen[1] <= SIGHTING_MEMORY_S:
+            near_target = 0.85 * self._target_seen[0]  # out of sight is not gone: the scout saw an army here a moment ago
         ratio = (value / near_target) if near_target > 0 else None
-        odds_ok = near_target <= 0 or value >= m.engage_ratio * near_target
+        # Nothing seen at the target is not an empty target: a live match walked eight riflemen into an unseen
+        # army (16 lost for one kill). A strike that never saw the defenders waits for scouting or for a big army.
+        odds_ok = value >= m.engage_ratio * near_target if near_target > 0 else value >= BLIND_ADVANCE_MIN
+        odds_ok = odds_ok and len(ids) >= MIN_ADVANCE_UNITS
         self._stance_order(mid, ids, FIGHT_STANCE, res)
         if assembled and odds_ok and target is not None:
             self._set(mid, "advancing", now, res)

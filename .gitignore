@@ -35,3 +35,4 @@ agent/agent.py.smoke_test_backup
 SUMMARY.md
 /docs/
 private/
+pokemon/sim/node_modules/

@@ -140,9 +140,10 @@ PRE_QUEUE_PROGRESS = 0.4  # queue the next structure once the current one is thi
 SCOUT_AT_S = 70
 SCOUT_MIN_FIGHTERS = 6  # in the opening a replacement scout must not be one of fewer than this many fighters
 SCOUT_REPLACE_S = 240.0
+SCOUT_TOTAL_EARLY = 2  # lone scouts sent per match before the army is 10 strong: a live match fed four free kills
 SCOUT_MAX = 1  # one scout early: re-sending lone scouts fed the enemy five free kills
 SCOUT_RESEND_S = (
-    90.0  # a dead scout is replaced after this long: a match played blind is a match played wrong
+    200.0  # a dead scout is replaced after this long: a match played blind is a match played wrong
 )
 SCOUT_SECOND_MIN_CASH = (
     600.0  # the General's second scout (blind for a minute) needs only this much cash
@@ -161,7 +162,7 @@ EXPAND_MIN_HARVS = 3
 EXPAND_MIN_INCOME = 50.0
 # A behind army may not starve the harvesters: income is what rebuilds it.
 ARMY_SHORT_MIN_HARVS = 3  # fewer than this and income cannot rebuild the army, so the rebuy goes ahead
-SCOUT_STANDOFF = 0.8  # a scout stops short of the enemy base: it must see the army come, not walk into the guns
+SCOUT_STANDOFF = 0.6  # a scout stops short of the enemy base: it must see the army come, not walk into the guns
 CONTACT_RADIUS = 10.0  # a retreat with enemies this close to the retreating units keeps shooting
 SCOUT_BLIND_AFTER_S = 150.0  # still no enemy building seen by now: a second scout goes out
 SPLIT_PUSH_SHARE = 0.5  # a model attack-move far from home must take at least this share of the strike force
@@ -225,6 +226,8 @@ FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep"
 OPENING_S = 150  # until then (or a war factory) defences wait unless there is an emergency
 TOWER_BY_S = ((200, 1), (300, 2))  # baseline defence timeline: (game seconds, towers)
 ATTACK_MEMORY_S = 8.0
+ENDGAME_FORCE_S = 420.0  # inside seven minutes, trailing on trades with a big army: the strike force goes, whatever the plan says
+ENDGAME_FORCE_FIGHTERS = 25
 ENDGAME_PUSH_S = 300.0  # inside five minutes, behind on trades, only destroying buildings can still win: push all
 # Battalions: a defence line in front of the base plus flank packs that raid from the sides, so the army is
 # never one blob that is either all defending or all attacking (a lesson from an opponent match).
@@ -1760,6 +1763,8 @@ class RedAlertAgent:
         idle = set(legal.get("idle_units") or [])
         kinds = {u["id"]: str(u.get("type")).lower() for u in units if isinstance(u.get("id"), int)}
         fighters = sum(1 for k in kinds.values() if k not in NON_COMBAT)
+        if self._scouts_sent >= SCOUT_TOTAL_EARLY and fighters < 10:
+            return []  # two scouts already died into the enemy: the next one waits for an army that can escort it
         if self._scouts_sent and fighters < SCOUT_MIN_FIGHTERS and game_s < SCOUT_REPLACE_S:
             return []  # the scouts were the whole army: four riflemen walked into the enemy base one by one
         for kind in SCOUT_PREF:
@@ -1788,6 +1793,7 @@ class RedAlertAgent:
                     return [
                         {"cmd": "move", "units": [uid], "to": mid},
                         {"cmd": "move", "units": [uid], "to": far, "queued": True},
+                        {"cmd": "move", "units": [uid], "to": mid, "queued": True},  # look, then walk back alive
                     ]
         for kind in ("dog", "e1"):
             if (
@@ -2246,8 +2252,31 @@ class RedAlertAgent:
             if str(b.get("type")).lower() in DEFENSES and (c := _cell(b)) is not None
         ]
         enemy_base = _cell(legal.get("enemy_base"))
+        missions = plan.missions
+        remaining = (raw.get("time") or {}).get("remaining_seconds")
+        military = obs.get("military") or {}
+        if (
+            isinstance(remaining, (int, float))
+            and remaining <= ENDGAME_FORCE_S
+            and len(fighters) >= ENDGAME_FORCE_FIGHTERS
+            and (military.get("deaths_cost") or 0) > (military.get("kills_cost") or 0)
+            and enemy_base is not None
+        ):
+            # A time-limit finish is decided on trades: sitting on 100 soldiers with a -12k deficit lost a whole match
+            # that held until the clock ran out. A big army trailing late attacks as one body and does not break off.
+            missions = (
+                officers.Mission("line", officers.HOLD_LINE, share=0.1),
+                officers.Mission(
+                    "endgame_push",
+                    officers.STRIKE,
+                    target="base",
+                    engage_ratio=0.0,
+                    abort_ratio=0.0,
+                    regroup_s=0.0,
+                ),
+            )
         result = self._fleet.step(
-            plan.missions,
+            missions,
             fighters,
             obs,
             home=(float(home[0]), float(home[1])),

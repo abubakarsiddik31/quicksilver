@@ -102,7 +102,7 @@ def test_strike_musters_then_advances_together_when_the_odds_at_the_target_are_g
     assert not any(x["cmd"] == "attack_move" for x in res.orders if x["units"] and x.get("to") == [80, 80])
     staged = f.members["main"] | f.members.get("line", set())
     staging = o._toward(HOME, ENEMY, min(0.2, 24.0 / math.dist(HOME, ENEMY)))
-    at_stage = troops(8, (staging[0], staging[1]))
+    at_stage = troops(12, (staging[0], staging[1]), kind="3tnk")  # strong enough to advance on a target it has not seen
     clock.t += 5
     res = step(f, m, at_stage)
     assert f.state["main"] == "advancing"

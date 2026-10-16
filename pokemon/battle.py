@@ -40,6 +40,7 @@ PROTECT_WHEN_LOW = 45.0  # below the threshold, stalling out a turn is good
 PROTECT_RISK_WEIGHT = 40.0  # per unit of expected-damage / remaining-HP
 PROTECT_DOOMED_BONUS = 10.0  # a faster foe can KO us before we move
 PROTECT_REPEAT = -20.0  # Protect fails when used twice in a row
+CHOICE_PROTECT_PENALTY = -80.0  # a Choice holder that Protects is locked into Protect
 DOOMED_FACTOR = 0.6  # an attack from a Pokémon that may be KO'd first
 OVERKILL_PENALTY = 30.0
 FOCUS_FIRE_BONUS = 15.0
@@ -47,7 +48,7 @@ DOUBLE_FIELD_MOVE_PENALTY = 40.0
 DOUBLE_PROTECT_PENALTY = 15.0
 SWITCH_RISK_WEIGHT = 35.0
 SWITCH_LOW_BONUS = 15.0
-REPLACEMENT_WEIGHT = 0.5     # forced replacements: matchup percent -> score
+REPLACEMENT_WEIGHT = 0.5  # forced replacements: matchup percent -> score
 LOW_HP_FRACTION = 0.35
 SWITCH_BASE = 4.0
 SWITCH_WHEN_LOW = 30.0
@@ -117,7 +118,12 @@ class Active:
         if isinstance(cur, int) and not isinstance(cur, bool):
             reported = self.summary.get("max_hp")
             # A foe's HP is reported as a percentage (max 100): scale it to the card's real HP stat.
-            if self.card and isinstance(reported, int) and reported > 0 and reported != self.card.max_hp:
+            if (
+                self.card
+                and isinstance(reported, int)
+                and reported > 0
+                and reported != self.card.max_hp
+            ):
                 return max(0, round(cur / reported * self.card.max_hp))
             return max(0, cur)
         max_hp = self.card.max_hp if self.card else 100
@@ -160,7 +166,13 @@ def card_for_summary(summary: Any, pool_cards: Any, side: str | None = None) -> 
     # Observed HP is authoritative — it reveals the real HP investment. A foe's is reported as a percentage
     # (max 100), which as an HP stat made every hit on it look ~1.3-1.7x as big as it was.
     maximum = summary.get("max_hp")
-    if not (side == "theirs" and maximum == 100) and isinstance(maximum, int) and not isinstance(maximum, bool) and maximum > 0 and card.stats:
+    if (
+        not (side == "theirs" and maximum == 100)
+        and isinstance(maximum, int)
+        and not isinstance(maximum, bool)
+        and maximum > 0
+        and card.stats
+    ):
         card = dataclasses.replace(card, stats={**card.stats, "hp": maximum})
     return card
 
@@ -243,7 +255,11 @@ class Ctx:
     def replacement_value(self, species: Any) -> float:
         """How good a reserve is as a forced replacement: the damage it deals the
         foes on the board minus the damage they deal it (percent of max HP, averaged)."""
-        card = card_for_summary({"species": species}, self.pool_cards, "ours") if isinstance(species, str) else None
+        card = (
+            card_for_summary({"species": species}, self.pool_cards, "ours")
+            if isinstance(species, str)
+            else None
+        )
         foes = [f for f in self.theirs if f.usable]
         if card is None or not card.stats or not foes:
             return 0.0
@@ -322,6 +338,14 @@ def _status_score(
     early = turn in (1, 2)
 
     if mid in _PROTECT_LIKE:
+        # A Choice item locks the holder into this move until it switches out: Protect first means
+        # Protect every turn (it failed us the whole of a lost game).
+        if (
+            attacker is not None
+            and attacker.card is not None
+            and dex.to_id(attacker.card.item).startswith("choice")
+        ):
+            return CHOICE_PROTECT_PENALTY, None
         # Protect fails when used twice in a row.
         if ctx and ctx.memory and ctx.memory.protected_last(_species_of(attacker)):
             return PROTECT_REPEAT, None
@@ -583,7 +607,11 @@ def clean_option(option: dict) -> dict:
     if "targets" not in option:
         return option
     raw = option["targets"]
-    targets = [t for t in raw if isinstance(t, int) and not isinstance(t, bool)] if isinstance(raw, list) else []
+    targets = (
+        [t for t in raw if isinstance(t, int) and not isinstance(t, bool)]
+        if isinstance(raw, list)
+        else []
+    )
     return {**option, "targets": targets}
 
 
@@ -844,7 +872,11 @@ def generate_candidate_plans(
                 # The resolved turn prices every attack, Protect and switch; only
                 # what it cannot see (status, setup, field moves) keeps its heuristic.
                 joint_score, note = _joint_adjust(choice0, choice1, ctx, combat=False)
-                joint_score += swing + _residual(o0, sc0, not ours[0].usable) + _residual(o1, sc1, len(ours) > 1 and not ours[1].usable)
+                joint_score += (
+                    swing
+                    + _residual(o0, sc0, not ours[0].usable)
+                    + _residual(o1, sc1, len(ours) > 1 and not ours[1].usable)
+                )
             else:
                 joint_score, note = _joint_adjust(choice0, choice1, ctx)
                 joint_score += sc0 + sc1
@@ -916,14 +948,18 @@ def _residual(option: dict, heuristic: float, forced: bool = False) -> float:
     if kind == "pass":
         return heuristic
     if kind == "switch":
-        return heuristic if forced else 0.0  # a forced replacement is not on the battlefield to resolve
+        return (
+            heuristic if forced else 0.0
+        )  # a forced replacement is not on the battlefield to resolve
     move = option.get("move_id")
     if dex.is_damaging(move) or dex.to_id(move) in _PROTECT_LIKE:
         return 0.02 * heuristic  # tie-break only
     return heuristic
 
 
-def _joint_adjust(choice0: dict, choice1: dict, ctx: Ctx, *, combat: bool = True) -> tuple[float, str]:
+def _joint_adjust(
+    choice0: dict, choice1: dict, ctx: Ctx, *, combat: bool = True
+) -> tuple[float, str]:
     """Score changes that only exist for the pair: focus fire, overkill, and
     two slots doing the same one-shot thing."""
     ours, theirs = ctx.ours, ctx.theirs

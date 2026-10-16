@@ -663,6 +663,26 @@
       "species": "Sableye"
     },
     {
+      "ability": "Intimidate",
+      "card_id": "vgc-salamence",
+      "evs": {
+        "hp": 4,
+        "spa": 252,
+        "spe": 252
+      },
+      "item": "Lum Berry",
+      "ivs": {},
+      "level": 50,
+      "moves": [
+        "Draco Meteor",
+        "Hurricane",
+        "Tailwind",
+        "Protect"
+      ],
+      "nature": "Timid",
+      "species": "Salamence"
+    },
+    {
       "ability": "Protosynthesis",
       "card_id": "vgc-scream-tail",
       "evs": {
@@ -943,6 +963,6 @@
       "species": "Wo-Chien"
     }
   ],
-  "count": 47,
+  "count": 48,
   "expected_size": 18
 }
