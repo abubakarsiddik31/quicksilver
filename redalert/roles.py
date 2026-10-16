@@ -98,6 +98,7 @@ HOME_VS_SEEN = 0.3  # home-line soldiers per enemy body seen (a third of what is
 class General:
     """Reads the battle and issues the :class:`Directive` every soldier takes its orders from."""
 
+
     ATTACKING = {"pressure", "all_in"}
     HOMEBOUND = {"defend", "rebuild", "expand"}
 

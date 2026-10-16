@@ -158,7 +158,8 @@ def test_a_small_raid_is_still_chased_off():
 def test_an_infantry_army_with_a_war_factory_trains_a_tank():
     """The lost match built a 2,000 war factory and not one tank in eight minutes."""
     mine = [{"id": i, "type": "e1", "x": 20, "y": 20} for i in range(8)] + [
-        {"id": 40, "type": "harv"}
+        {"id": 40, "type": "harv"},
+        {"id": 41, "type": "harv"},  # two harvesters: income is met, so the vehicle queue is free for the tank
     ]
     state = make_state(
         tick=5000,
@@ -205,7 +206,8 @@ def test_the_second_refinery_survives_the_army_floor_and_the_cancel_reflex():
 def test_the_army_saves_for_a_tank_instead_of_feeding_the_money_to_more_infantry():
     """Cash 700 buys riflemen every tick, so a 950 tank was never affordable: the vehicle queue sat empty."""
     mine = [{"id": i, "type": "e1", "x": 20, "y": 20} for i in range(8)] + [
-        {"id": 40, "type": "harv"}
+        {"id": 40, "type": "harv"},
+        {"id": 41, "type": "harv"},  # two harvesters: income is met, so the vehicle queue is free for the tank
     ]
     state = make_state(
         tick=5000,
@@ -240,3 +242,4 @@ def test_the_home_line_grows_with_the_enemy_bodies_seen_but_never_past_half_the_
     assert seen.garrison == 6  # 0.3 per body seen
     assert decide(army_n=8, enemy_types={"e1": 40}).garrison == 4  # capped at half the army
     assert decide(army_n=20, doctrine="all_in", enemy_types={"e1": 40}).garrison <= quiet.garrison
+

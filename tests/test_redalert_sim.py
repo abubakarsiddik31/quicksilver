@@ -44,3 +44,20 @@ def test_default_opening_is_fast_and_never_starves(faction):
 def test_the_same_run_is_deterministic():
     make = lambda clock: RedAlertAgent(Strategist(None), TacticalAdvisor(None), clock=clock)  # noqa: E731
     assert run(make, 200) == run(make, 200)
+
+
+@pytest.mark.parametrize("faction", ["russia", "england"])
+def test_regression_gate_economy_by_five_minutes(faction):
+    """Won matches in the trace set had 3 harvesters and ~3x the army at 300 s; lost ones sat at 1-2 harvesters.
+
+    The gate runs the model-free build with no enemy: it cannot score a fight, but a build that fails these
+    numbers has already lost the economy (see scripts/ra_report.py for the same figures from real traces).
+    """
+    result = run(
+        lambda clock: RedAlertAgent(Strategist(None), TacticalAdvisor(None), clock=clock),
+        340,
+        faction=faction,
+    )
+    assert result["harvesters_at_300s"] >= 3, result
+    assert result["tanks_at_330s"] >= 2, result
+    assert result["zero_cash_s"] <= 110, result

@@ -227,24 +227,50 @@ def _canonical_weather(weather: Any) -> str | None:
     return _WEATHER_ALIASES.get(weather.replace(" ", "").replace("-", "").lower())
 
 
+_RUIN = {  # ability id -> (stat it lowers on every OTHER Pokémon, multiplier)
+    "swordofruin": "def",
+    "beadsofruin": "spd",
+    "tabletsofruin": "atk",
+    "vesselofruin": "spa",
+}
+RUIN_FACTOR = 0.75
+
+
+def _ruined(stat: str, holder: Card, ruins: set[str]) -> float:
+    """The Ruin multiplier on ``holder``'s ``stat``: a Ruin ability hits everyone but its own holder."""
+    own = dex.to_id(holder.ability)
+    return RUIN_FACTOR if any(_RUIN[r] == stat and r != own for r in ruins) else 1.0
+
+
 def _attack_stat(
-    card: Card, category: str, boosts: dict, crit: bool, burned: bool = False
+    card: Card,
+    category: str,
+    boosts: dict,
+    crit: bool,
+    burned: bool = False,
+    *,
+    stat_card: Card | None = None,
+    stat_key: str | None = None,
+    stat_boosts: dict | None = None,
+    ruins: set[str] | None = None,
 ) -> float:
-    key = "atk" if category == "Physical" else "spa"
-    stage = boosts.get(key, 0)
+    """The attacker's offensive stat. Body Press reads the user's Defense and Foul Play the TARGET's Attack
+    (``stat_card``/``stat_key``/``stat_boosts``); the item and ability modifiers stay the user's."""
+    key = stat_key or ("atk" if category == "Physical" else "spa")
+    source, source_boosts = (stat_card or card), (boosts if stat_boosts is None else stat_boosts)
+    stage = source_boosts.get(key, 0)
     if crit:
         # A critical hit ignores the attacker's negative boosts.
         stage = max(0, stage if isinstance(stage, int) else 0)
-    value = stats_mod.stat_of(card.stats, key) * stats_mod.stage_multiplier(stage)
+    value = stats_mod.stat_of(source.stats, key) * stats_mod.stage_multiplier(stage)
+    if ruins and stat_card is None:
+        value *= _ruined(key, card, ruins)  # Tablets / Vessel of Ruin on the other side
 
     if category == "Physical":
         if card.item == "Choice Band":
             value *= 1.5
         if card.ability in _HUGE_POWER:
             value *= 2.0
-        # Ruin abilities: Sword of Ruin drops other defense, modeled as 1.33x physical attack
-        if card.ability == "Sword of Ruin":
-            value *= 1.33
         # Protosynthesis / Quark Drive with Booster Energy (Atk highest)
         if card.item == "Booster Energy" and card.ability in ("Protosynthesis", "Quark Drive"):
             value *= 1.3
@@ -256,20 +282,37 @@ def _attack_stat(
             value *= 1.5
         if card.item == "Booster Energy" and card.ability in ("Protosynthesis", "Quark Drive"):
             value *= 1.3
-        # Vessel of Ruin drops SpA of others by 25% (0.75x)
     return value
 
 
-def _defense_stat(card: Card, category: str, boosts: dict, crit: bool) -> float:
+def _defense_stat(
+    card: Card, category: str, boosts: dict, crit: bool, ruins: set[str] | None = None
+) -> float:
     key = "def" if category == "Physical" else "spd"
     stage = boosts.get(key, 0)
     if crit:
         # A critical hit ignores the defender's positive boosts.
         stage = min(0, stage if isinstance(stage, int) else 0)
     value = stats_mod.stat_of(card.stats, key) * stats_mod.stage_multiplier(stage)
+    if ruins:
+        value *= _ruined(key, card, ruins)  # Sword / Beads of Ruin on the other side
     if category == "Special" and card.item == "Assault Vest":
         value *= 1.5
     return max(1.0, value)
+
+
+def expected_hits(move: str, attacker: Card) -> tuple[int, float]:
+    """``(guaranteed hits, expected hits)`` of a move: 1 for a single strike, 2-5 for Scale Shot and kin."""
+    hits = (dex.move(move) or {}).get("multihit")
+    if isinstance(hits, int) and hits > 1:
+        return hits, float(hits)
+    if isinstance(hits, list) and len(hits) == 2 and all(isinstance(h, int) for h in hits):
+        low, high = hits
+        if dex.to_id(attacker.ability) == "skilllink":
+            return high, float(high)
+        # The 2-5 hit table (35/35/15/15 %) averages 3.1; a 2-3 hit move averages 2.5.
+        return low, 3.1 if (low, high) == (2, 5) else (low + high) / 2
+    return 1, 1.0
 
 
 def damage(
@@ -288,6 +331,7 @@ def damage(
     friend_guard: bool = False,
     defender_full_hp: bool = False,
     burned: bool = False,
+    ruins: Any = (),
 ) -> DamageResult:
     """Damage from ``attacker``'s ``move`` into ``defender``.
 
@@ -338,8 +382,30 @@ def damage(
             unmodelled=tuple(unmodelled),
         )
 
-    attack = _attack_stat(attacker, category, attacker_boosts, crit, burned)
-    defence = _defense_stat(defender, category, defender_boosts, crit)
+    # Ruin abilities on the field (plus either side's own, whose holder they spare).
+    ruin_set = {dex.to_id(r) for r in ruins or ()} | {
+        dex.to_id(c.ability) for c in (attacker, defender) if dex.to_id(c.ability) in _RUIN
+    }
+    ruin_set &= set(_RUIN)
+
+    entry = dex.move(move) or {}
+    stat_card = stat_key = stat_boosts = None
+    if entry.get("overrideOffensivePokemon") == "target":  # Foul Play: the target's own Attack
+        stat_card, stat_key, stat_boosts = defender, entry.get("overrideOffensiveStat") or "atk", defender_boosts
+    elif entry.get("overrideOffensiveStat") in ("def", "spd", "atk", "spa"):  # Body Press: the user's Defense
+        stat_key = entry["overrideOffensiveStat"]
+    attack = _attack_stat(
+        attacker,
+        category,
+        attacker_boosts,
+        crit,
+        burned,
+        stat_card=stat_card,
+        stat_key=stat_key,
+        stat_boosts=stat_boosts,
+        ruins=ruin_set,
+    )
+    defence = _defense_stat(defender, category, defender_boosts, crit, ruin_set)
 
     base = (
         math.floor(
@@ -433,8 +499,9 @@ def damage(
         unmodelled.append(f"ability:{ability}")
 
     raw = base * modifiers
-    min_damage = max(1, math.floor(raw * 0.85))
-    max_damage = max(1, math.floor(raw))
+    low_hits, mean_hits = expected_hits(move, attacker)
+    min_damage = max(1, math.floor(raw * 0.85)) * low_hits
+    max_damage = max(1, math.floor(raw * mean_hits))
 
     return DamageResult(
         move=move,

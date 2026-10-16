@@ -223,3 +223,21 @@ def test_summaries_are_keyed_by_normalized_species():
     mapped = lineup._summaries([summary("Landorus-Therian")])
     assert dex.to_id("Landorus-Therian") in mapped
     assert lineup._summaries([None, "junk", {}]) == {}
+
+
+def _card(species, item=None, ability=None, moves=()):
+    from pokemon.damage import Card
+
+    return Card(card_id=species, species=species, item=item, ability=ability, moves=tuple(moves), stats={"spe": 100})
+
+
+def test_earthquake_lead_avoids_a_partner_it_would_hit():
+    lando = _card("Landorus-Therian", item="Choice Scarf", moves=["Earthquake", "Rock Slide"])
+    pao = _card("Chien-Pao")
+    balloon = _card("Gholdengo", item="Air Balloon")
+    assert lineup.ally_fire_penalty(lando, pao) > 0
+    assert lineup.ally_fire_penalty(lando, balloon) == 0
+    assert lineup.ally_fire_penalty(lando, _card("Rillaboom")) > 0
+    # Choice lock doubles it.
+    unlocked = _card("Landorus-Therian", item="Leftovers", moves=["Earthquake"])
+    assert lineup.ally_fire_penalty(lando, pao) == 2 * lineup.ally_fire_penalty(unlocked, pao)

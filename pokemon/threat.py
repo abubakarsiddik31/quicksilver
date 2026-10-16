@@ -65,6 +65,8 @@ class Field:
     light_screen_us: bool = False
     reflect_them: bool = False
     light_screen_them: bool = False
+    # Ability ids of every Pokémon on the field: the Ruin abilities lower everyone else's stats.
+    ruins: tuple[str, ...] = ()
 
     def screen_up(self, name: str) -> bool:
         """Whether *we* already have this screen (Aurora Veil counts for both)."""
@@ -165,6 +167,7 @@ def calc(
             light_screen=fld.light_screen_us if defender_is_ours else fld.light_screen_them,
             defender_full_hp=defender.hp_fraction >= 1.0,
             burned=status in ("brn", "burn", "burned"),
+            ruins=fld.ruins,
         )
     except Exception:  # noqa: BLE001 - scoring must never break a decision
         return None
@@ -275,7 +278,9 @@ class Memory:
 
     last_moves: dict[str, str] = field(default_factory=dict)
     entered: dict[str, int] = field(default_factory=dict)
+    foe_entered: dict[str, int] = field(default_factory=dict)
     _active: set[str] = field(default_factory=set)
+    _foe_active: set[str] = field(default_factory=set)
 
     @staticmethod
     def _species(summaries: list) -> list[str | None]:
@@ -285,19 +290,45 @@ class Memory:
             out.append(sp if isinstance(sp, str) and sp else None)
         return out
 
-    def observe(self, ours_summaries: list, turn: int | None) -> None:
+    def observe(self, ours_summaries: list, turn: int | None, *, forced: bool = False) -> None:
+        # A replacement chosen in a forced-switch decision first acts on the NEXT turn.
+        stamp = (turn if isinstance(turn, int) else 1) + (1 if forced else 0)
         current = {s for s in self._species(ours_summaries) if s}
         for species in current - self._active:
-            self.entered[species] = turn if isinstance(turn, int) else 1
+            self.entered[species] = stamp
         self._active = current
+
+    def observe_foes(self, foe_summaries: list, turn: int | None, *, forced: bool = False) -> None:
+        """When each foe came onto the field: a Pokémon that re-enters has a fresh Fake Out."""
+        stamp = (turn if isinstance(turn, int) else 1) + (1 if forced else 0)
+        current = {s for s in self._species(foe_summaries) if s}
+        for species in current - self._foe_active:
+            self.foe_entered[species] = stamp
+        self._foe_active = current
+
+    def foe_fake_out_ok(self, species: str | None, turn: int | None) -> bool:
+        """A foe can Fake Out on the turn it comes in (the lead on turn 1, a re-entry any later turn)."""
+        if species and species in self.foe_entered:
+            return self.foe_entered[species] == turn
+        return turn == 1
 
     def record(self, ours_summaries: list, plan: Any) -> None:
         """Remember each slot's move (``None`` for a switch or pass)."""
-        self.last_moves = {}
         if not isinstance(plan, dict):
+            self.last_moves = {}
             return
+        slots = [plan.get(f"slot_{i}") for i in (0, 1)]
+        if not any(isinstance(c, dict) and c.get("type") == "move" for c in slots):
+            # A forced replacement (a faint mid-turn) is not a turn: Archaludon's Protect from the turn before
+            # still makes the next one fail. Only a Pokémon that is switched out forgets it.
+            for slot, species in enumerate(self._species(ours_summaries)):
+                choice = slots[slot]
+                if species and isinstance(choice, dict) and choice.get("type") == "switch":
+                    self.last_moves.pop(species, None)
+            return
+        self.last_moves = {}
         for slot, species in enumerate(self._species(ours_summaries)):
-            choice = plan.get(f"slot_{slot}")
+            choice = slots[slot]
             if species and isinstance(choice, dict) and choice.get("type") == "move":
                 self.last_moves[species] = dex.to_id(choice.get("move_id"))
 

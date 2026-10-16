@@ -256,6 +256,7 @@ def run(
             min((t for k, t in placed.items() if k in ("pbox", "ftur", "tsla")), default=-1)
         ),
         "harvesters_at_180s": at(180)["harv"],
+        "harvesters_at_300s": at(300)["harv"],
         "tanks_at_330s": at(330)["tanks"],
         "zero_cash_s": round(m["zero"]),
         "vehicle_idle_s": round(m["idle"]),

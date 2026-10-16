@@ -56,6 +56,9 @@ PASS_PENALTY = -1000.0  # taken only when nothing else is legal
 # the move/switch/pass tie-break quietly lets the duplicate through.
 DUPLICATE_SWITCH_PENALTY = PASS_PENALTY - 1.0
 ALLY_DAMAGE_WEIGHT = 1.0  # damage we deal our own partner counts against us
+# A Choice item locks the holder into the ally-hitting move for as long as it
+# stays in, so the friendly fire repeats every turn, not once.
+CHOICE_LOCK_ALLY_FACTOR = 3.0
 
 # Spread moves. `allAdjacentFoes` hits only the opponents; `allAdjacent` also
 # hits our own partner, which is why the two are tracked separately.
@@ -112,6 +115,10 @@ class Active:
     def current_hp(self) -> int:
         cur = self.summary.get("current_hp")
         if isinstance(cur, int) and not isinstance(cur, bool):
+            reported = self.summary.get("max_hp")
+            # A foe's HP is reported as a percentage (max 100): scale it to the card's real HP stat.
+            if self.card and isinstance(reported, int) and reported > 0 and reported != self.card.max_hp:
+                return max(0, round(cur / reported * self.card.max_hp))
             return max(0, cur)
         max_hp = self.card.max_hp if self.card else 100
         return max(1, int(self.hp_fraction * max_hp))
@@ -150,9 +157,10 @@ def card_for_summary(summary: Any, pool_cards: Any, side: str | None = None) -> 
     )
     card = parse_card(raw)
 
-    # The observed HP is authoritative — it reveals the real HP investment.
+    # Observed HP is authoritative — it reveals the real HP investment. A foe's is reported as a percentage
+    # (max 100), which as an HP stat made every hit on it look ~1.3-1.7x as big as it was.
     maximum = summary.get("max_hp")
-    if isinstance(maximum, int) and not isinstance(maximum, bool) and maximum > 0 and card.stats:
+    if not (side == "theirs" and maximum == 100) and isinstance(maximum, int) and not isinstance(maximum, bool) and maximum > 0 and card.stats:
         card = dataclasses.replace(card, stats={**card.stats, "hp": maximum})
     return card
 
@@ -268,6 +276,15 @@ class Ctx:
 def make_ctx(obs: dict, *, pool_cards: Any = None, memory: threat.Memory | None = None) -> Ctx:
     ours, theirs = board(obs, pool_cards=pool_cards)
     fld = threat.field_of(obs)
+    ruins = tuple(
+        dict.fromkeys(
+            dex.to_id(a.card.ability)
+            for a in (*ours, *theirs)
+            if a.usable and a.card is not None and dex.to_id(a.card.ability).endswith("ofruin")
+        )
+    )
+    if ruins:
+        fld = dataclasses.replace(fld, ruins=ruins)
     return Ctx(
         ours=ours,
         theirs=theirs,
@@ -491,7 +508,12 @@ def move_score(
             attacker, partner, move_id, fld, defender_is_ours=True, spread=spread and live_foes > 1
         )
         if friendly_fire is not None:
-            best_score -= friendly_fire.max_percent * ALLY_DAMAGE_WEIGHT
+            factor = ALLY_DAMAGE_WEIGHT
+            if dex.to_id(attacker.card.item).startswith("choice"):
+                factor *= CHOICE_LOCK_ALLY_FACTOR
+            best_score -= friendly_fire.max_percent * factor
+            if friendly_fire.min_damage >= partner.current_hp:
+                best_score -= KO_BONUS  # we would faint our own Pokémon
 
     if dex.to_id(move_id) == "fakeout" and any_hittable:
         species = _species_of(attacker)

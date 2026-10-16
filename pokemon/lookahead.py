@@ -107,7 +107,9 @@ class Lookahead:
                 if pct >= t.hp * 100 * 0.95:
                     pct += 30.0  # they would love the KO
                 if dex.to_id(move) == "fakeout":
-                    pct += 25.0 if self.ctx.turn == 1 else -100.0
+                    memory = getattr(self.ctx, "memory", None)
+                    fresh = memory.foe_fake_out_ok(foe.summary.get("species"), self.ctx.turn) if memory else self.ctx.turn == 1
+                    pct += 25.0 if fresh else -100.0
                 key = f"{move}@{t.slot}"
                 scored[key] = ({"type": "move", "move_id": move, "target": t.slot + 1}, pct)
         if any(dex.to_id(m) in threat.PROTECT_LIKE for m in foe.card.moves):
@@ -200,7 +202,7 @@ class Lookahead:
                 continue
             if key == "fakeout":
                 fresh = (memory.fake_out_ok(species, self.ctx.turn) if memory is not None else self.ctx.turn == 1) \
-                    if side == "us" else self.ctx.turn == 1
+                    if side == "us" else (memory.foe_fake_out_ok(species, self.ctx.turn) if memory is not None else self.ctx.turn == 1)
                 if not fresh:
                     continue
             self._strike(units, unit, action, move)

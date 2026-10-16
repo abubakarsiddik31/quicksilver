@@ -158,9 +158,9 @@ def test_close_combat_damage_is_exactly_right():
 def test_surging_strikes_includes_stab_and_the_type_boost_item():
     """base = floor(floor(22 * 25 * 200 / 111) / 50) + 2 = 21
     modifiers = STAB 1.5 * 2.0 * Mystic Water 1.2 = 3.6
-    raw = 75.6  ->  min floor(64.26) = 64,  max floor(75.6) = 75"""
+    raw = 75.6 per hit, three hits: min 3 * floor(64.26) = 192,  max floor(3 * 75.6) = 226"""
     result = damage.damage(card(URSHIFU), card(INCINEROAR), "Surging Strikes")
-    assert (result.min_damage, result.max_damage) == (64, 75)
+    assert (result.min_damage, result.max_damage) == (192, 226)
 
 
 def test_a_status_move_deals_no_damage():
@@ -327,3 +327,73 @@ def test_best_move_returns_none_when_nothing_can_damage():
     # Only a Normal-type attack, into a Ghost type: immune, so nothing lands.
     normal_only = {**INCINEROAR, "moves": ["Fake Out", "Protect"]}
     assert damage.best_move(card(normal_only), card(FLUTTER)) is None
+
+
+# -- Ruin abilities, stat-override moves, multi-hit ---------------------------------------------------------------
+
+
+def _mon(species, ability=None, item=None, evs=None, moves=()):
+    return damage.parse_card(
+        {"card_id": species, "species": species, "item": item, "ability": ability, "nature": "Hardy",
+         "level": 50, "evs": evs or {}, "ivs": {}, "moves": list(moves)}
+    )
+
+
+def test_beads_of_ruin_lowers_special_defence_of_everyone_but_its_holder():
+    """The lost match predicted 67-79% for a Heat Wave that did 93%: Chi-Yu's Beads of Ruin was not modelled."""
+    chi = _mon("Chi-Yu", "Beads of Ruin", "Choice Specs", {"spa": 252})
+    target = _mon("Archaludon", "Stamina", evs={"hp": 252})
+    plain = damage.damage(_mon("Chi-Yu", "Pressure", "Choice Specs", {"spa": 252}), target, "Heat Wave")
+    ruined = damage.damage(chi, target, "Heat Wave", ruins=("beadsofruin",))
+    assert ruined.max_damage / plain.max_damage > 1.25
+    # a physical hit is untouched, and the holder itself is not ruined by its own ability
+    assert damage.damage(chi, target, "Dark Pulse").max_damage == damage.damage(
+        chi, target, "Dark Pulse", ruins=()).max_damage
+    holder = _mon("Chi-Yu", "Beads of Ruin")
+    assert damage.damage(target, holder, "Flash Cannon").max_damage == damage.damage(
+        target, _mon("Chi-Yu", "Pressure"), "Flash Cannon").max_damage
+
+
+def test_sword_of_ruin_and_the_other_ruins_hit_the_right_stat():
+    pao = _mon("Chien-Pao", "Sword of Ruin", evs={"atk": 252})
+    bulky = _mon("Rillaboom", "Grassy Surge", evs={"hp": 252, "def": 252})
+    sword = damage.damage(pao, bulky, "Icicle Crash").max_damage
+    assert sword / damage.damage(_mon("Chien-Pao", "Pressure", evs={"atk": 252}), bulky, "Icicle Crash").max_damage > 1.25
+    # Tablets of Ruin lowers a physical attacker's Attack; Vessel of Ruin a special attacker's SpA
+    tablet = damage.damage(pao, bulky, "Icicle Crash", ruins=("tabletsofruin",), defender_boosts={}).max_damage
+    assert tablet < sword
+    mane = _mon("Flutter Mane", "Protosynthesis", evs={"spa": 252})
+    assert damage.damage(mane, bulky, "Moonblast", ruins=("vesselofruin",)).max_damage < damage.damage(
+        mane, bulky, "Moonblast").max_damage
+
+
+def test_body_press_uses_the_users_defence_and_foul_play_the_targets_attack():
+    arch = _mon("Archaludon", "Stamina", evs={"def": 252, "hp": 252})
+    foe = _mon("Chi-Yu", "Pressure")
+    press = damage.damage(arch, foe, "Body Press").max_damage
+    as_attack = damage.damage(_mon("Archaludon", "Stamina", evs={"def": 252, "hp": 252}), foe, "Iron Head")
+    assert press > 0 and arch.stats["def"] > arch.stats["atk"]
+    # A raised Defence raises Body Press, an Attack drop on the user does not lower it
+    assert damage.damage(arch, foe, "Body Press", attacker_boosts={"def": 2}).max_damage > press
+    assert damage.damage(arch, foe, "Body Press", attacker_boosts={"atk": -6}).max_damage == press
+    assert as_attack.max_damage > 0
+    sab = _mon("Sableye", "Prankster")
+    target = _mon("Urshifu-Rapid-Strike", "Unseen Fist", evs={"atk": 252}, item="Mystic Water")
+    base = damage.damage(sab, target, "Foul Play").max_damage
+    # the TARGET's Attack stage counts, the user's own does not
+    assert damage.damage(sab, target, "Foul Play", defender_boosts={"atk": 2}).max_damage > base
+    assert damage.damage(sab, target, "Foul Play", attacker_boosts={"atk": 2}).max_damage == base
+
+
+def test_multi_hit_moves_count_every_hit():
+    dragonite = _mon("Dragonite", "Multiscale", evs={"atk": 252})
+    target = _mon("Gyarados", "Intimidate", evs={"hp": 252})
+    shot = damage.expected_hits("Scale Shot", dragonite)
+    assert shot == (2, 3.1)
+    single = damage.damage(dragonite, target, "Outrage")  # a single-strike Dragon move for scale
+    result = damage.damage(dragonite, target, "Scale Shot")
+    assert result.max_damage > 2 * (result.min_damage // 2) * 0.8
+    assert result.min_damage >= 2 * 1 and result.max_damage > result.min_damage
+    assert damage.expected_hits("Scale Shot", _mon("Cinccino", "Skill Link")) == (5, 5.0)
+    assert damage.expected_hits("Close Combat", dragonite) == (1, 1.0)
+    assert single.max_damage > 0

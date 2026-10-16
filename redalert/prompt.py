@@ -88,6 +88,83 @@ def map_block(config: dict[str, Any] | None, map_id: str | None) -> str:
     return "\n".join(out)
 
 
+WAR_DOCTRINE = """\
+HOW TO FIGHT THIS WAR (principles, not rules: reason from them and adapt; nothing here is a threshold)
+
+WHAT KIND OF WAR THIS IS. A 20-minute war of attrition against a capable opponent. It ends in one of two ways:
+a base is destroyed, or the clock runs out and it is decided on trades (what you killed minus what you lost),
+then assets. So the question behind every decision is: "will this action improve the exchange of value, or end
+their ability to fight?" Pushing when it will not is a loss that looks like courage; sitting when you are the
+stronger side is a loss that looks like caution. You are the GENERAL: you set intent, your officers (the
+harness's guard line, strike force, flank packs and scouts) carry it out, and your soldiers fight.
+
+KNOW THE ENEMY BEFORE YOU DECIDE. What you can see is a fraction of what they have. An enemy base you have not
+seen recently means their army is bigger than the visible count; estimate it from the time elapsed, their
+economy (harvesters, refineries) and how fast their units keep arriving. Scouting is the war's eyes: a scout
+should observe from a safe distance and survive, not walk into the base. Ask each review: what is their army
+made of, where is it, what are they trying to do (raid my harvesters, bait me, mass for one push, expand)?
+Read their intent from behaviour: a lone unit that retreats when you chase is bait; two units hitting your
+harvesters are a diversion; a growing mass near the middle is a coming push.
+
+CONCENTRATION AND LOCAL SUPERIORITY. Wars are won by being stronger at the place and moment of the fight, not
+by being stronger overall. Do not feed pieces of the army into a bigger one: losses grow faster than the gap in
+numbers, so a force that is half as strong does not lose half, it loses nearly everything while killing little.
+Fight with the army together, close to your reinforcements and your towers; let the enemy cross the ground and
+meet you there. Count a fight before you take it: their units in range plus what can arrive in the next half
+minute, against yours. If you cannot win it, do not take it; if you cannot avoid it, take it where you are
+strongest. Defence is cheaper than attack: a defender with towers, repair and reinforcements next door trades
+better than the same army walking into their half.
+
+COMBINED ARMS: EVERY UNIT HAS A JOB. Read each unit's cost and weapon in the rules table and give it the job it is
+good at; nothing is good at everything.
+- Tanks are the front: they take the hits and kill vehicles and buildings, and soldiers stand and fire behind them.
+- Anti-armour infantry (rocket soldiers) kill tanks cheaply and are weak against infantry: keep them behind the
+  line and in numbers when armour is coming.
+- Cheap infantry screens, holds ground and is the efficient body against light attackers; it is slaughtered by
+  tanks and by anything that kills groups of it, so it must not meet those in the open without cover.
+- Fast cheap units (dogs, scouts, light vehicles) have specialist jobs: hunting lone infantry and scouts,
+  running down raiders, killing exposed harvesters, forcing the enemy to keep guards at home. They lose to a
+  combined force: use them to hunt what is weaker and avoid what is stronger.
+- Long-range artillery wins fights from behind a line and dies if it is reached: it needs a screen.
+- Mobile anti-air is a specialist: only worth building when there is something in the air.
+Composition answers the enemy: when what they field changes, what you build changes, but not on every sighting;
+a trend that holds for a minute is information, a single unit is noise.
+
+MANOEUVRE: FLANKS, RAIDS, TRAPS. Hit the enemy where it is weak, not where it is strong.
+- A flank is a fast detachment that arrives from the side or behind while the main force holds their attention in
+  front; it hits harvesters, refineries, power and production, and leaves before their army turns on it. It needs
+  the front to be held and an idea of where their army is.
+- Raiding their economy is worth more than trading armies: an enemy with fewer harvesters cannot replace losses.
+- The enemy uses the same tools: units that retreat when you chase are leading you into the rest of their force.
+  Chase only as far as your own support reaches, then return and take the ground you want.
+- Be hard to flank: a thin guard that sees them coming and calls the army is better than the whole army standing
+  still or the whole army away. Never leave the base empty while their army is alive and unseen; the strike force
+  and the base are one problem.
+
+TEMPO AND INITIATIVE. After you break an enemy wave, their army is dead and their reinforcements are far away:
+that is the moment to counter-attack, hard, before they rebuild; hesitating hands the initiative back. After you
+lose a fight, do the opposite: pull back to where you are strong, repair, rebuild, and come again bigger. A long
+wait for a perfect army only helps the side that is out-producing you.
+
+RETREAT IS A SKILL. Withdraw early, from a position you chose, toward your towers and reinforcements, and keep
+firing while you do it: a unit ordered to plain-move does not shoot, so a retreat across open ground with the enemy
+in contact is a way of dying without trading. Pull back only the group that is losing; a fight that is going well
+is not a retreat. Retreating does not mean giving up the war, it means choosing the next fight.
+
+THE CLOCK AND THE SCORE. In the last minutes the score matters, but never trade it for a collapse: if you are
+behind on trades, ask whether a push can kill more than it loses. A push that cannot win its fight only deepens
+the deficit and empties the base; fighting at home with your towers and reinforcements usually improves the
+exchange. If you are ahead, protect it by winning the fights that come to you, not by hiding. Assets count too:
+keep what you have alive.
+
+ECONOMY IS THE ARMY. Income pays for every unit, so protect your harvesters and raid theirs. Spend what you earn
+on what the fight needs; money held back is army you do not have, money spent on the wrong things is the same.
+
+ADAPT. If the same approach has failed twice, it is the wrong approach: change something real (composition, where
+you fight, how you scout, whether you attack) rather than repeating it with a bigger number. Say in your
+assessment what you believe the enemy is doing, what you intend, and what would change your mind.
+"""
+
 HARNESS = """\
 YOU ARE THE STRATEGIST of a Red Alert bot. A fast harness (5 decisions/second) executes your PLAN; you do not
 issue moves one by one, and your latency (seconds) does not stall the base. You are consulted when something
@@ -135,11 +212,7 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
   "attack" strikes ONLY with the whole idle army at once, once `wave_min` are idle (Jev's yes never halves a
   wave, and for ~25 s after each strike the next one assembles at a staging point toward the enemy instead of
   trickling out); "all_in" attack-moves EVERY combat unit repeatedly. Targets: "nearest", "base", "building"
-  (nearest visible enemy structure) or [x, y]. HARD RULE: the time limit is decided on trades (kills minus
-  losses) first and assets second, so in the last five minutes behind on trades the executor pushes EVERY
-  fighter at the enemy no matter what this plan says — when ahead on trades, protect the lead instead, and
-  only inside the last THREE minutes: before that a lead is earned by winning the next fight, not by walking away
-  from it. NEVER order a `move` for units that are in contact with the enemy and winning (a moving unit does not
+  (nearest visible enemy structure) or [x, y]. The time limit is decided on trades first and assets second (see the doctrine: weigh the exchange, not the score). NEVER order a `move` for units that are in contact with the enemy and winning (a moving unit does not
   shoot; the harness will drop it): keep them on attack-move and let them finish the enemy. Pull back only a group
   that is being outweighed, and then to the nearest tower line, not across the map.
   A lead is also safest when the enemy cannot fight back: when the army you have is several times the enemy army and
@@ -158,6 +231,36 @@ WHAT THE HARNESS DOES ON ITS OWN (do not order these)
 - `orders`: optional ONE-OFF raw orders (see the order table in the guide) for anything the standing plan cannot
   express (a specific scouting path, selling, rally points, a focused attack on an enemy id). Ids/cells must come
   from the CURRENT state; each is re-checked against the live state and dropped if the id is gone.
+
+MISSIONS: HOW YOU COMMAND THE ARMY (this is your main lever in a fight)
+You do not set a single army mode. You assign MISSIONS to OFFICERS; each officer is a named group of soldiers that
+keeps its soldiers between plans (restate the same `id` to keep a group together). The harness carries each
+mission out at five decisions a second and REPORTS BACK in `harness_measurements.officers` (soldiers, value, where,
+state, the enemy value near it, and the odds). You are woken when an officer is broken, withdraws or spots the
+enemy: read what happened and change the plan. Always send `missions`; the older `army` block is only a fallback.
+  {"id": "main", "kind": "STRIKE", "share": 0.6, "target": "base", "engage_ratio": 1.2, "abort_ratio": 0.7, "regroup_s": 30}
+kinds (all fields except id and kind are optional):
+- HOLD_LINE  the home guard. Meets anything that comes near the base, otherwise holds a line in front of it on
+             defend stance (engages in range, does not chase). `share` or `count`.
+- STRIKE     the main body. It musters at a staging point, advances together when its value is at least
+             `engage_ratio` times the enemy value at the target (tower and unit credits within ~14 cells), fights
+             on attack-move, and BREAKS OFF to the tower line when the enemy around it outweighs it
+             (`abort_ratio`), then regroups for `regroup_s` seconds and comes again. `target`: "base",
+             "nearest", "building", "enemy_army", a cell [x, y], or an economic target (below). With no `share` it
+             takes whoever is left. Raise `engage_ratio` when you are blind to their army; lower it to press.
+- FLANK      a detachment that swings wide of the target (`side`: left | right | alternate), hits it from the side
+             and withdraws after `duration_s` or when a bigger force meets it. Use it while the main body holds
+             their attention in front.
+- RAID       a fast group that goes straight for an economic target ("harvesters", "economy", "power",
+             "refinery", "production") and withdraws when something bigger arrives. The cheapest, fastest units.
+- SCREEN     a small forward picket `leash` cells toward the enemy: it gives vision and gives way when the enemy
+             comes, reporting "spotted". It is how you see their army without feeding scouts into their base.
+- FALL_BACK  pull a group back to the tower line ("towers") or the base ("base"), fighting as it goes.
+`share` is a fraction of all fighters (0-1) or `count` is an exact number. At most 6 missions. The base always
+keeps a guard. Typical shapes: a line + a strike + a screen early; add a raid when their harvesters are exposed
+and a flank when the front is stuck; after a broken fight, FALL_BACK the broken group and rebuild; after you
+break their wave, send the strike at once while their army is dead. Choose what the situation needs: this is
+war, not a checklist.
 
 REACTIONS (your instant reflexes: the harness evaluates them every decision, in milliseconds, while you think)
   "reactions": [{"name": "...", "when": {...}, "do": [...]}]   // at most 8; `when` keys are ANDed
@@ -226,7 +329,8 @@ tendencies, your decision and why, with the money arithmetic) so you reason befo
   "assessment": "...",
   "buildings": [{"item": "powr", "count": 1}, ...],          // priority order, TOTAL desired
   "units": [{"item": "e1", "count": 6}, ...],                // priority order, TOTAL desired alive+queued
-  "army": {"mode": "hold|attack|all_in", "wave_min": 3-30, "target": "nearest|base|building|[x,y]", "gather": [x,y] or null},
+  "missions": [ {"id": "line", "kind": "HOLD_LINE", "share": 0.25}, {"id": "main", "kind": "STRIKE", "target": "base", "engage_ratio": 1.2}, ... ],   // see MISSIONS
+  "army": {"mode": "hold|attack|all_in", "wave_min": 3-30, "target": "nearest|base|building|[x,y]", "gather": [x,y] or null},   // fallback only
   "army_first": false,
   "reactions": [ ... as above ... ],
   "orders": [ {"cmd": "move", "units": [id], "to": [x, y]}, ... ],   // optional, at most 8, one-off
@@ -241,6 +345,7 @@ def build_system(config: dict[str, Any] | None, map_id: str | None) -> str:
     config = _dict(config)
     parts = [
         "You command one side of a 1v1 Command & Conquer: Red Alert match (OpenRA engine) against another AI agent.",
+        WAR_DOCTRINE,
         HARNESS,
     ]
     guide = load_guide()

@@ -215,7 +215,9 @@ class PokemonAgent:
         obs = observation.observation_of(state)
         self._learn(state, template)
         loaded_pool = self._cards()
-        self._memory.observe(observation.active_pokemon(obs), observation.turn(obs))
+        forced = bool(observation.force_switch(obs))
+        self._memory.observe(observation.active_pokemon(obs), observation.turn(obs), forced=forced)
+        self._memory.observe_foes(observation.opponent_active_pokemon(obs), observation.turn(obs), forced=forced)
 
         plan = self._plan_turn(template, obs, loaded_pool)
         self._memory.record(observation.active_pokemon(obs), plan)

@@ -964,10 +964,11 @@ def test_waves_leave_all_at_once_and_assemble_between_them():
     assert any(o["cmd"] == "attack_move" and o["units"] == combat for o in out)
 
 
-def test_behind_on_trades_the_closing_minutes_push_everything():
-    # The time limit is decided on trades (kills - losses) first, assets second.
+def test_behind_on_trades_the_closing_minutes_do_not_force_an_all_in():
+    """A lost match was forced to push every fighter at a stronger army in its last five minutes and ended with
+    no army at all while the enemy walked through the base. The push is the General's call, not a timer's."""
     now = {"cmd": "attack_move", "units": [1], "to": [60, 60]}
-    units = [{"id": i, "type": "e1"} for i in range(1, 5)]  # two idle, two engaged
+    units = [{"id": i, "type": "e1"} for i in range(1, 5)]
     behind = dict(
         military={"kills_cost": 1000, "deaths_cost": 9000},
         units=units,
@@ -976,24 +977,10 @@ def test_behind_on_trades_the_closing_minutes_push_everything():
         attack_now=now,
     )
     plan = Plan(buildings=(), units=(), army_mode="attack", wave_min=8)
-
-    # Ahead on trades with the clock closing: the wave rules protect the lead, no forced push.
     agent, _ = advised({}, plan=plan)
-    ahead = make_state(
-        remaining=240, **dict(behind, military={"kills_cost": 9000, "deaths_cost": 1000})
-    )
-    assert not any(o["cmd"] == "attack_move" for o in orders_of(agent.choose_action(ahead, CTX)))
-
-    # Behind on the tiebreak with five minutes left: ALL fighters push for the destruction win,
-    # engaged ones re-targeted too — hoarding a bigger army behind negative trades still loses.
-    agent, _ = advised({}, plan=plan)
-    out = orders_of(agent.choose_action(make_state(remaining=240, **behind), CTX))
-    assert {"cmd": "attack_move", "units": [1, 2, 3, 4], "to": [60, 60]} in out
-
-    # The same position with six-plus minutes left: still time to assemble a real wave instead.
-    agent, _ = advised({}, plan=plan)
-    out = orders_of(agent.choose_action(make_state(remaining=400, **behind), CTX))
-    assert not any(o["cmd"] == "attack_move" for o in out)
+    action = agent.choose_action(make_state(remaining=240, **behind), CTX)
+    out = orders_of(action) if isinstance(action, WithReasoning) else []
+    assert {"cmd": "attack_move", "units": [1, 2, 3, 4], "to": [60, 60]} not in out
 
 
 def test_a_guard_line_holds_the_front_while_the_rest_attacks():
@@ -1683,7 +1670,7 @@ def test_scout_is_sent_once_via_the_midpoint_and_kept_out_of_waves():
     agent = stub_agent(plan)
     out = orders_of(agent.choose_action(state, CTX))
     moves = [o for o in out if o["cmd"] == "move" and o["units"] == [5]]
-    assert len(moves) == 2 and moves[1].get("queued") is True and moves[1]["to"] == [80, 80]
+    assert len(moves) == 2 and moves[1].get("queued") is True and moves[1]["to"] == [68, 68]  # 80% of the way: short of the enemy base
     wave = [o for o in out if o["cmd"] == "attack_move"]
     assert wave and 5 not in wave[0]["units"]
     assert agent.choose_action(state, CTX) is not None and 5 in agent._scouts
@@ -2116,7 +2103,7 @@ def test_no_harvester_rebuys_while_the_army_is_short():
     built = [
         {"id": i, "type": t} for i, t in enumerate(["fact", "powr", "barr", "proc", "proc", "weap"])
     ]
-    harvs = [{"id": 50, "type": "harv"}, {"id": 51, "type": "harv"}]
+    harvs = [{"id": 50 + i, "type": "harv"} for i in range(3)]  # three: income can rebuild the army
     state = make_state(avail=["harv", "e3"], cash=3000, buildings=built, units=harvs)
     state.raw["time"]["game_seconds"] = 400  # floor 6,000: we have no army at all
     items = [
@@ -2131,6 +2118,18 @@ def test_no_harvester_rebuys_while_the_army_is_short():
         for o in orders_of(stub_agent(plan).choose_action(state, CTX))
         if o["cmd"] == "train"
     ]
+    assert "harv" in items
+
+
+def test_a_short_army_still_rebuys_up_to_three_harvesters():
+    """The lost match sat at 1-3 harvesters and ~38/s all game because 'army short' capped them at one per refinery."""
+    plan = Plan(buildings=(), units=(("e3", 10),))
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "barr", "proc", "proc", "weap"])]
+    state = make_state(
+        avail=["harv", "e3"], cash=3000, buildings=built, units=[{"id": 50, "type": "harv"}, {"id": 51, "type": "harv"}]
+    )
+    state.raw["time"]["game_seconds"] = 400
+    items = [o["item"] for o in orders_of(stub_agent(plan).choose_action(state, CTX)) if o["cmd"] == "train"]
     assert "harv" in items
 
 
@@ -2534,3 +2533,71 @@ def test_a_model_attack_move_of_a_slice_far_from_home_is_vetoed_but_the_whole_bo
     assert not agent._split_push(body, ours, obs)
     assert not agent._split_push(near, ours, obs)  # near home it is just a defence reposition
     assert not agent._split_push(slice_, ours[:6], obs)  # a tiny army has no body to keep together
+
+
+def test_a_second_war_factory_waits_for_income():
+    """The lost match bought a 2,000 second war factory at ~40/s of income and had no army left to defend it."""
+    plan = Plan(buildings=(("weap", 2),), units=())
+    built = [{"id": i, "type": t} for i, t in enumerate(["fact", "powr", "powr", "barr", "proc", "weap"])]
+    state = make_state(avail=["weap", "powr"], cash=5000, buildings=built, units=[{"id": 50, "type": "harv"}])
+    state.raw["time"]["game_seconds"] = 300
+    action = stub_agent(plan).choose_action(state, CTX)
+    out = orders_of(action) if isinstance(action, WithReasoning) else []  # waiting is the point
+    assert not any(o["cmd"] == "build" and o["item"] == "weap" for o in out)
+
+
+def test_expansion_thresholds_are_income_based():
+    from redalert import agent
+
+    assert agent.EXPAND_MIN_HARVS >= 3 and agent.EXPAND_MIN_INCOME >= 50
+    assert agent.SCOUT_STANDOFF < 1.0
+
+
+def test_a_retreat_in_contact_keeps_shooting_and_one_out_of_contact_just_walks():
+    """A plain move never fires: a lost match walked 24 riflemen home through tanks and flame trucks, 11 died, none killed."""
+    agent = offline()
+    pos = {1: (20, 20), 2: (21, 20)}
+    near = {"visible_enemies": [{"id": 9, "type": "3tnk", "x": 24, "y": 20}]}
+    far = {"visible_enemies": [{"id": 9, "type": "3tnk", "x": 60, "y": 60}]}
+    assert agent._fall_back_order([1, 2], [10, 10], pos, near)["cmd"] == "attack_move"
+    assert agent._fall_back_order([1, 2], [10, 10], pos, far)["cmd"] == "move"
+    harvester_only = {"visible_enemies": [{"id": 9, "type": "harv", "x": 22, "y": 20}]}
+    assert agent._fall_back_order([1, 2], [10, 10], pos, harvester_only)["cmd"] == "move"
+
+
+
+def test_the_strategist_is_given_the_war_doctrine_before_the_harness_contract():
+    from redalert import prompt
+
+    system = prompt.build_system({}, None)
+    assert "HOW TO FIGHT THIS WAR" in system
+    assert system.index("HOW TO FIGHT THIS WAR") < system.index("YOU ARE THE STRATEGIST")
+    assert "HARD RULE" not in system
+
+
+def test_the_prompt_teaches_missions_and_the_plan_parses_them():
+    from redalert import prompt
+    from redalert.plan import parse_plan
+
+    system = prompt.build_system({}, None)
+    assert "MISSIONS: HOW YOU COMMAND THE ARMY" in system and '"missions"' in system
+    plan = parse_plan('{"assessment":"x","missions":[{"id":"main","kind":"STRIKE","share":0.7,"target":"base"},{"kind":"nope"}]}')
+    assert [m.kind for m in plan.missions] == ["STRIKE"]
+    assert plan.as_json()["missions"][0]["id"] == "main"
+    assert parse_plan('{"assessment":"y"}', plan).missions == plan.missions  # restating nothing keeps them
+
+
+def test_a_plan_with_missions_commands_the_army_through_officers():
+    from redalert.officers import HOLD_LINE, STRIKE, Mission
+
+    units = [{"id": i, "type": "e1", "x": 20 + i % 3, "y": 20 + i // 3} for i in range(1, 9)]
+    plan = Plan(buildings=(), units=(), missions=(Mission("line", HOLD_LINE, share=0.25), Mission("main", STRIKE, target="base")))
+    state = make_state(
+        tick=6000, cash=0, units=units, combat=list(range(1, 9)), enemy_base=[80, 80],
+        buildings=[{"id": 100 + i, "type": t, "x": 20, "y": 20} for i, t in enumerate(("fact", "powr", "proc", "weap", "barr"))],
+    )
+    agent = stub_agent(plan)
+    out = agent.choose_action(state, CTX)
+    orders = orders_of(out) if isinstance(out, WithReasoning) else []
+    assert any(o["cmd"] == "set_stance" for o in orders)  # officers set their stances
+    assert {r["id"] for r in agent._officer_reports} == {"line", "main"}

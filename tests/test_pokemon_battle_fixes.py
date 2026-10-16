@@ -526,3 +526,56 @@ def test_psychic_terrain_blocks_priority_moves_and_boosts_psychic():
     boosted = threat.calc(indeedee, basc, "Psychic", fld, defender_is_ours=False)
     plain = threat.calc(indeedee, basc, "Psychic", threat.Field(), defender_is_ours=False)
     assert boosted.max_damage > plain.max_damage
+
+
+def test_choice_lock_makes_friendly_fire_cost_more():
+    from pokemon import battle
+
+    assert battle.CHOICE_LOCK_ALLY_FACTOR > 1.0
+
+
+def test_a_foes_percentage_hp_is_not_taken_as_its_hp_stat():
+    """The lost match predicted 43-51% for a hit that did 28%: a foe reports max_hp 100, which was used as its HP stat."""
+    from pokemon import battle
+
+    foe = {"species": "Incineroar", "max_hp": 100, "current_hp": 72, "current_hp_fraction": 0.72}
+    card = battle.card_for_summary(foe, None, "theirs")
+    assert card.max_hp > 150
+    assert battle.Active(card=card, summary=foe).current_hp == round(72 / 100 * card.max_hp)
+
+
+def test_a_forced_replacement_does_not_forget_last_turns_protect():
+    """Archaludon protected, a faint forced a switch mid-turn, and the next Protect failed because memory was wiped."""
+    from pokemon import threat
+
+    memory = threat.Memory()
+    mons = [{"species": "Sableye"}, {"species": "Archaludon"}]
+    memory.record(mons, {"slot_0": {"type": "move", "move_id": "foulplay"}, "slot_1": {"type": "move", "move_id": "protect"}})
+    memory.record(
+        [{"species": "Sableye"}, {"species": "Archaludon"}],
+        {"slot_0": {"type": "switch", "species": "gyarados"}, "slot_1": {"type": "pass"}},
+    )
+    assert memory.protected_last("Archaludon")
+
+
+def test_a_foe_that_re_enters_has_a_fresh_fake_out():
+    """Incineroar came back after Chi-Yu fainted and flinched Hatterene: foe Fake Out was only believed on turn 1."""
+    from pokemon import threat
+
+    mem = threat.Memory()
+    mem.observe_foes([{"species": "Chi-Yu"}, {"species": "Incineroar"}], 1)
+    assert mem.foe_fake_out_ok("Incineroar", 1) and not mem.foe_fake_out_ok("Incineroar", 2)
+    mem.observe_foes([{"species": "Chi-Yu"}, {"species": "Dragonite"}], 3)  # Incineroar switched out
+    mem.observe_foes([{"species": "Incineroar"}, {"species": "Dragonite"}], 4)  # and is back
+    assert mem.foe_fake_out_ok("Incineroar", 4)
+    assert not mem.foe_fake_out_ok("Dragonite", 5)
+
+
+def test_a_replacement_chosen_in_a_forced_switch_first_acts_next_turn():
+    from pokemon import threat
+
+    mem = threat.Memory()
+    mem.observe([{"species": "Gyarados"}], 3, forced=True)
+    assert mem.fake_out_ok("Gyarados", 4) and not mem.fake_out_ok("Gyarados", 3)
+    mem.observe_foes([{"species": "Incineroar"}], 3, forced=True)
+    assert mem.foe_fake_out_ok("Incineroar", 4)

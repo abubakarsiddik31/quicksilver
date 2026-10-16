@@ -168,19 +168,23 @@ def _card_entry(card: dict) -> dict:
 # -- damage facts ------------------------------------------------------------
 
 
-def _range_note(attacker: battle.Active, defender: battle.Active, move_id: str) -> str | None:
-    """The exact damage span of one move into one defender, with the KO verdict."""
+def _range_note(
+    attacker: battle.Active,
+    defender: battle.Active,
+    move_id: str,
+    *,
+    spread: bool = False,
+    fld: threat.Field | None = None,
+    defender_is_ours: bool = False,
+) -> str | None:
+    """The exact damage span of one move into one defender, with the KO verdict.
+    Same calc the scorer uses: spread penalty, weather, screens and terrain."""
     if attacker is None or defender is None or attacker.card is None or defender.card is None:
         return None
-    try:
-        result = damage(
-            attacker.card,
-            defender.card,
-            move_id,
-            attacker_boosts=attacker.boosts,
-            defender_boosts=defender.boosts,
-        )
-    except Exception:  # noqa: BLE001 - a description must never break a decision
+    result = threat.calc(
+        attacker, defender, move_id, fld or threat.Field(), defender_is_ours=defender_is_ours, spread=spread
+    )
+    if result is None:
         return None
     span = f"{result.min_percent:.0f}-{result.max_percent:.0f}%"
     if result.min_damage >= defender.current_hp:
@@ -190,7 +194,9 @@ def _range_note(attacker: battle.Active, defender: battle.Active, move_id: str) 
     return f"{span} of its max HP"
 
 
-def describe_plan(plan: dict, ours: list[battle.Active], theirs: list[battle.Active]) -> str:
+def describe_plan(
+    plan: dict, ours: list[battle.Active], theirs: list[battle.Active], fld: threat.Field | None = None
+) -> str:
     """Engine facts only: what each slot does and the exact damage it deals."""
     parts: list[str] = []
     for key in ("slot_0", "slot_1"):
@@ -204,22 +210,27 @@ def describe_plan(plan: dict, ours: list[battle.Active], theirs: list[battle.Act
             move_id = str(action.get("move_id") or "move")
             if battle.is_spread(move_id):
                 notes = []
+                live_foes = sum(1 for d in theirs if d.usable)
                 for defender in theirs:
                     if defender.usable:
-                        note = _range_note(attacker, defender, move_id)
+                        note = _range_note(attacker, defender, move_id, spread=live_foes > 1, fld=fld)
                         if note:
                             notes.append(note)
                 detail = f"hits both foes: {' & '.join(notes)}" if notes else "hits both foes"
                 if battle.hits_own_ally(move_id):
                     partner = ours[1 - index] if 0 <= 1 - index < len(ours) else None
                     if partner is not None and partner.usable:
-                        note = _range_note(attacker, partner, move_id)
+                        note = _range_note(
+                            attacker, partner, move_id, spread=live_foes > 1, fld=fld, defender_is_ours=True
+                        )
                         if note:
                             detail += f"; also hits our partner for {note}"
             else:
                 idx = battle.target_index(action.get("target"))
                 defender = theirs[idx] if idx is not None and idx < len(theirs) else None
-                note = _range_note(attacker, defender, move_id) if defender is not None else None
+                note = (
+                    _range_note(attacker, defender, move_id, fld=fld) if defender is not None else None
+                )
                 if defender is not None and note:
                     detail = f"at {defender.card.species if defender.card else 'foe'}: {note}"
                 elif defender is not None:
@@ -340,7 +351,7 @@ def battle_request(
     speed_order = [f"{entry['species']} ({entry['side']}, {speed})" for speed, entry in paced]
 
     criteria = {
-        LABELS[i]: f"{describe_plan(plan, ours, theirs)} (engine score {score:.1f})"
+        LABELS[i]: f"{describe_plan(plan, ours, theirs, fld)} (engine score {score:.1f})"
         for i, (plan, score, _) in enumerate(candidate_plans[: len(LABELS)])
     }
 

@@ -131,6 +131,52 @@ def lead_score(card: Card, opponents: list[Card | None]) -> float:
     return score
 
 
+# -- lead pairing ------------------------------------------------------------
+
+# A lead whose spread move (Earthquake, Surf) also hits its partner: at Team
+# Preview that costs a turn each time it is used, double with a Choice lock.
+LEAD_ALLY_FIRE_PENALTY = 6.0
+
+
+def _immune_to(card: Card, move_type: str | None) -> bool:
+    if dex.effectiveness(move_type, card.types) == 0.0:
+        return True
+    ability, item = dex.to_id(card.ability), dex.to_id(card.item)
+    return move_type == "Ground" and (ability == "levitate" or item == "airballoon")
+
+
+def ally_fire_penalty(attacker: Card, partner: Card) -> float:
+    """What leading ``attacker`` next to ``partner`` costs when its spread move
+    also hits the partner. Zero when the partner is immune or resists it."""
+    worst = 0.0
+    for move in attacker.moves:
+        entry = dex.move(move) or {}
+        if entry.get("target") != "allAdjacent" or not dex.is_damaging(move):
+            continue
+        mtype = dex.move_type(move)
+        if _immune_to(partner, mtype):
+            continue
+        worst = max(worst, dex.effectiveness(mtype, partner.types))
+    lock = 2.0 if dex.to_id(attacker.item).startswith("choice") else 1.0
+    return LEAD_ALLY_FIRE_PENALTY * worst * lock
+
+
+def pick_leads(chosen: list[tuple[str, Card]], theirs: list[Card | None]) -> list[tuple[str, Card]]:
+    """The best two leads: each one's lead score, less friendly fire between them."""
+    def pair_key(pair: tuple[tuple[str, Card], tuple[str, Card]]):
+        (ida, a), (idb, b) = pair
+        score = (
+            lead_score(a, theirs)
+            + lead_score(b, theirs)
+            - ally_fire_penalty(a, b)
+            - ally_fire_penalty(b, a)
+        )
+        return (-score, tuple(sorted((ida, idb))))
+
+    best = min(itertools.combinations(chosen, LEADS), key=pair_key)
+    return sorted(best, key=lambda pair: (-lead_score(pair[1], theirs), pair[0]))
+
+
 # -- building the candidate cards -------------------------------------------
 
 
@@ -210,7 +256,7 @@ def choose_lineup(template: Any, obs: dict, *, pool_cards: Any = None) -> dict |
         return None
 
     chosen = list(best_combo)
-    leads = sorted(chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0]))[:LEADS]
+    leads = pick_leads(chosen, theirs)
 
     return {
         "type": "select_lineup",
@@ -261,7 +307,7 @@ def generate_candidate_lineups(
 
     for score, combo in scored_combos:
         chosen = list(combo)
-        leads = sorted(chosen, key=lambda pair: (-lead_score(pair[1], theirs), pair[0]))[:LEADS]
+        leads = pick_leads(chosen, theirs)
 
         bring_ids = [roster_id for roster_id, _ in chosen]
         lead_ids = [roster_id for roster_id, _ in leads]

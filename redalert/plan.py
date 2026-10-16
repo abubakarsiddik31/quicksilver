@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 
+from redalert.officers import Mission, parse_missions
+
 ARMY_MODES = ("hold", "attack", "all_in")
 NAMED_TARGETS = ("nearest", "base", "building")
 # Tactical slots Jev (the fast decision model) may drive. The LLM chooses which.
@@ -218,6 +220,9 @@ class Plan:
     tactics_hint: str = ""
     min_confidence: float = 0.6
     jev_slots: tuple[str, ...] = JEV_SLOTS
+    # The General's orders to its officers. When present they command the army (see redalert.officers) and the
+    # legacy army fields above are only the fallback for a plan that carries none.
+    missions: tuple[Mission, ...] = ()
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -232,6 +237,7 @@ class Plan:
             },
             "army_first": self.army_first,
             "orders": list(self.orders),
+            "missions": [m.as_json() for m in self.missions],
             "review_in_s": self.review_in_s,
             "reactions": [
                 {"name": r.name, "when": r.when, "do": list(r.do)} for r in self.reactions
@@ -390,6 +396,7 @@ def parse_plan(text: Any, base: Plan = DEFAULT_PLAN) -> Plan | None:
             else base.min_confidence
         ),
         jev_slots=jev_slots,
+        missions=parse_missions(data["missions"]) if "missions" in data else base.missions,
     )
 
 
