@@ -165,6 +165,29 @@ you fight, how you scout, whether you attack) rather than repeating it with a bi
 assessment what you believe the enemy is doing, what you intend, and what would change your mind.
 """
 
+
+MEMORY_GUIDE = """\
+YOUR MEMORY OF THIS MATCH (`harness_measurements.match_memory`: read it before every plan)
+The harness keeps the whole game for you and never resets it. It is the long-run picture a commander carries:
+- `clock`: how the match stands on the tiebreak (trade balance now), and how long is left.
+- `enemy`: what they have been seen to have for the whole match (buildings, production, tech, defences, harvesters,
+  the peak army ever seen and where it was last seen), and a BELIEF about their army right now: what is in view,
+  what was seen and is out of view, and an ESTIMATE of the unseen rest worked out from the economy both sides share
+  (they started with the same cash; their income follows their harvesters). The longer no enemy army unit has been
+  in view, the more that estimate matters and the wider `army_belief_range` is. An army you cannot see is not gone.
+- `fights_so_far`: every engagement: what you had, what they had at its peak, what each side lost, the exchange
+  (their value destroyed per value you lost), the exchange the fight model EXPECTED beforehand, and how it ended.
+  `model_calibration` below 1 means fights have gone worse than the model said: trust a plan less, not more.
+- `plans_so_far`: your own earlier plans and what each achieved (exchange gained, army and income change). If a
+  plan's result was poor, do not restate it with a bigger number: find out why from the fights and change it.
+- `trend`: where economy, your army and their estimated army are heading.
+Use it to STRATEGISE, not to react: set the fights you take from what the memory says you can win, rebuild and
+re-scout after a fight that went badly, and attack when the picture (not the clock alone) says the exchange will
+be in your favour. The harness's fight model does the arithmetic of a single engagement from this same memory
+(unit matchups, defences, the unseen force that can reach the fight, how past fights compared with its
+predictions). Your officers' `odds` in the reports are its expected exchange.
+"""
+
 HARNESS = """\
 YOU ARE THE STRATEGIST of a Red Alert bot. A fast harness (5 decisions/second) executes your PLAN; you do not
 issue moves one by one, and your latency (seconds) does not stall the base. You are consulted when something
@@ -242,12 +265,14 @@ enemy: read what happened and change the plan. Always send `missions`; the older
 kinds (all fields except id and kind are optional):
 - HOLD_LINE  the home guard. Meets anything that comes near the base, otherwise holds a line in front of it on
              defend stance (engages in range, does not chase). `share` or `count`.
-- STRIKE     the main body. It musters at a staging point, advances together when its value is at least
-             `engage_ratio` times the enemy value at the target (tower and unit credits within ~14 cells), fights
-             on attack-move, and BREAKS OFF to the tower line when the enemy around it outweighs it
-             (`abort_ratio`), then regroups for `regroup_s` seconds and comes again. `target`: "base",
+- STRIKE     the main body. It musters at a staging point, advances together when the fight model's EXPECTED
+             EXCHANGE (their value destroyed per value you lose, counting what is in view, the unseen force from your
+             memory that can reach the fight, unit matchups and their defences) is at least `engage_ratio`, fights
+             on attack-move, and BREAKS OFF to the tower line when the expected exchange from where it stands, or the
+             exchange it is actually getting, falls below `abort_ratio`, then regroups for `regroup_s` seconds and
+             comes again. `target`: "base",
              "nearest", "building", "enemy_army", a cell [x, y], or an economic target (below). With no `share` it
-             takes whoever is left. Raise `engage_ratio` when you are blind to their army; lower it to press.
+             takes whoever is left. Raise `engage_ratio` to demand a safer fight; lower it to accept a riskier one (the model already adds the unseen force).
 - FLANK      a detachment that swings wide of the target (`side`: left | right | alternate), hits it from the side
              and withdraws after `duration_s` or when a bigger force meets it. Use it while the main body holds
              their attention in front.
@@ -346,6 +371,7 @@ def build_system(config: dict[str, Any] | None, map_id: str | None) -> str:
     parts = [
         "You command one side of a 1v1 Command & Conquer: Red Alert match (OpenRA engine) against another AI agent.",
         WAR_DOCTRINE,
+        MEMORY_GUIDE,
         HARNESS,
     ]
     guide = load_guide()

@@ -36,10 +36,11 @@ from altruagent import WAIT, DecisionContext, GameState, WithReasoning
 from common.jev import JevClient
 from common.llm import GeminiClient
 from redalert import doctrine as doctrines
-from redalert import roles, trace
-from redalert import officers
+from redalert import officers, roles, trace
+from redalert.battle import Judge
 from redalert.econ import EconTracker, funds
 from redalert.intel import TOWERS, Intel
+from redalert.memory import MatchMemory
 from redalert.plan import DEFAULT_PLAN, Plan, Reaction, sanitize_order
 from redalert.strategist import Strategist
 from redalert.tactics import ADVICE_TTL_S, ESCALATE_LEVEL, Candidates, TacticalAdvisor
@@ -135,12 +136,20 @@ BUDGET_FACTOR = (
 CASH_MARGIN = 300
 UNIT_FLOOR = 100.0  # units may spend down to this; structures keep the larger floor
 CASH_FLOOR = 300.0  # below this only harvesters and power commit (the income comes first, always)
+REFINERY_SELL_AFTER_S = (
+    8.0  # no refinery and too poor to rebuild one for this long: sell structures to fund it
+)
+REFINERY_SELL_ORDER = ("ftur", "pbox", "gun", "tsla", "fix", "tent", "barr", "weap")
 BROKE_CANCEL_S = 10.0  # cash pinned at zero this long: cancel the worst non-essential commitment
 PRE_QUEUE_PROGRESS = 0.4  # queue the next structure once the current one is this far along
 SCOUT_AT_S = 70
-SCOUT_MIN_FIGHTERS = 6  # in the opening a replacement scout must not be one of fewer than this many fighters
+SCOUT_MIN_FIGHTERS = (
+    6  # in the opening a replacement scout must not be one of fewer than this many fighters
+)
 SCOUT_REPLACE_S = 240.0
-SCOUT_TOTAL_EARLY = 2  # lone scouts sent per match before the army is 10 strong: a live match fed four free kills
+SCOUT_TOTAL_EARLY = (
+    2  # lone scouts sent per match before the army is 10 strong: a live match fed four free kills
+)
 SCOUT_MAX = 1  # one scout early: re-sending lone scouts fed the enemy five free kills
 SCOUT_RESEND_S = (
     200.0  # a dead scout is replaced after this long: a match played blind is a match played wrong
@@ -161,11 +170,17 @@ SECOND_BARRACKS_S = 200.0
 EXPAND_MIN_HARVS = 3
 EXPAND_MIN_INCOME = 50.0
 # A behind army may not starve the harvesters: income is what rebuilds it.
-ARMY_SHORT_MIN_HARVS = 3  # fewer than this and income cannot rebuild the army, so the rebuy goes ahead
-SCOUT_STANDOFF = 0.6  # a scout stops short of the enemy base: it must see the army come, not walk into the guns
+ARMY_SHORT_MIN_HARVS = (
+    3  # fewer than this and income cannot rebuild the army, so the rebuy goes ahead
+)
+SCOUT_STANDOFF = (
+    0.6  # a scout stops short of the enemy base: it must see the army come, not walk into the guns
+)
 CONTACT_RADIUS = 10.0  # a retreat with enemies this close to the retreating units keeps shooting
 SCOUT_BLIND_AFTER_S = 150.0  # still no enemy building seen by now: a second scout goes out
-SPLIT_PUSH_SHARE = 0.5  # a model attack-move far from home must take at least this share of the strike force
+SPLIT_PUSH_SHARE = (
+    0.5  # a model attack-move far from home must take at least this share of the strike force
+)
 SPLIT_PUSH_MIN = 5
 SMALL_RAID_LEASH = 12.0  # how far from home a one- or two-unit raid is followed
 ECON_FIRST_UNTIL_S = 360.0
@@ -176,7 +191,9 @@ ARMY_FLOOR_FROM_S, ARMY_FLOOR_PER_S = 100.0, 30.0
 DEFEND_RADIUS = 24  # enemy units this close to the base centre (or 10 to any building) trigger the defence reflex
 DEFEND_EVERY_S = 1.5
 SIEGE_MIN = 4
-DEFEND_COUNT_RATIO = 1.5  # more than this many times our fighters in bodies: fight under the towers, together
+DEFEND_COUNT_RATIO = (
+    1.5  # more than this many times our fighters in bodies: fight under the towers, together
+)
 DEFEND_MASS_RATIO = 0.8  # intruders worth this much of our fighters (and over two of them): mass at home, do not chase
 POWER_MARGIN = 40  # after the opening, keep this much spare power: low power slows every queue
 ORE_FULL = 0.75  # ore store this full: spend it now (a full store stops the harvesters unloading)
@@ -220,14 +237,14 @@ WAVE_COOLDOWN_S = (
 ABORT_RADIUS = 22.0  # enemy force this close to our field units is the one they are about to fight
 ABORT_RATIO = 1.0  # their value there (units plus towers) at or above ours: the push is overmatched, pull back
 RAW_MOVE_VETO_MIN = 4  # a model "move" of this many fighters that are in contact is a retreat, judged like any other
-ABORT_COOLDOWN_S = 45.0  # after pulling back, no wave and no pressing forward until the army is rebuilt
+ABORT_COOLDOWN_S = (
+    45.0  # after pulling back, no wave and no pressing forward until the army is rebuilt
+)
 WAVE_MUSTER_RADIUS = 8.0  # idle fighters within this of the muster point count as assembled
 FILLER_VEHICLES = ("3tnk", "2tnk", "1tnk", "4tnk", "v2rl", "arty", "apc", "jeep")
 OPENING_S = 150  # until then (or a war factory) defences wait unless there is an emergency
 TOWER_BY_S = ((200, 1), (300, 2))  # baseline defence timeline: (game seconds, towers)
 ATTACK_MEMORY_S = 8.0
-ENDGAME_FORCE_S = 420.0  # inside seven minutes, trailing on trades with a big army: the strike force goes, whatever the plan says
-ENDGAME_FORCE_FIGHTERS = 25
 ENDGAME_PUSH_S = 300.0  # inside five minutes, behind on trades, only destroying buildings can still win: push all
 # Battalions: a defence line in front of the base plus flank packs that raid from the sides, so the army is
 # never one blob that is either all defending or all attacking (a lesson from an opponent match).
@@ -239,7 +256,9 @@ FLANK_SIZE = 3
 FLANK_LIFE_S = 50.0  # a run ends after this; its units rejoin the main force where they stand
 FLANK_OFFSET = 14.0  # how wide: perpendicular offset from the target's center, sides alternate
 FLANK_FROM_S = 150.0  # no flank runs while the opening is still forming
-FLANK_MIN_ARMY = 10  # packs of three peel off only from an army big enough that the main body is still a body
+FLANK_MIN_ARMY = (
+    10  # packs of three peel off only from an army big enough that the main body is still a body
+)
 STYLE_FLANK_CD_S = {
     "turtle": 40.0,
     "mass_infantry": 40.0,
@@ -252,8 +271,12 @@ FINISH_AHEAD_RATIO = (
 )
 FINISH_MIN_SEEN = 1000.0
 CRUSH_RATIO = 3.0  # an army this many times what we have seen of the enemy (units plus towers) does not turtle
-WAVE_SHARE = 0.6  # a wave takes at least this share of the strike force: trickles of 7 and 12 fed the enemy
-WAVE_MIN_CAP = 12  # ... and a plan's wave_min above this stops holding it back: a full match was won on the
+WAVE_SHARE = (
+    0.6  # a wave takes at least this share of the strike force: trickles of 7 and 12 fed the enemy
+)
+WAVE_MIN_CAP = (
+    12  # ... and a plan's wave_min above this stops holding it back: a full match was won on the
+)
 # tiebreak with 18,000 of army idle behind "wave_min 30" against an enemy with one unit left
 FEED_BEHIND_RATIO = (
     1.2  # below this against a big seen enemy, mid-game attacks just feed the tiebreak: attacking a held
@@ -338,14 +361,24 @@ class RedAlertAgent:
         self._battle: dict[str, Any] = {}
         self._scouts: set[int] = set()
         self._scouts_sent = 0
-        self._enemy_building_seen = False  # any enemy structure ever in view: until then the match is played blind
+        self._enemy_building_seen = (
+            False  # any enemy structure ever in view: until then the match is played blind
+        )
+        # The match memory keeps the whole game (sightings, enemy economy, every fight, every plan); the judge reads
+        # engagements from it for the officers, and the General reads it as its long-run briefing.
+        self.memory = MatchMemory(
+            self.cost_of, tower_types=frozenset(TOWERS), non_combat=frozenset(NON_COMBAT)
+        )
+        self.judge = Judge(self.memory)
         self._fleet = officers.Fleet(
             self.cost_of,
             self._clock,
             non_combat=frozenset(NON_COMBAT),
             tower_types=frozenset(TOWERS),
+            judge=self.judge,
         )
         self._officer_reports: list[dict[str, Any]] = []
+        self._memory_trace_at = -1e9
         self._officer_event_at: dict[str, float] = {}
         self._scout_at = -1e9
         self._threat_until = -1e9
@@ -372,7 +405,9 @@ class RedAlertAgent:
         self._attack_seq = -1
         self._attack_at = -1e9
         self._wave_until = -1e9
-        self._abort_until = -1e9  # a push met a held position and pulled back: no pressing until then
+        self._abort_until = (
+            -1e9
+        )  # a push met a held position and pulled back: no pressing until then
         self._guard: set[int] = set()  # the home defence line, sticky while its members live
         self._guard_stanced: set[int] = set()
         self._flankers: dict[
@@ -387,6 +422,7 @@ class RedAlertAgent:
         self._mode_at = -1e9
         self._fired: set[str] = set()
         self._broke_since: float | None = None
+        self._no_refinery_since: float | None = None
 
     # -- throttling and learning -------------------------------------------------
 
@@ -688,6 +724,30 @@ class RedAlertAgent:
 
         # The battle picture (both sides, with memory through the fog) and the battle plan in force.
         self._safe("intel", lambda: self.intel.update(obs, mono), None)
+        self._safe(
+            "memory",
+            lambda: self.memory.update(
+                obs,
+                game_s,
+                income=income,
+                home=_cell(obs.get("base_center")),
+                enemy_base=_cell(legal.get("enemy_base")),
+                fighters=all_combat,
+                harvesters=owned.get("harv", 0),
+            ),
+            None,
+        )
+        self._safe(
+            "memory",
+            lambda: self.memory.note_plan(
+                self.strategist.version,
+                game_s,
+                (plan.assessment if plan is not None else ""),
+                [m.as_json() for m in plan.missions] if plan is not None else [],
+                obs,
+            ),
+            None,
+        )
         refineries = owned.get("proc", 0)
         army_value = sum(self.cost_of(str(u.get("type")).lower()) for u in all_combat)
         enemy_seen = self._safe("intel", lambda: self.intel.enemy_army_value(self.cost_of), 0.0)
@@ -902,6 +962,22 @@ class RedAlertAgent:
         if army_short and owned.get("harv", 0) >= max(refineries, ARMY_SHORT_MIN_HARVS):
             # One per refinery keeps income alive; rebuying 1,100 harvesters with no army left lost a match.
             harv_goal = min(harv_goal, max(refineries, ARMY_SHORT_MIN_HARVS))
+        if harv_goal and not army_short:
+            # An investment judged on its payback and on whether the field still supports it, not a fixed count.
+            harv_goal += self._safe(
+                "memory",
+                lambda: self.memory.harvester_extra(
+                    game_s,
+                    (raw.get("time") or {}).get("remaining_seconds"),
+                    owned.get("harv", 0),
+                    refineries,
+                    self.cost_of("harv"),
+                    raiders_n > 0 or siege,
+                    MAX_HARV,
+                ),
+                0,
+            )
+            harv_goal = min(MAX_HARV, harv_goal)
         harvs = owned.get("harv", 0) + queued.get("harv", 0)
         if harv_goal and harvs < harv_goal and "harv" in avail:
             unit_wants.insert(0, ("harv", harv_goal))
@@ -1047,7 +1123,8 @@ class RedAlertAgent:
                     # to the front of the structures, or the army meets its first push without a single tank.
                     for i in (*directive.units, *FILLER_VEHICLES):
                         missing = [
-                            n for n in self._needs.get(i) or []
+                            n
+                            for n in self._needs.get(i) or []
                             if not owned.get(n) and not queued.get(n) and n in avail
                         ]
                         if self.queue_of(i) == "vehicle" and i not in NON_COMBAT and missing:
@@ -1126,7 +1203,9 @@ class RedAlertAgent:
         ):
             wants.append((barracks, owned.get(barracks, 0) + queued.get(barracks, 0) + 1))
 
-        if not expand_ok:  # the model's "cash floating" reaction and plans asked for 2,000 war factories at 40/s
+        if (
+            not expand_ok
+        ):  # the model's "cash floating" reaction and plans asked for 2,000 war factories at 40/s
             wants = [
                 (i, c)
                 for i, c in wants
@@ -1186,7 +1265,11 @@ class RedAlertAgent:
             outright. Below the floor only the economy (harvesters, power) commits; an emergency overrides the
             floor because surviving the next thirty seconds outranks solvency.
             """
-            floor = UNIT_FLOOR if (is_unit and owned.get("weap") and game_s >= LEAK_FROM_S) else CASH_FLOOR  # a tank at 1,100 cash waited for 1,250 while the army died
+            floor = (
+                UNIT_FLOOR
+                if (is_unit and owned.get("weap") and game_s >= LEAK_FROM_S)
+                else CASH_FLOOR
+            )  # a tank at 1,100 cash waited for 1,250 while the army died
             if not floor_exempt and not emergency and cash < floor:
                 return False
             # An army behind the clock outranks the structures in flight: in the battle sim, a refinery, a depot
@@ -1198,7 +1281,12 @@ class RedAlertAgent:
                 return True
             return (
                 cash - (0.0 if floor_exempt else floor)
-                >= (0.0 if first else committed_s) + committed_u + spent_s + spent_u + cost + reserve
+                >= (0.0 if first else committed_s)
+                + committed_u
+                + spent_s
+                + spent_u
+                + cost
+                + reserve
             )
 
         # Structures: priority order; one per queue, pre-queued, within the spending budget.
@@ -1443,6 +1531,33 @@ class RedAlertAgent:
                     burn=[round(burn_struct, 1), round(burn_units, 1)],
                 )
 
+        # No refinery and no cash is a dead end: income is zero, so nothing can ever be bought. A rush that kills the
+        # only refinery at 200 s left a live match at $0 for four minutes with one harvester. Sell the least useful
+        # structure, one at a time, until a new refinery is affordable.
+        if not owned.get("proc") and not queued.get("proc") and game_s > 60:
+            self._no_refinery_since = (
+                self._no_refinery_since if self._no_refinery_since is not None else mono
+            )
+        else:
+            self._no_refinery_since = None
+        if (
+            self._no_refinery_since is not None
+            and mono - self._no_refinery_since >= REFINERY_SELL_AFTER_S
+            and cash < self.cost_of("proc")
+            and self._fresh("sell_for_refinery", 6.0)
+        ):
+            kinds_owned: dict[str, list[dict[str, Any]]] = {}
+            for b in buildings:
+                if isinstance(b.get("id"), int):
+                    kinds_owned.setdefault(str(b.get("type")).lower(), []).append(b)
+            for kind in REFINERY_SELL_ORDER:
+                keep = 1 if kind in BARRACKS else 0
+                if len(kinds_owned.get(kind, [])) > keep:
+                    victim = kinds_owned[kind][-1]
+                    orders.append({"cmd": "sell", "building": victim["id"]})
+                    trace.write("sell_for_refinery", building=kind, cash=cash)
+                    break
+
         unmet_structure = any(short(i, c) for i, c in wants)
         if not unmet_structure and not trained and not production and cash > 1500:
             diag.append(f"{cash} cash unspent and nothing is queued or wanted")
@@ -1594,11 +1709,29 @@ class RedAlertAgent:
                     "reactions_fired": [r.name for r in fired],
                     "scout_alive": bool(self._scouts),
                     "officers": self._officer_reports,
+                    "match_memory": self._safe(
+                        "memory",
+                        lambda: self.memory.briefing(
+                            game_s, obs, (raw.get("time") or {}).get("remaining_seconds")
+                        ),
+                        None,
+                    ),
                     "anti_air_filtered_until_air_seen": sorted(AA_ONLY) if not air_seen else [],
                 },
             )
 
         self._decisions += 1
+        if now - self._memory_trace_at >= 30.0:
+            self._memory_trace_at = now
+            brief = self._safe(
+                "memory",
+                lambda: self.memory.briefing(
+                    game_s, obs, (raw.get("time") or {}).get("remaining_seconds")
+                ),
+                None,
+            )
+            if brief:
+                trace.write("memory", **brief)
         if now - self._state_at >= 5.0:
             rate = self._decisions / max(1e-6, now - self._state_at) if self._state_at else None
             self._state_at, self._decisions = now, 0
@@ -1690,7 +1823,9 @@ class RedAlertAgent:
         if enemies or enemy_buildings:
             self._enemy_seen_at = mono
         if near_n:
-            self._threat_until = mono + 30.0  # one sighting at the gate keeps the line strong for 30 s, no flicker
+            self._threat_until = (
+                mono + 30.0
+            )  # one sighting at the gate keeps the line strong for 30 s, no flicker
         d = self.general.decide(
             game_s=game_s,
             army_n=army_n,
@@ -1793,7 +1928,12 @@ class RedAlertAgent:
                     return [
                         {"cmd": "move", "units": [uid], "to": mid},
                         {"cmd": "move", "units": [uid], "to": far, "queued": True},
-                        {"cmd": "move", "units": [uid], "to": mid, "queued": True},  # look, then walk back alive
+                        {
+                            "cmd": "move",
+                            "units": [uid],
+                            "to": mid,
+                            "queued": True,
+                        },  # look, then walk back alive
                     ]
         for kind in ("dog", "e1"):
             if (
@@ -1863,8 +2003,11 @@ class RedAlertAgent:
                 numbers=numbers,
             )
         applied = doctrines.apply(self.doctrines.doctrine, plan)
-        if self.doctrines.name == "mass_army" and applied.army_mode == "attack" \
-                and not doctrines.attack_allowed("pressure", numbers):
+        if (
+            self.doctrines.name == "mass_army"
+            and applied.army_mode == "attack"
+            and not doctrines.attack_allowed("pressure", numbers)
+        ):
             # "Build up, attack when a wave is ready" meant a wave of twelve into an enemy nobody had scouted,
             # behind towers nobody had counted. Until the army is clearly ahead of what is known, build at home.
             applied = dataclasses.replace(applied, army_mode="hold")
@@ -1990,7 +2133,9 @@ class RedAlertAgent:
                 self.cost_of(str(u.get("type")).lower()) for u in army if u["id"] in set(fighters)
             )
             theirs = sum(self.cost_of(t) for _, t in raiders)
-            outnumbered = len(intruders) >= DEFEND_COUNT_RATIO * len(fighters)  # bodies decide a melee, not cost
+            outnumbered = len(intruders) >= DEFEND_COUNT_RATIO * len(
+                fighters
+            )  # bodies decide a melee, not cost
             if len(intruders) > 2 and (theirs >= DEFEND_MASS_RATIO * mine or outnumbered):
                 target = home
             elif small:
@@ -2253,28 +2398,6 @@ class RedAlertAgent:
         ]
         enemy_base = _cell(legal.get("enemy_base"))
         missions = plan.missions
-        remaining = (raw.get("time") or {}).get("remaining_seconds")
-        military = obs.get("military") or {}
-        if (
-            isinstance(remaining, (int, float))
-            and remaining <= ENDGAME_FORCE_S
-            and len(fighters) >= ENDGAME_FORCE_FIGHTERS
-            and (military.get("deaths_cost") or 0) > (military.get("kills_cost") or 0)
-            and enemy_base is not None
-        ):
-            # A time-limit finish is decided on trades: sitting on 100 soldiers with a -12k deficit lost a whole match
-            # that held until the clock ran out. A big army trailing late attacks as one body and does not break off.
-            missions = (
-                officers.Mission("line", officers.HOLD_LINE, share=0.1),
-                officers.Mission(
-                    "endgame_push",
-                    officers.STRIKE,
-                    target="base",
-                    engage_ratio=0.0,
-                    abort_ratio=0.0,
-                    regroup_s=0.0,
-                ),
-            )
         result = self._fleet.step(
             missions,
             fighters,
@@ -2616,15 +2739,29 @@ class RedAlertAgent:
             if not o or (o["cmd"] == "sell" and o.get("building") in core_ids):
                 continue
             if self._split_push(o, units, obs):
-                trace.write("veto", cmd=o["cmd"], n=len(o["units"]), to=o.get("to"), why="piece of the army sent forward")
+                trace.write(
+                    "veto",
+                    cmd=o["cmd"],
+                    n=len(o["units"]),
+                    to=o.get("to"),
+                    why="piece of the army sent forward",
+                )
                 continue
             if self._winning_retreat(o, units, obs):
-                trace.write("veto", cmd=o["cmd"], n=len(o["units"]), to=o.get("to"), why="retreat while winning")
+                trace.write(
+                    "veto",
+                    cmd=o["cmd"],
+                    n=len(o["units"]),
+                    to=o.get("to"),
+                    why="retreat while winning",
+                )
                 continue
             out.append(o)
         return out
 
-    def _split_push(self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]) -> bool:
+    def _split_push(
+        self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]
+    ) -> bool:
         """A model ``attack_move`` that sends a small slice of the army far from home.
 
         Groups of 3-10 walking out in turn were killed one by one by an enemy that kept its force together,
@@ -2647,7 +2784,9 @@ class RedAlertAgent:
         strike = [i for i in fighters if i not in held]
         return len(ids) < SPLIT_PUSH_SHARE * len(strike) and len(strike) >= 2 * SPLIT_PUSH_MIN
 
-    def _winning_retreat(self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]) -> bool:
+    def _winning_retreat(
+        self, order: dict[str, Any], units: list[dict[str, Any]], obs: dict[str, Any]
+    ) -> bool:
         """A model ``move`` that walks a fighting group away from an enemy it is beating.
 
         A ``move`` unit does not shoot back, so ordering it mid-fight loses units and the fight (the model did it

@@ -50,9 +50,6 @@ DEFAULT_ENGAGE_RATIO = (
 )
 DEFAULT_ABORT_RATIO = 0.7  # ...and breaks off in contact below this multiple of the enemy around it
 DEFAULT_REGROUP_S = 30.0  # how long a broken group stays back before it may advance again
-MIN_ADVANCE_UNITS = 5  # a strike advances with at least this many bodies: one rifleman 'advancing' at 137 s died alone
-BLIND_ADVANCE_MIN = 9000.0  # a strike that has never seen what guards its target advances blind only when this strong
-SIGHTING_MEMORY_S = 150.0  # a sighting at the target still counts this long after the scout lost sight of it
 DEFAULT_RAID_S = 50.0  # a flank or raid run ends this long after it leaves
 DEFAULT_LEASH = 22.0  # how far from home a screen or the line stands
 LOCAL_RADIUS = 16.0  # enemies this close to a group count as the fight it is in
@@ -307,7 +304,10 @@ class Fleet:
         *,
         non_combat: frozenset[str] = frozenset(),
         tower_types: frozenset[str] = frozenset(),
+        judge: Any = None,
     ) -> None:
+        self._judge_ok = True  # a failing judge is switched off and the plain ratios take over, never the army
+        self.judge = judge  # redalert.battle.Judge: reads engagements from the match memory (None: plain value ratios)
         self.cost_of = cost_of
         self.clock = clock
         self.non_combat = non_combat
@@ -316,7 +316,6 @@ class Fleet:
         self.state: dict[str, str] = {}
         self._since: dict[str, float] = {}
         self._until: dict[str, float] = {}  # broken / run-ends-at timers
-        self._target_seen: tuple[float, float] | None = None  # (enemy value seen at a strike target, when)
         self._last_order: dict[str, float] = {}
         self._stance: dict[str, str] = {}
         self._stanced: dict[str, set[int]] = {}
@@ -497,6 +496,54 @@ class Fleet:
                 }
             )
 
+    # -- the fight model's inputs -------------------------------------------------------------------------------
+
+    def _force(self, ids: list[int], ctx: _Ctx) -> list[tuple[str, float]]:
+        out = []
+        for u in ids:
+            row = ctx.units.get(u)
+            if row is None:
+                continue
+            hp = row.get("hp")
+            out.append((str(row.get("type")).lower(), (float(hp) / 100.0) if isinstance(hp, (int, float)) else 1.0))
+        return out
+
+    def _enemies_near(self, point: tuple[float, float] | None, radius: float, ctx: _Ctx) -> list[tuple[str, float]]:
+        if point is None:
+            return []
+        return [(kind, 1.0) for cell, kind, _, _ in ctx.pic.units if kind != "harv" and math.dist(cell, point) <= radius]
+
+    def _towers_near(self, point: tuple[float, float] | None, radius: float, ctx: _Ctx) -> list[str]:
+        if point is None:
+            return []
+        return [
+            kind for cell, kind, _, _ in ctx.pic.buildings if kind in ctx.pic.towers and math.dist(cell, point) <= radius
+        ]
+
+    def _engagement(
+        self, ids: list[int], ctx: _Ctx
+    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[str], tuple[float, float] | None]:
+        """The fight this group is actually in: its soldiers near the enemy, the enemy units and defences around
+        them. A stretched-out group is judged where it fights, not at its centre of mass."""
+        cells = {u: _cell(ctx.units[u]) for u in ids if u in ctx.units}
+        mine = [c for c in cells.values() if c]
+        enemies = [
+            (kind, cell)
+            for cell, kind, _, _ in ctx.pic.units
+            if kind != "harv" and any(math.dist(cell, c) <= LOCAL_RADIUS for c in mine)
+        ]
+        if not enemies:
+            return [], [], [], None
+        point = _center(cell for _, cell in enemies)
+        near = [u for u, c in cells.items() if c and point and math.dist(c, point) <= LOCAL_RADIUS * 1.6]
+        where = _center(cells[u] for u in near if cells[u]) or point
+        return (
+            self._force(near, ctx),
+            [(kind, 1.0) for kind, _ in enemies],
+            self._towers_near(point, LOCAL_RADIUS, ctx),
+            where,
+        )
+
     def _in_contact(self, ids: list[int], ctx: _Ctx) -> bool:
         cells = [c for c in (_cell(ctx.units.get(u)) for u in ids) if c]
         return ctx.pic.any_near(cells, CONTACT_RADIUS)
@@ -611,6 +658,21 @@ class Fleet:
         near_target = ctx.pic.near(target, TARGET_RADIUS) if target else 0.0
         in_contact = self._in_contact(ids, ctx)
 
+        # The base and the strike force are one problem: an enemy force at the base is fought by everything near it,
+        # together, whatever the strike was doing (a wave met by a thin home line alone, with the main body away or
+        # regrouping, is destroyed in detail). Only an attack already in contact far from home carries on.
+        threats = [c for c, _, _, _ in ctx.pic.units if math.dist(c, ctx.home) <= LINE_THREAT_RADIUS]
+        away = center is not None and math.dist(center, ctx.home) > LINE_THREAT_RADIUS + 6
+        if threats and self.judge is not None and self._judge_ok and not (in_contact and away):
+            point = _center(threats)
+            self._stance_order(mid, ids, FIGHT_STANCE, res)
+            self._set(mid, "defending", now, res, event="officer_defending")
+            self._go(mid, ids, [int(point[0]), int(point[1])], ctx, res, fight=True, gap=1.5)
+            self._report(
+                m, ids, ctx, res, near=ctx.pic.near(point, LOCAL_RADIUS, with_towers=False), ratio=None, target=[int(point[0]), int(point[1])]
+            )
+            return
+
         # Recovering from a broken fight: fall back fighting, hold there, wait out the regroup.
         if now < self._until.get(mid, 0.0):
             dest = self.fall_back_point(ctx, center, "towers")
@@ -632,7 +694,24 @@ class Fleet:
         # In a fight: keep going while the odds hold, break off when the enemy around us outweighs us.
         if in_contact:
             ratio = value / near_me if near_me > 0 else None
-            if len(ids) >= MIN_GROUP and ratio is not None and ratio < m.abort_ratio:
+            losing = ratio is not None and ratio < m.abort_ratio
+            if self.judge is not None and self._judge_ok:
+                # Leave only when the fight is going badly and leaving costs less than staying (a retreat across
+                # open ground under fire loses the army without trading).
+                try:
+                    ours_e, enemies_e, towers_e, where_e = self._engagement(ids, ctx)
+                    losing, verdict = self.judge.break_off(
+                        ours_e or self._force(ids, ctx),
+                        enemies_e,
+                        towers_e,
+                        where=where_e or center,
+                        safe=self.fall_back_point(ctx, center, "towers"),
+                        abort_ratio=m.abort_ratio,
+                    )
+                    ratio = verdict.ratio
+                except Exception:  # noqa: BLE001 - the plain ratios still fight
+                    self._judge_ok = False
+            if len(ids) >= MIN_GROUP and ratio is not None and losing:
                 self._until[mid] = now + m.regroup_s
                 self._set(mid, "broken", now, res, event="officer_broken")
                 dest = self.fall_back_point(ctx, center, "towers")
@@ -665,15 +744,23 @@ class Fleet:
                 "advancing",
                 "engaged",
             )
-        if near_target > 0:
-            self._target_seen = (near_target, now)
-        elif self._target_seen and now - self._target_seen[1] <= SIGHTING_MEMORY_S:
-            near_target = 0.85 * self._target_seen[0]  # out of sight is not gone: the scout saw an army here a moment ago
         ratio = (value / near_target) if near_target > 0 else None
-        # Nothing seen at the target is not an empty target: a live match walked eight riflemen into an unseen
-        # army (16 lost for one kill). A strike that never saw the defenders waits for scouting or for a big army.
-        odds_ok = value >= m.engage_ratio * near_target if near_target > 0 else value >= BLIND_ADVANCE_MIN
-        odds_ok = odds_ok and len(ids) >= MIN_ADVANCE_UNITS
+        odds_ok = near_target <= 0 or value >= m.engage_ratio * near_target
+        if self.judge is not None and self._judge_ok and target is not None:
+            # The model counts the unseen enemy force, the matchups and the defences, and records what it expects.
+            try:
+                at_base = ctx.enemy_base is not None and math.dist(target, ctx.enemy_base) <= TARGET_RADIUS * 1.5
+                verdict = self.judge.advance(
+                    self._force(ids, ctx),
+                    self._enemies_near(target, TARGET_RADIUS, ctx),
+                    self._towers_near(target, TARGET_RADIUS, ctx),
+                    at_base=at_base,
+                    where=target,
+                )
+                ratio = verdict.ratio
+                odds_ok = verdict.ratio >= m.engage_ratio
+            except Exception:  # noqa: BLE001 - the plain ratios still fight
+                self._judge_ok = False
         self._stance_order(mid, ids, FIGHT_STANCE, res)
         if assembled and odds_ok and target is not None:
             self._set(mid, "advancing", now, res)
