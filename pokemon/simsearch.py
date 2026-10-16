@@ -157,6 +157,11 @@ def _card_for(species: Any, cards: list[dict]) -> dict | None:
             if card.get("moves"):
                 return card
             bare = bare or card
+    if bare is None and "*" in str(species):
+        # Showdown's wildcard forme ("Urshifu-*"): the team sheet shows which one, the preview does not
+        for card in cards or []:
+            if card.get("moves") and _norm(card.get("species")).startswith(want):
+                return card
     return bare if bare is not None and bare.get("moves") else None
 
 
@@ -364,7 +369,7 @@ def build_state(obs: dict, cards: list[dict], *, seed: int | None = None) -> dic
             for name in pool_names[: want - len(ordered) - len(rest)]:
                 card = _card_for(name, cards)
                 if card is None:
-                    return None, []
+                    continue  # an unknown bench member must not cost the whole search: the rest still plays out
                 rest.append(
                     {
                         "set": _set_of(card),
